@@ -295,6 +295,7 @@ fn main() {
         .max_blocking_threads
         .unwrap_or(max_signers)
         .max(1);
+    info!(max_blocking_threads, "blocking thread pool size");
     let mut runtime = tokio::runtime::Builder::new_multi_thread();
     runtime.enable_all().max_blocking_threads(max_blocking_threads);
     if let Some(worker_threads) = config.worker_threads {
@@ -304,6 +305,7 @@ fn main() {
         } else {
             worker_threads
         };
+        info!(worker_threads, "worker thread count");
         runtime.worker_threads(worker_threads);
     }
     let runtime = runtime.build().expect("failed to build tokio runtime");
