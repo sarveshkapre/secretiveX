@@ -24,6 +24,7 @@ struct Args {
     key_blob_hex: Option<String>,
     json: bool,
     help: bool,
+    version: bool,
 }
 
 #[tokio::main]
@@ -35,6 +36,10 @@ async fn main() -> Result<()> {
     let args = parse_args();
     if args.help {
         print_help();
+        return Ok(());
+    }
+    if args.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let socket_path = resolve_socket_path(args.socket_path.clone());
@@ -173,6 +178,7 @@ fn parse_args() -> Args {
         key_blob_hex: None,
         json: false,
         help: false,
+        version: false,
     };
 
     while let Some(arg) = args.next() {
@@ -206,6 +212,7 @@ fn parse_args() -> Args {
             "--key" => parsed.key_blob_hex = args.next(),
             "--json" => parsed.json = true,
             "-h" | "--help" => parsed.help = true,
+            "--version" => parsed.version = true,
             _ => {}
         }
     }

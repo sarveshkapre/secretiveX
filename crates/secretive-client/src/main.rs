@@ -19,6 +19,10 @@ async fn main() -> Result<()> {
         print_help();
         return Ok(());
     }
+    if args.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let socket_path = resolve_socket_path(args.socket_path.clone());
     let stream = connect(&socket_path).await?;
 
@@ -258,6 +262,7 @@ struct Args {
     sign_path: Option<String>,
     flags: u32,
     help: bool,
+    version: bool,
 }
 
 fn parse_args() -> Args {
@@ -274,6 +279,7 @@ fn parse_args() -> Args {
         sign_path: None,
         flags: 0,
         help: false,
+        version: false,
     };
 
     while let Some(arg) = args.next() {
@@ -293,6 +299,7 @@ fn parse_args() -> Args {
                 }
             }
             "-h" | "--help" => parsed.help = true,
+            "--version" => parsed.version = true,
             _ => {}
         }
     }

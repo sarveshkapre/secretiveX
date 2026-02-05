@@ -63,6 +63,10 @@ async fn main() {
         print_help();
         return;
     }
+    if args.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let mut config = load_config(args.config_path.as_deref());
     if let Some(socket_path) = args.socket_path {
         config.socket_path = Some(socket_path);
@@ -331,6 +335,7 @@ struct Args {
     metrics_every: Option<u64>,
     pid_file: Option<String>,
     help: bool,
+    version: bool,
 }
 
 fn parse_args() -> Args {
@@ -345,6 +350,7 @@ fn parse_args() -> Args {
         metrics_every: None,
         pid_file: None,
         help: false,
+        version: false,
     };
 
     while let Some(arg) = args.next() {
@@ -372,6 +378,7 @@ fn parse_args() -> Args {
             }
             "--pid-file" => parsed.pid_file = args.next(),
             "-h" | "--help" => parsed.help = true,
+            "--version" => parsed.version = true,
             _ => {}
         }
     }
