@@ -159,7 +159,7 @@ async fn run_worker(
         fetch_first_key(&socket_path).await?
     };
 
-    let mut rng = rand::rngs::StdRng::from_entropy();
+    let mut rng = rand::rngs::SmallRng::from_entropy();
     let mut request_buffer = BytesMut::with_capacity(128);
     let mut request = AgentRequest::SignRequest {
         key_blob: key_blob.clone(),
