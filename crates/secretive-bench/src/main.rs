@@ -202,19 +202,23 @@ async fn run_worker(
     };
     let request_capacity = 1 + 4 + key_blob.len() + 4 + payload_size + 4;
     let mut request_buffer = BytesMut::new();
-    let mut request = AgentRequest::SignRequest {
-        key_blob,
-        data: vec![0u8; payload_size],
-        flags,
-    };
+    let mut request: Option<AgentRequest> = None;
     let sign_frame = if randomize_payload && payload_size > 0 {
+        request_buffer = BytesMut::with_capacity(request_capacity);
+        request = Some(AgentRequest::SignRequest {
+            key_blob,
+            data: vec![0u8; payload_size],
+            flags,
+        });
         None
     } else {
+        let request = AgentRequest::SignRequest {
+            key_blob,
+            data: vec![0u8; payload_size],
+            flags,
+        };
         Some(encode_request_frame(&request)?)
     };
-    if sign_frame.is_none() {
-        request_buffer = BytesMut::with_capacity(request_capacity);
-    }
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
@@ -224,12 +228,17 @@ async fn run_worker(
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
             } else {
-                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                    (&mut rng, &mut request)
+                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+                    (&mut rng, request.as_mut())
                 {
                     rng.fill_bytes(data);
                 }
-                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+                write_request_with_buffer(
+                    &mut writer,
+                    request.as_ref().expect("sign request"),
+                    &mut request_buffer,
+                )
+                .await?;
             }
             let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
             if response_type != MessageType::SignResponse as u8 {
@@ -244,12 +253,17 @@ async fn run_worker(
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
             } else {
-                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                    (&mut rng, &mut request)
+                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+                    (&mut rng, request.as_mut())
                 {
                     rng.fill_bytes(data);
                 }
-                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+                write_request_with_buffer(
+                    &mut writer,
+                    request.as_ref().expect("sign request"),
+                    &mut request_buffer,
+                )
+                .await?;
             }
             let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
             if response_type != MessageType::SignResponse as u8 {
@@ -263,12 +277,17 @@ async fn run_worker(
                 if let Some(frame) = &sign_frame {
                     writer.write_all(frame).await?;
                 } else {
-                    if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                        (&mut rng, &mut request)
+                    if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+                        (&mut rng, request.as_mut())
                     {
                         rng.fill_bytes(data);
                     }
-                    write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+                    write_request_with_buffer(
+                        &mut writer,
+                        request.as_ref().expect("sign request"),
+                        &mut request_buffer,
+                    )
+                    .await?;
                 }
                 let response_type =
                     read_response_type_with_buffer(&mut reader, &mut buffer).await?;
@@ -281,12 +300,17 @@ async fn run_worker(
                 if let Some(frame) = &sign_frame {
                     writer.write_all(frame).await?;
                 } else {
-                    if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                        (&mut rng, &mut request)
+                    if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+                        (&mut rng, request.as_mut())
                     {
                         rng.fill_bytes(data);
                     }
-                    write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+                    write_request_with_buffer(
+                        &mut writer,
+                        request.as_ref().expect("sign request"),
+                        &mut request_buffer,
+                    )
+                    .await?;
                 }
                 let response_type =
                     read_response_type_with_buffer(&mut reader, &mut buffer).await?;
@@ -309,12 +333,17 @@ async fn run_worker(
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
             } else {
-                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                    (&mut rng, &mut request)
+                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+                    (&mut rng, request.as_mut())
                 {
                     rng.fill_bytes(data);
                 }
-                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+                write_request_with_buffer(
+                    &mut writer,
+                    request.as_ref().expect("sign request"),
+                    &mut request_buffer,
+                )
+                .await?;
             }
             let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
             if response_type == MessageType::SignResponse as u8 {
@@ -328,12 +357,17 @@ async fn run_worker(
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
             } else {
-                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                    (&mut rng, &mut request)
+                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+                    (&mut rng, request.as_mut())
                 {
                     rng.fill_bytes(data);
                 }
-                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+                write_request_with_buffer(
+                    &mut writer,
+                    request.as_ref().expect("sign request"),
+                    &mut request_buffer,
+                )
+                .await?;
             }
             let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
             if response_type == MessageType::SignResponse as u8 {
