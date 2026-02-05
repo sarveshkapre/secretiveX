@@ -2,9 +2,10 @@ mod codec;
 mod message;
 
 pub use codec::{
-    decode_request, decode_response, encode_request, encode_response, encode_signature_blob,
-    read_request, read_request_with_buffer, read_response, read_response_with_buffer, write_request,
-    write_payload, write_response,
+    decode_request, decode_response, encode_request, encode_response, encode_response_into,
+    encode_signature_blob, read_request, read_request_with_buffer, read_response,
+    read_response_with_buffer, write_payload, write_request, write_response,
+    write_response_with_buffer,
     MAX_FRAME_LEN,
 };
 pub use message::{AgentRequest, AgentResponse, Identity, MessageType};

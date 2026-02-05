@@ -88,6 +88,28 @@ where
     Ok(())
 }
 
+pub async fn write_response_with_buffer<W>(
+    writer: &mut W,
+    response: &AgentResponse,
+    buffer: &mut BytesMut,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    encode_response_into(response, buffer);
+    writer
+        .write_u32(buffer.len() as u32)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    Ok(())
+}
+
 pub async fn write_request<W>(writer: &mut W, request: &AgentRequest) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -198,6 +220,39 @@ pub fn encode_response(response: &AgentResponse) -> Bytes {
         }
     }
     buf.freeze()
+}
+
+pub fn encode_response_into(response: &AgentResponse, buffer: &mut BytesMut) {
+    buffer.clear();
+    match response {
+        AgentResponse::IdentitiesAnswer { identities } => {
+            let mut cap = 1 + 4;
+            for identity in identities {
+                cap += 4 + identity.key_blob.len();
+                cap += 4 + identity.comment.len();
+            }
+            buffer.reserve(cap);
+            buffer.put_u8(MessageType::IdentitiesAnswer as u8);
+            buffer.put_u32(identities.len() as u32);
+            for identity in identities {
+                write_string(buffer, &identity.key_blob);
+                write_string(buffer, identity.comment.as_bytes());
+            }
+        }
+        AgentResponse::SignResponse { signature_blob } => {
+            buffer.reserve(1 + 4 + signature_blob.len());
+            buffer.put_u8(MessageType::SignResponse as u8);
+            write_string(buffer, signature_blob);
+        }
+        AgentResponse::Failure => {
+            buffer.reserve(1);
+            buffer.put_u8(MessageType::Failure as u8);
+        }
+        AgentResponse::Success => {
+            buffer.reserve(1);
+            buffer.put_u8(MessageType::Success as u8);
+        }
+    }
 }
 
 pub fn encode_request(request: &AgentRequest) -> Bytes {

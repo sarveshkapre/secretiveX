@@ -21,7 +21,8 @@ use secretive_core::{
 };
 use bytes::{Bytes, BytesMut};
 use secretive_proto::{
-    read_request_with_buffer, write_payload, write_response, AgentRequest, AgentResponse, Identity,
+    read_request_with_buffer, write_payload, write_response_with_buffer, AgentRequest, AgentResponse,
+    Identity,
 };
 
 #[derive(Debug, Deserialize)]
@@ -691,6 +692,7 @@ where
     let (mut reader, mut writer) = tokio::io::split(stream);
 
     let mut buffer = BytesMut::with_capacity(4096);
+    let mut response_buffer = BytesMut::with_capacity(256);
     loop {
         let request = match read_request_with_buffer(&mut reader, &mut buffer).await {
             Ok(req) => req,
@@ -711,7 +713,13 @@ where
                     }
                     Err(err) => {
                         warn!(?err, "failed to list identities");
-                        if let Err(err) = write_response(&mut writer, &AgentResponse::Failure).await {
+                        if let Err(err) = write_response_with_buffer(
+                            &mut writer,
+                            &AgentResponse::Failure,
+                            &mut response_buffer,
+                        )
+                        .await
+                        {
                             warn!(?err, "failed to write failure response");
                             break;
                         }
@@ -721,7 +729,13 @@ where
             _ => {
                 let response =
                     handle_request(registry.clone(), request, sign_semaphore.clone()).await;
-                if let Err(err) = write_response(&mut writer, &response).await {
+                if let Err(err) = write_response_with_buffer(
+                    &mut writer,
+                    &response,
+                    &mut response_buffer,
+                )
+                .await
+                {
                     warn!(?err, "failed to write response");
                     break;
                 }
