@@ -627,4 +627,20 @@ mod tests {
         let decoded = read_response_with_buffer(&mut cursor, &mut buffer).await.unwrap();
         assert!(matches!(decoded, AgentResponse::Failure));
     }
+
+    #[tokio::test]
+    async fn read_response_type_with_buffer_skips_payload() {
+        let payload_len = 2048usize;
+        let mut frame = Vec::with_capacity(4 + payload_len);
+        frame.extend_from_slice(&(payload_len as u32).to_be_bytes());
+        frame.push(MessageType::Failure as u8);
+        frame.extend(std::iter::repeat(0u8).take(payload_len - 1));
+
+        let mut cursor = std::io::Cursor::new(frame);
+        let mut buffer = BytesMut::new();
+        let message_type = read_response_type_with_buffer(&mut cursor, &mut buffer)
+            .await
+            .unwrap();
+        assert_eq!(message_type, MessageType::Failure as u8);
+    }
 }
