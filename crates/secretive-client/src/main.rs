@@ -35,13 +35,12 @@ async fn main() -> Result<()> {
     let socket_path = resolve_socket_path(args.socket_path.clone());
     let stream = connect(&socket_path).await?;
 
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut stream = stream;
     let mut buffer = BytesMut::with_capacity(4096);
 
     if args.list {
         list_identities(
-            &mut reader,
-            &mut writer,
+            &mut stream,
             &mut buffer,
             args.show_openssh,
             args.json,
@@ -56,12 +55,11 @@ async fn main() -> Result<()> {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
         } else if let Some(comment) = args.sign_comment.as_deref() {
-            select_key_by_comment(&mut reader, &mut writer, &mut buffer, comment)
+            select_key_by_comment(&mut stream, &mut buffer, comment)
                 .await?
         } else if let Some(fingerprint) = args.sign_fingerprint.as_deref() {
             select_key_by_fingerprint(
-                &mut reader,
-                &mut writer,
+                &mut stream,
                 &mut buffer,
                 fingerprint,
             )
@@ -79,8 +77,7 @@ async fn main() -> Result<()> {
         let request_capacity = 1 + 4 + key_blob.len() + 4 + data.len() + 4;
         request_buffer.reserve(request_capacity);
         let signature_blob = sign_data(
-            &mut reader,
-            &mut writer,
+            &mut stream,
             &mut buffer,
             &mut request_buffer,
             key_blob,
@@ -113,19 +110,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn list_identities<R, W>(
-    reader: &mut R,
-    writer: &mut W,
+async fn list_identities<S>(
+    stream: &mut S,
     buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
     filter: Option<&str>,
 ) -> Result<()>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut identities = fetch_identities(reader, writer, buffer).await?;
+    let mut identities = fetch_identities(stream, buffer).await?;
     if let Some(filter) = filter {
         let filter_lower = if is_ascii_lowercase(filter) {
             Cow::Borrowed(filter.as_bytes())
@@ -234,9 +229,8 @@ where
     Ok(())
 }
 
-async fn sign_data<R, W>(
-    reader: &mut R,
-    writer: &mut W,
+async fn sign_data<S>(
+    stream: &mut S,
     buffer: &mut BytesMut,
     request_buffer: &mut BytesMut,
     key_blob: Vec<u8>,
@@ -244,33 +238,30 @@ async fn sign_data<R, W>(
     flags: u32,
 ) -> Result<Vec<u8>>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     let request = AgentRequest::SignRequest {
         key_blob,
         data,
         flags,
     };
-    write_request_with_buffer(writer, &request, request_buffer).await?;
-    let response = read_response_with_buffer(reader, buffer).await?;
+    write_request_with_buffer(stream, &request, request_buffer).await?;
+    let response = read_response_with_buffer(stream, buffer).await?;
     match response {
         AgentResponse::SignResponse { signature_blob } => Ok(signature_blob),
         _ => Err(anyhow::anyhow!("unexpected response")),
     }
 }
 
-async fn fetch_identities<R, W>(
-    reader: &mut R,
-    writer: &mut W,
+async fn fetch_identities<S>(
+    stream: &mut S,
     buffer: &mut BytesMut,
 ) -> Result<Vec<Identity>>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    writer.write_all(list_request_frame()).await?;
-    let response = read_response_with_buffer(reader, buffer).await?;
+    stream.write_all(list_request_frame()).await?;
+    let response = read_response_with_buffer(stream, buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
         _ => Err(anyhow::anyhow!("unexpected response")),
@@ -284,17 +275,15 @@ fn list_request_frame() -> &'static Bytes {
     })
 }
 
-async fn select_key_by_comment<R, W>(
-    reader: &mut R,
-    writer: &mut W,
+async fn select_key_by_comment<S>(
+    stream: &mut S,
     buffer: &mut BytesMut,
     comment: &str,
 ) -> Result<Vec<u8>>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer).await?;
+    let identities = fetch_identities(stream, buffer).await?;
     identities
         .into_iter()
         .find(|id| id.comment == comment || id.comment.eq_ignore_ascii_case(comment))
@@ -302,17 +291,15 @@ where
         .ok_or_else(|| anyhow::anyhow!("no identity with comment: {comment}"))
 }
 
-async fn select_key_by_fingerprint<R, W>(
-    reader: &mut R,
-    writer: &mut W,
+async fn select_key_by_fingerprint<S>(
+    stream: &mut S,
     buffer: &mut BytesMut,
     fingerprint: &str,
 ) -> Result<Vec<u8>>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer).await?;
+    let identities = fetch_identities(stream, buffer).await?;
     let target = fingerprint.trim();
     let target_stripped = strip_sha256_prefix(target);
     let target_fp = parse_fingerprint_input(target);
