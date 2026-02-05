@@ -186,14 +186,14 @@ mod enabled {
         fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
             self.refresh_keys()?;
             let guard = self.key_map.load();
-            let identities = guard
-                .values()
-                .map(|entry| KeyIdentity {
+            let mut identities = Vec::with_capacity(guard.len());
+            for entry in guard.values() {
+                identities.push(KeyIdentity {
                     key_blob: entry.key_blob.clone(),
                     comment: entry.label.clone(),
                     source: "pkcs11".to_string(),
-                })
-                .collect();
+                });
+            }
             Ok(identities)
         }
 
