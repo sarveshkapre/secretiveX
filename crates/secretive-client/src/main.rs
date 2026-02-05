@@ -561,7 +561,7 @@ fn parse_flags(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_flags;
+    use super::{parse_flags, parse_fingerprint_input};
 
     #[test]
     fn parse_flags_names() {
@@ -571,6 +571,19 @@ mod tests {
         assert_eq!(parse_flags("rsa-sha2-512"), Some(4));
         assert_eq!(parse_flags("ssh-rsa"), Some(0));
         assert_eq!(parse_flags("sha1"), Some(0));
+    }
+
+    #[test]
+    fn parse_fingerprint_accepts_prefixes() {
+        let sample = "SHA256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g";
+        assert!(parse_fingerprint_input(sample).is_some());
+        assert!(parse_fingerprint_input("sha256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g").is_some());
+    }
+
+    #[test]
+    fn parse_fingerprint_accepts_bare() {
+        let sample = "JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g";
+        assert!(parse_fingerprint_input(sample).is_some());
     }
 }
 
