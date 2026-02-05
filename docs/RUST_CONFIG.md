@@ -27,6 +27,7 @@ Socket path overrides:
 - `watch_debounce_ms` (number): debounce interval for file watcher reloads (default: 200).
 - `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
 - `metrics_json` (bool): emit sign metrics as JSON lines in logs (default: false).
+- `audit_requests` (bool): emit privacy-safe structured audit logs for list/sign requests (default: false).
 - `sign_timeout_ms` (number): fail sign requests if a permit isn't acquired in N milliseconds (default: disabled). Use `0` to disable.
 - `pid_file` (string): write the agent PID to this file and remove on shutdown.
 - `identity_cache_ms` (number): cache list-identities responses for N milliseconds (default: 1000). Use `0` to disable.
@@ -41,6 +42,7 @@ Environment overrides (when config/CLI unset):
 - `SECRETIVE_WORKER_THREADS` sets `worker_threads`.
 - `SECRETIVE_METRICS_EVERY` sets `metrics_every`.
 - `SECRETIVE_METRICS_JSON` sets `metrics_json` (`true`/`false`).
+- `SECRETIVE_AUDIT_REQUESTS` sets `audit_requests` (`true`/`false`).
 - `SECRETIVE_SIGN_TIMEOUT_MS` sets `sign_timeout_ms`.
 - `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
 - `SECRETIVE_WATCH_FILES` sets `watch_files` (`true`/`false`).

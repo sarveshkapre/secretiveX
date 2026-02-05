@@ -994,6 +994,7 @@ dependencies = [
  "secretive-proto",
  "serde",
  "serde_json",
+ "ssh-key",
  "thiserror",
  "tokio",
  "tracing",

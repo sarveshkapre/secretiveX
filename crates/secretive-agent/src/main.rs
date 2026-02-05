@@ -41,6 +41,7 @@ struct Config {
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
     metrics_json: Option<bool>,
+    audit_requests: Option<bool>,
     sign_timeout_ms: Option<u64>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
@@ -54,6 +55,7 @@ static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static METRICS_JSON: AtomicBool = AtomicBool::new(false);
+static AUDIT_REQUESTS: AtomicBool = AtomicBool::new(false);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static MAX_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static CONNECTION_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -270,6 +272,9 @@ fn main() {
     if let Some(metrics_json) = args.metrics_json {
         config.metrics_json = Some(metrics_json);
     }
+    if let Some(audit_requests) = args.audit_requests {
+        config.audit_requests = Some(audit_requests);
+    }
     if let Some(sign_timeout_ms) = args.sign_timeout_ms {
         config.sign_timeout_ms = Some(sign_timeout_ms);
     }
@@ -309,6 +314,11 @@ fn main() {
     if config.metrics_json.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_METRICS_JSON") {
             config.metrics_json = parse_bool_env(&value);
+        }
+    }
+    if config.audit_requests.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_AUDIT_REQUESTS") {
+            config.audit_requests = parse_bool_env(&value);
         }
     }
     if config.sign_timeout_ms.is_none() {
@@ -717,6 +727,13 @@ async fn run_async(mut config: Config, max_signers: usize) {
         info!("signing metrics disabled");
     } else {
         info!(metrics_every, "signing metrics interval");
+    }
+    let audit_requests = config.audit_requests.unwrap_or(false);
+    AUDIT_REQUESTS.store(audit_requests, Ordering::Relaxed);
+    if audit_requests {
+        info!("request auditing enabled");
+    } else {
+        info!("request auditing disabled");
     }
     let sign_timeout = config.sign_timeout_ms.and_then(|value| {
         if value == 0 {
@@ -1164,6 +1181,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         watch_debounce_ms: None,
         metrics_every: None,
         metrics_json: None,
+        audit_requests: None,
         sign_timeout_ms: None,
         pid_file: None,
         identity_cache_ms: None,
@@ -1194,6 +1212,7 @@ struct Args {
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
     metrics_json: Option<bool>,
+    audit_requests: Option<bool>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
@@ -1221,6 +1240,7 @@ fn parse_args() -> Args {
         watch_debounce_ms: None,
         metrics_every: None,
         metrics_json: None,
+        audit_requests: None,
         pid_file: None,
         identity_cache_ms: None,
         idle_timeout_ms: None,
@@ -1282,6 +1302,8 @@ fn parse_args() -> Args {
             }
             "--metrics-json" => parsed.metrics_json = Some(true),
             "--no-metrics-json" => parsed.metrics_json = Some(false),
+            "--audit-requests" => parsed.audit_requests = Some(true),
+            "--no-audit-requests" => parsed.audit_requests = Some(false),
             "--sign-timeout-ms" => {
                 if let Some(value) = args.next() {
                     parsed.sign_timeout_ms = value.parse().ok();
@@ -1343,6 +1365,7 @@ fn print_help() {
     );
     println!("  --metrics-every <n>");
     println!("  --metrics-json | --no-metrics-json");
+    println!("  --audit-requests | --no-audit-requests");
     println!("  --sign-timeout-ms <n>");
     println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
     println!("  --identity-cache-ms <n>");
@@ -1672,18 +1695,23 @@ where
 
         match request {
             ParsedRequest::RequestIdentities => {
+                let audit_started = audit_start();
                 LIST_COUNT.fetch_add(1, Ordering::Relaxed);
                 match identity_cache.get_payload_or_refresh(&registry).await {
                     Ok(payload) => {
                         if let Err(err) = stream.write_all(payload.as_ref()).await {
                             warn!(?err, "failed to write identities");
+                            emit_list_audit("write_error", payload.len(), audit_started);
                             break;
                         }
+                        emit_list_audit("ok", payload.len(), audit_started);
                     }
                     Err(err) => {
                         warn!(?err, "failed to list identities");
+                        emit_list_audit("lookup_error", 0, audit_started);
                         if let Err(err) = stream.write_all(failure_frame()).await {
                             warn!(?err, "failed to write failure response");
+                            emit_list_audit("write_error", 0, audit_started);
                             break;
                         }
                     }
@@ -1730,6 +1758,7 @@ where
             }
             ParsedRequest::Unknown { message_type } => {
                 warn!(message_type, "unknown request type");
+                emit_unknown_audit(message_type);
                 if let Err(err) = stream.write_all(failure_frame()).await {
                     warn!(?err, "failed to write failure response");
                     break;
@@ -1872,6 +1901,13 @@ async fn handle_sign_request(
     inline_sign: bool,
     sign_timeout: Option<Duration>,
 ) -> AgentResponse {
+    let audit_started = audit_start();
+    let audit_key = if audit_started.is_some() {
+        Some(audit_key_id(key_blob.as_ref()))
+    } else {
+        None
+    };
+    let audit_data_len = data.len();
     let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
     let start = if metrics_every > 0 {
         Some(Instant::now())
@@ -1884,6 +1920,15 @@ async fn handle_sign_request(
             Ok(Err(_)) => {
                 warn!("signing semaphore closed");
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(
+                        key_id,
+                        audit_data_len,
+                        flags,
+                        "semaphore_closed",
+                        audit_started,
+                    );
+                }
                 return AgentResponse::Failure;
             }
             Err(_) => {
@@ -1892,6 +1937,9 @@ async fn handle_sign_request(
                     warn!(timeouts, "sign timeout");
                 }
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(key_id, audit_data_len, flags, "timeout", audit_started);
+                }
                 return AgentResponse::Failure;
             }
         },
@@ -1900,6 +1948,15 @@ async fn handle_sign_request(
             Err(_) => {
                 warn!("signing semaphore closed");
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(
+                        key_id,
+                        audit_data_len,
+                        flags,
+                        "semaphore_closed",
+                        audit_started,
+                    );
+                }
                 return AgentResponse::Failure;
             }
         },
@@ -1957,16 +2014,25 @@ async fn handle_sign_request(
                     emit_sign_metrics("interval", &snapshot);
                 }
             }
+            if let Some(key_id) = audit_key.as_deref() {
+                emit_sign_audit(key_id, audit_data_len, flags, "ok", audit_started);
+            }
             AgentResponse::SignResponse { signature_blob }
         }
         Ok(Err(err)) => {
             warn!(?err, "sign request failed");
             SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+            if let Some(key_id) = audit_key.as_deref() {
+                emit_sign_audit(key_id, audit_data_len, flags, "sign_error", audit_started);
+            }
             AgentResponse::Failure
         }
         Err(err) => {
             warn!(?err, "sign worker failed");
             SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+            if let Some(key_id) = audit_key.as_deref() {
+                emit_sign_audit(key_id, audit_data_len, flags, "worker_error", audit_started);
+            }
             AgentResponse::Failure
         }
     }
@@ -2004,6 +2070,76 @@ fn failure_frame() -> &'static Bytes {
     })
 }
 
+fn audit_start() -> Option<Instant> {
+    if AUDIT_REQUESTS.load(Ordering::Relaxed) {
+        Some(Instant::now())
+    } else {
+        None
+    }
+}
+
+fn audit_latency_us(started: Option<Instant>) -> u64 {
+    started
+        .map(|value| value.elapsed().as_micros() as u64)
+        .unwrap_or(0)
+}
+
+fn audit_key_id(key_blob: &[u8]) -> String {
+    if let Ok(public_key) = ssh_key::PublicKey::from_bytes(key_blob) {
+        return public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+    }
+    format!("blob:{}b", key_blob.len())
+}
+
+fn emit_list_audit(outcome: &str, payload_bytes: usize, started: Option<Instant>) {
+    if !AUDIT_REQUESTS.load(Ordering::Relaxed) {
+        return;
+    }
+    info!(
+        event = "request_audit",
+        request = "list",
+        outcome,
+        payload_bytes,
+        latency_us = audit_latency_us(started),
+        "request audit"
+    );
+}
+
+fn emit_unknown_audit(message_type: u8) {
+    if !AUDIT_REQUESTS.load(Ordering::Relaxed) {
+        return;
+    }
+    info!(
+        event = "request_audit",
+        request = "unknown",
+        outcome = "failure",
+        message_type,
+        "request audit"
+    );
+}
+
+fn emit_sign_audit(
+    key_id: &str,
+    data_len: usize,
+    flags: u32,
+    outcome: &str,
+    started: Option<Instant>,
+) {
+    if !AUDIT_REQUESTS.load(Ordering::Relaxed) {
+        return;
+    }
+    info!(
+        event = "request_audit",
+        request = "sign",
+        outcome,
+        key_id = %key_id,
+        data_len,
+        flags,
+        latency_us = audit_latency_us(started),
+        "request audit"
+    );
+}
+
 fn now_ms() -> u64 {
     let start = START_INSTANT.get_or_init(Instant::now);
     start.elapsed().as_millis() as u64
@@ -2030,6 +2166,7 @@ mod tests {
             watch_debounce_ms: None,
             metrics_every: None,
             metrics_json: None,
+            audit_requests: None,
             sign_timeout_ms: None,
             pid_file: None,
             identity_cache_ms: None,
@@ -2197,5 +2334,19 @@ mod tests {
         assert!(payload.contains("\"count\":1"));
         assert!(payload.contains("\"max_signers\":6"));
         assert!(payload.contains("\"list_errors\":16"));
+    }
+
+    #[test]
+    fn audit_key_id_formats_fingerprint_or_blob_length() {
+        let public_key = ssh_key::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICG6kjK0iJxESpkwvCTOwwcUsJcggrGhSdHyaP0JHGub",
+        )
+        .expect("public key");
+        let key_blob = public_key.to_bytes().expect("key blob");
+        let fingerprint = audit_key_id(&key_blob);
+        assert!(fingerprint.starts_with("SHA256:"));
+
+        let fallback = audit_key_id(&[1, 2, 3]);
+        assert_eq!(fallback, "blob:3b");
     }
 }
