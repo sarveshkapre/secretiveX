@@ -1357,6 +1357,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn decode_request_identities() {
@@ -1387,5 +1388,21 @@ mod tests {
             }
             other => panic!("unexpected request: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn read_request_fast_path() {
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(1u32.to_be_bytes()));
+        frame.push(MessageType::RequestIdentities as u8);
+
+        let (mut client, mut server) = tokio::io::duplex(64);
+        client.write_all(&frame).await.expect("write");
+
+        let mut buffer = BytesMut::new();
+        let parsed = read_request_with_buffer(&mut server, &mut buffer)
+            .await
+            .expect("read");
+        assert!(matches!(parsed, ParsedRequest::RequestIdentities));
     }
 }
