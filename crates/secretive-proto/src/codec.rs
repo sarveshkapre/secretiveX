@@ -78,19 +78,36 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    buffer.clear();
-    buffer.reserve(len);
-    unsafe {
-        buffer.set_len(len);
-    }
-    reader
-        .read_exact(&mut buffer[..])
-        .await
-        .map_err(|_| ProtoError::UnexpectedEof)?;
-    if buffer.is_empty() {
+    if len == 0 {
         return Err(ProtoError::InvalidMessage("missing message type"));
     }
-    Ok(buffer[0])
+    let mut header = [0u8; 1];
+    reader
+        .read_exact(&mut header)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    let mut remaining = len - 1;
+    if remaining == 0 {
+        return Ok(header[0]);
+    }
+
+    buffer.clear();
+    if buffer.capacity() == 0 {
+        buffer.reserve(1024);
+    }
+    while remaining > 0 {
+        let chunk = remaining.min(buffer.capacity());
+        unsafe {
+            buffer.set_len(chunk);
+        }
+        reader
+            .read_exact(&mut buffer[..chunk])
+            .await
+            .map_err(|_| ProtoError::UnexpectedEof)?;
+        remaining -= chunk;
+    }
+
+    Ok(header[0])
 }
 
 pub async fn read_request_with_buffer<R>(
