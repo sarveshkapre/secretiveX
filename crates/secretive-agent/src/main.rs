@@ -306,10 +306,18 @@ fn load_config(path_override: Option<&str>) -> Config {
         .or_else(|| std::env::var("SECRETIVE_CONFIG").ok())
         .or_else(|| default_config_path().map(|path| path.display().to_string()));
     if let Some(path) = path {
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if let Ok(config) = serde_json::from_str::<Config>(&contents) {
-                info!(path = %path, "loaded config");
-                return config;
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => match serde_json::from_str::<Config>(&contents) {
+                Ok(config) => {
+                    info!(path = %path, "loaded config");
+                    return config;
+                }
+                Err(err) => {
+                    warn!(?err, path = %path, "failed to parse config");
+                }
+            },
+            Err(err) => {
+                warn!(?err, path = %path, "failed to read config");
             }
         }
     }
