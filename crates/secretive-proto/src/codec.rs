@@ -101,18 +101,8 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
-    encode_response_into(response, buffer);
-    if buffer.len() > MAX_FRAME_LEN {
-        return Err(ProtoError::FrameTooLarge(buffer.len()));
-    }
-    writer
-        .write_u32(buffer.len() as u32)
-        .await
-        .map_err(|_| ProtoError::UnexpectedEof)?;
-    writer
-        .write_all(&buffer[..])
-        .await
-        .map_err(|_| ProtoError::UnexpectedEof)?;
+    encode_response_frame_into(response, buffer)?;
+    writer.write_all(&buffer[..]).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -141,18 +131,8 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
-    encode_request_into(request, buffer);
-    if buffer.len() > MAX_FRAME_LEN {
-        return Err(ProtoError::FrameTooLarge(buffer.len()));
-    }
-    writer
-        .write_u32(buffer.len() as u32)
-        .await
-        .map_err(|_| ProtoError::UnexpectedEof)?;
-    writer
-        .write_all(&buffer[..])
-        .await
-        .map_err(|_| ProtoError::UnexpectedEof)?;
+    encode_request_frame_into(request, buffer)?;
+    writer.write_all(&buffer[..]).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -307,6 +287,47 @@ pub fn encode_response_into(response: &AgentResponse, buffer: &mut BytesMut) {
     }
 }
 
+pub fn encode_response_frame_into(response: &AgentResponse, buffer: &mut BytesMut) -> Result<()> {
+    buffer.clear();
+    let payload_cap = match response {
+        AgentResponse::IdentitiesAnswer { identities } => {
+            let mut cap = 1 + 4;
+            for identity in identities {
+                cap += 4 + identity.key_blob.len();
+                cap += 4 + identity.comment.len();
+            }
+            cap
+        }
+        AgentResponse::SignResponse { signature_blob } => 1 + 4 + signature_blob.len(),
+        AgentResponse::Failure | AgentResponse::Success => 1,
+    };
+    if payload_cap > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload_cap));
+    }
+    buffer.reserve(4 + payload_cap);
+    buffer.put_u32(0);
+    let start = buffer.len();
+    match response {
+        AgentResponse::Failure => buffer.put_u8(MessageType::Failure as u8),
+        AgentResponse::Success => buffer.put_u8(MessageType::Success as u8),
+        AgentResponse::IdentitiesAnswer { identities } => {
+            buffer.put_u8(MessageType::IdentitiesAnswer as u8);
+            buffer.put_u32(identities.len() as u32);
+            for identity in identities {
+                write_string(buffer, &identity.key_blob);
+                write_string(buffer, identity.comment.as_bytes());
+            }
+        }
+        AgentResponse::SignResponse { signature_blob } => {
+            buffer.put_u8(MessageType::SignResponse as u8);
+            write_string(buffer, signature_blob);
+        }
+    }
+    let payload_len = buffer.len().saturating_sub(start);
+    buffer[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
+    Ok(())
+}
+
 pub fn encode_request(request: &AgentRequest) -> Bytes {
     let mut buf = match request {
         AgentRequest::RequestIdentities => BytesMut::with_capacity(1),
@@ -351,6 +372,39 @@ pub fn encode_request_into(request: &AgentRequest, buffer: &mut BytesMut) {
             buffer.put_slice(payload);
         }
     }
+}
+
+pub fn encode_request_frame_into(request: &AgentRequest, buffer: &mut BytesMut) -> Result<()> {
+    buffer.clear();
+    let payload_cap = match request {
+        AgentRequest::RequestIdentities => 1,
+        AgentRequest::SignRequest { key_blob, data, .. } => {
+            1 + 4 + key_blob.len() + 4 + data.len() + 4
+        }
+        AgentRequest::Unknown { payload, .. } => 1 + payload.len(),
+    };
+    if payload_cap > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload_cap));
+    }
+    buffer.reserve(4 + payload_cap);
+    buffer.put_u32(0);
+    let start = buffer.len();
+    match request {
+        AgentRequest::RequestIdentities => buffer.put_u8(MessageType::RequestIdentities as u8),
+        AgentRequest::SignRequest { key_blob, data, flags } => {
+            buffer.put_u8(MessageType::SignRequest as u8);
+            write_string(buffer, key_blob);
+            write_string(buffer, data);
+            buffer.put_u32(*flags);
+        }
+        AgentRequest::Unknown { message_type, payload } => {
+            buffer.put_u8(*message_type);
+            buffer.put_slice(payload);
+        }
+    }
+    let payload_len = buffer.len().saturating_sub(start);
+    buffer[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
+    Ok(())
 }
 
 pub fn encode_signature_blob(algorithm: &str, signature: &[u8]) -> Vec<u8> {
@@ -432,6 +486,17 @@ mod tests {
         let response = AgentResponse::Failure;
         let framed = encode_response_frame(&response).expect("frame");
         let mut buf = Bytes::from(framed);
+        let len = buf.get_u32() as usize;
+        assert_eq!(len, 1);
+        assert_eq!(buf.get_u8(), MessageType::Failure as u8);
+    }
+
+    #[test]
+    fn encode_response_frame_into_prefix() {
+        let response = AgentResponse::Failure;
+        let mut buffer = BytesMut::new();
+        encode_response_frame_into(&response, &mut buffer).expect("frame");
+        let mut buf = buffer.freeze();
         let len = buf.get_u32() as usize;
         assert_eq!(len, 1);
         assert_eq!(buf.get_u8(), MessageType::Failure as u8);
