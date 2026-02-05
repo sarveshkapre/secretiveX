@@ -75,7 +75,7 @@ impl FileStore {
 
 impl KeyStore for FileStore {
     fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
-        let mut identities = Vec::new();
+        let mut identities = Vec::with_capacity(self.entries.len());
         for entry in self.entries.iter() {
             identities.push(entry.value().identity.clone());
         }
@@ -86,7 +86,9 @@ impl KeyStore for FileStore {
         let entry = self
             .entries
             .get(key_blob)
-            .ok_or(CoreError::KeyNotFound)?;
+            .ok_or(CoreError::KeyNotFound)?
+            .value()
+            .clone();
 
         let key_data = entry.private_key.key_data();
 
