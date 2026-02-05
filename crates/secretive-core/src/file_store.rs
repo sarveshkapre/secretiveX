@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ahash::RandomState;
 use arc_swap::ArcSwap;
 use directories::BaseDirs;
 use ssh_key::{Algorithm, HashAlg, PrivateKey};
@@ -29,7 +30,7 @@ impl Default for FileStoreConfig {
 
 #[derive(Clone)]
 pub struct FileStore {
-    entries: Arc<ArcSwap<HashMap<Vec<u8>, Arc<KeyEntry>>>>,
+    entries: Arc<ArcSwap<HashMap<Vec<u8>, Arc<KeyEntry>, RandomState>>>,
     config: Arc<FileStoreConfig>,
 }
 
@@ -169,7 +170,9 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntry>>> {
+fn load_entries(
+    config: &FileStoreConfig,
+) -> Result<HashMap<Vec<u8>, Arc<KeyEntry>, RandomState>> {
     let mut candidates = VecDeque::with_capacity(config.paths.len().saturating_add(1));
     candidates.extend(config.paths.iter().cloned());
 
@@ -179,7 +182,7 @@ fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntr
         }
     }
 
-    let mut entries = HashMap::with_capacity(candidates.len());
+    let mut entries = HashMap::with_capacity_and_hasher(candidates.len(), RandomState::new());
     let mut seen = HashSet::with_capacity(candidates.len());
 
     while let Some(path) = candidates.pop_front() {

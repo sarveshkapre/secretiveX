@@ -2,20 +2,21 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
+use ahash::RandomState;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
 #[derive(Default)]
 pub struct KeyStoreRegistry {
     stores: Vec<Arc<dyn KeyStore>>,
-    index: ArcSwap<DashMap<Vec<u8>, Arc<dyn KeyStore>>>,
+    index: ArcSwap<DashMap<Vec<u8>, Arc<dyn KeyStore>, RandomState>>,
 }
 
 impl KeyStoreRegistry {
     pub fn new() -> Self {
         Self {
             stores: Vec::new(),
-            index: ArcSwap::from_pointee(DashMap::new()),
+            index: ArcSwap::from_pointee(DashMap::with_hasher(RandomState::new())),
         }
     }
 
@@ -31,7 +32,8 @@ impl KeyStoreRegistry {
 
     pub fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
         let mut out = Vec::new();
-        let mut new_index: DashMap<Vec<u8>, Arc<dyn KeyStore>> = DashMap::new();
+        let mut new_index: DashMap<Vec<u8>, Arc<dyn KeyStore>, RandomState> =
+            DashMap::with_hasher(RandomState::new());
         let mut last_err = None;
         let mut any_ok = false;
         for store in &self.stores {
