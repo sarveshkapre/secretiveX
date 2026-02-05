@@ -3,7 +3,9 @@ use std::io::Read;
 
 use anyhow::Result;
 use bytes::BytesMut;
-use secretive_proto::{read_response_with_buffer, write_request, AgentRequest, AgentResponse, Identity};
+use secretive_proto::{
+    read_response_with_buffer, write_request_with_buffer, AgentRequest, AgentResponse, Identity,
+};
 use ssh_key::Signature;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -28,12 +30,14 @@ async fn main() -> Result<()> {
 
     let (mut reader, mut writer) = tokio::io::split(stream);
     let mut buffer = BytesMut::with_capacity(4096);
+    let mut request_buffer = BytesMut::with_capacity(256);
 
     if args.list {
         list_identities(
             &mut reader,
             &mut writer,
             &mut buffer,
+            &mut request_buffer,
             args.show_openssh,
             args.json,
             args.filter.as_deref(),
@@ -46,9 +50,17 @@ async fn main() -> Result<()> {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
         } else if let Some(comment) = args.sign_comment.as_deref() {
-            select_key_by_comment(&mut reader, &mut writer, &mut buffer, comment).await?
+            select_key_by_comment(&mut reader, &mut writer, &mut buffer, &mut request_buffer, comment)
+                .await?
         } else if let Some(fingerprint) = args.sign_fingerprint.as_deref() {
-            select_key_by_fingerprint(&mut reader, &mut writer, &mut buffer, fingerprint).await?
+            select_key_by_fingerprint(
+                &mut reader,
+                &mut writer,
+                &mut buffer,
+                &mut request_buffer,
+                fingerprint,
+            )
+            .await?
         } else {
             return Err(anyhow::anyhow!("missing key selector"));
         };
@@ -59,8 +71,16 @@ async fn main() -> Result<()> {
             std::io::stdin().read_to_end(&mut buf)?;
             buf
         };
-        let signature_blob = sign_data(&mut reader, &mut writer, &mut buffer, key_blob, data, args.flags)
-            .await?;
+        let signature_blob = sign_data(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            &mut request_buffer,
+            key_blob,
+            data,
+            args.flags,
+        )
+        .await?;
         let signature = decode_signature_blob(&signature_blob)?;
         if args.json {
             let payload = serde_json::json!({
@@ -84,6 +104,7 @@ async fn list_identities<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
+    request_buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
     filter: Option<&str>,
@@ -92,7 +113,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut identities = fetch_identities(reader, writer, buffer).await?;
+    let mut identities = fetch_identities(reader, writer, buffer, request_buffer).await?;
     if let Some(filter) = filter {
         let filter_lower = filter.to_lowercase();
         identities.retain(|id| {
@@ -158,6 +179,7 @@ async fn sign_data<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
+    request_buffer: &mut BytesMut,
     key_blob: Vec<u8>,
     data: Vec<u8>,
     flags: u32,
@@ -171,7 +193,7 @@ where
         data,
         flags,
     };
-    write_request(writer, &request).await?;
+    write_request_with_buffer(writer, &request, request_buffer).await?;
     let response = read_response_with_buffer(reader, buffer).await?;
     match response {
         AgentResponse::SignResponse { signature_blob } => Ok(signature_blob),
@@ -183,12 +205,13 @@ async fn fetch_identities<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
+    request_buffer: &mut BytesMut,
 ) -> Result<Vec<Identity>>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    write_request(writer, &AgentRequest::RequestIdentities).await?;
+    write_request_with_buffer(writer, &AgentRequest::RequestIdentities, request_buffer).await?;
     let response = read_response_with_buffer(reader, buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
@@ -200,13 +223,14 @@ async fn select_key_by_comment<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
+    request_buffer: &mut BytesMut,
     comment: &str,
 ) -> Result<Vec<u8>>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer).await?;
+    let identities = fetch_identities(reader, writer, buffer, request_buffer).await?;
     let target = comment.to_lowercase();
     identities
         .into_iter()
@@ -219,13 +243,14 @@ async fn select_key_by_fingerprint<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
+    request_buffer: &mut BytesMut,
     fingerprint: &str,
 ) -> Result<Vec<u8>>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer).await?;
+    let identities = fetch_identities(reader, writer, buffer, request_buffer).await?;
     let target = fingerprint.to_lowercase();
     for identity in identities {
         if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {

@@ -5,7 +5,9 @@ use anyhow::Result;
 use rand::RngCore;
 use rand::SeedableRng;
 use bytes::BytesMut;
-use secretive_proto::{read_response_with_buffer, write_request, AgentRequest, AgentResponse};
+use secretive_proto::{
+    read_response_with_buffer, write_request_with_buffer, AgentRequest, AgentResponse,
+};
 use tracing::{error, info};
 
 #[cfg(unix)]
@@ -137,7 +139,13 @@ async fn run_worker(
         let stream = connect(&socket_path).await?;
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
-        write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
+        let mut request_buffer = BytesMut::with_capacity(128);
+        write_request_with_buffer(
+            &mut writer,
+            &AgentRequest::RequestIdentities,
+            &mut request_buffer,
+        )
+        .await?;
         let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
         match response {
             AgentResponse::IdentitiesAnswer { identities } => identities
@@ -152,6 +160,7 @@ async fn run_worker(
     };
 
     let mut rng = rand::rngs::StdRng::from_entropy();
+    let mut request_buffer = BytesMut::with_capacity(128);
     let mut request = AgentRequest::SignRequest {
         key_blob: key_blob.clone(),
         data: vec![0u8; payload_size],
@@ -166,7 +175,7 @@ async fn run_worker(
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             let mut buffer = BytesMut::with_capacity(4096);
-            write_request(&mut writer, &request).await?;
+            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
                 return Err(anyhow::anyhow!("unexpected sign response"));
@@ -180,7 +189,7 @@ async fn run_worker(
             if let AgentRequest::SignRequest { data, .. } = &mut request {
                 rng.fill_bytes(data);
             }
-            write_request(&mut writer, &request).await?;
+            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
                 return Err(anyhow::anyhow!("unexpected sign response"));
@@ -193,7 +202,7 @@ async fn run_worker(
                 if let AgentRequest::SignRequest { data, .. } = &mut request {
                     rng.fill_bytes(data);
                 }
-                write_request(&mut writer, &request).await?;
+                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::SignResponse { .. }) {
                     completed += 1;
@@ -204,7 +213,7 @@ async fn run_worker(
                 if let AgentRequest::SignRequest { data, .. } = &mut request {
                     rng.fill_bytes(data);
                 }
-                write_request(&mut writer, &request).await?;
+                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::SignResponse { .. }) {
                     completed += 1;
@@ -225,7 +234,7 @@ async fn run_worker(
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             let mut buffer = BytesMut::with_capacity(4096);
-            write_request(&mut writer, &request).await?;
+            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
                 completed += 1;
@@ -239,7 +248,7 @@ async fn run_worker(
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             let mut buffer = BytesMut::with_capacity(4096);
-            write_request(&mut writer, &request).await?;
+            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
                 completed += 1;

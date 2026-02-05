@@ -131,6 +131,31 @@ where
     Ok(())
 }
 
+pub async fn write_request_with_buffer<W>(
+    writer: &mut W,
+    request: &AgentRequest,
+    buffer: &mut BytesMut,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    encode_request_into(request, buffer);
+    if buffer.len() > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(buffer.len()));
+    }
+    writer
+        .write_u32(buffer.len() as u32)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    Ok(())
+}
+
 pub async fn write_payload<W>(writer: &mut W, payload: &[u8]) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -289,6 +314,28 @@ pub fn encode_request(request: &AgentRequest) -> Bytes {
         }
     }
     buf.freeze()
+}
+
+pub fn encode_request_into(request: &AgentRequest, buffer: &mut BytesMut) {
+    buffer.clear();
+    match request {
+        AgentRequest::RequestIdentities => {
+            buffer.reserve(1);
+            buffer.put_u8(MessageType::RequestIdentities as u8);
+        }
+        AgentRequest::SignRequest { key_blob, data, flags } => {
+            buffer.reserve(1 + 4 + key_blob.len() + 4 + data.len() + 4);
+            buffer.put_u8(MessageType::SignRequest as u8);
+            write_string(buffer, key_blob);
+            write_string(buffer, data);
+            buffer.put_u32(*flags);
+        }
+        AgentRequest::Unknown { message_type, payload } => {
+            buffer.reserve(1 + payload.len());
+            buffer.put_u8(*message_type);
+            buffer.put_slice(payload);
+        }
+    }
 }
 
 pub fn encode_signature_blob(algorithm: &str, signature: &[u8]) -> Vec<u8> {
