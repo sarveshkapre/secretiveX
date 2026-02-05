@@ -10,6 +10,9 @@ use sha1::Sha1;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
+type EntryMap = HashMap<Vec<u8>, Arc<KeyEntry>, RandomState>;
+type PathSet = HashSet<PathBuf, RandomState>;
+
 const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
 const SSH_AGENT_RSA_SHA2_512: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_512;
 
@@ -30,7 +33,7 @@ impl Default for FileStoreConfig {
 
 #[derive(Clone)]
 pub struct FileStore {
-    entries: Arc<ArcSwap<HashMap<Vec<u8>, Arc<KeyEntry>, RandomState>>>,
+    entries: Arc<ArcSwap<EntryMap>>,
     config: Arc<FileStoreConfig>,
 }
 
@@ -172,7 +175,7 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
 
 fn load_entries(
     config: &FileStoreConfig,
-) -> Result<HashMap<Vec<u8>, Arc<KeyEntry>, RandomState>> {
+) -> Result<EntryMap> {
     let mut candidates = VecDeque::with_capacity(config.paths.len().saturating_add(1));
     candidates.extend(config.paths.iter().cloned());
 
@@ -183,7 +186,7 @@ fn load_entries(
     }
 
     let mut entries = HashMap::with_capacity_and_hasher(candidates.len(), RandomState::new());
-    let mut seen = HashSet::with_capacity(candidates.len());
+    let mut seen: PathSet = HashSet::with_capacity_and_hasher(candidates.len(), RandomState::new());
 
     while let Some(path) = candidates.pop_front() {
         let canonical = match path.canonicalize() {
