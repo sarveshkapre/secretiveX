@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
             &mut buffer,
             args.show_openssh,
             args.json,
+            args.json_compact,
             args.raw,
             args.filter.as_deref(),
         )
@@ -96,7 +97,11 @@ async fn main() -> Result<()> {
             };
             let stdout = std::io::stdout();
             let mut handle = stdout.lock();
-            serde_json::to_writer_pretty(&mut handle, &payload)?;
+            if args.json_compact {
+                serde_json::to_writer(&mut handle, &payload)?;
+            } else {
+                serde_json::to_writer_pretty(&mut handle, &payload)?;
+            }
             writeln!(handle)?;
         } else {
             let stdout = std::io::stdout();
@@ -116,6 +121,7 @@ async fn list_identities<S>(
     buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
+    json_compact: bool,
     raw_output: bool,
     filter: Option<&str>,
 ) -> Result<()>
@@ -149,10 +155,40 @@ where
     if json_output {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
-        let mut ser = serde_json::Serializer::pretty(&mut handle);
-        let mut seq = ser.serialize_seq(Some(identities.len()))?;
-        for identity in &identities {
-            if raw_output {
+        if json_compact {
+            let mut ser = serde_json::Serializer::new(&mut handle);
+            let mut seq = ser.serialize_seq(Some(identities.len()))?;
+            for identity in &identities {
+                if raw_output {
+                    let item = JsonIdentity {
+                        key_blob_hex: hex::encode(&identity.key_blob),
+                        comment: &identity.comment,
+                        algorithm: None,
+                        fingerprint: None,
+                        openssh: None,
+                    };
+                    seq.serialize_element(&item)?;
+                    continue;
+                }
+                if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                    let algorithm = public_key.algorithm();
+                    let alg = algorithm.as_str();
+                    let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+                    let openssh = if show_openssh {
+                        public_key.to_openssh().ok().map(|ssh| ssh.trim().to_string())
+                    } else {
+                        None
+                    };
+                    let item = JsonIdentity {
+                        key_blob_hex: hex::encode(&identity.key_blob),
+                        comment: &identity.comment,
+                        algorithm: Some(alg),
+                        fingerprint: Some(fp),
+                        openssh,
+                    };
+                    seq.serialize_element(&item)?;
+                    continue;
+                }
                 let item = JsonIdentity {
                     key_blob_hex: hex::encode(&identity.key_blob),
                     comment: &identity.comment,
@@ -161,38 +197,55 @@ where
                     openssh: None,
                 };
                 seq.serialize_element(&item)?;
-                continue;
             }
-            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-                let algorithm = public_key.algorithm();
-                let alg = algorithm.as_str();
-                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                let openssh = if show_openssh {
-                    public_key.to_openssh().ok().map(|ssh| ssh.trim().to_string())
-                } else {
-                    None
-                };
+            seq.end()?;
+            writeln!(handle)?;
+        } else {
+            let mut ser = serde_json::Serializer::pretty(&mut handle);
+            let mut seq = ser.serialize_seq(Some(identities.len()))?;
+            for identity in &identities {
+                if raw_output {
+                    let item = JsonIdentity {
+                        key_blob_hex: hex::encode(&identity.key_blob),
+                        comment: &identity.comment,
+                        algorithm: None,
+                        fingerprint: None,
+                        openssh: None,
+                    };
+                    seq.serialize_element(&item)?;
+                    continue;
+                }
+                if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                    let algorithm = public_key.algorithm();
+                    let alg = algorithm.as_str();
+                    let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+                    let openssh = if show_openssh {
+                        public_key.to_openssh().ok().map(|ssh| ssh.trim().to_string())
+                    } else {
+                        None
+                    };
+                    let item = JsonIdentity {
+                        key_blob_hex: hex::encode(&identity.key_blob),
+                        comment: &identity.comment,
+                        algorithm: Some(alg),
+                        fingerprint: Some(fp),
+                        openssh,
+                    };
+                    seq.serialize_element(&item)?;
+                    continue;
+                }
                 let item = JsonIdentity {
                     key_blob_hex: hex::encode(&identity.key_blob),
                     comment: &identity.comment,
-                    algorithm: Some(alg),
-                    fingerprint: Some(fp),
-                    openssh,
+                    algorithm: None,
+                    fingerprint: None,
+                    openssh: None,
                 };
                 seq.serialize_element(&item)?;
-                continue;
             }
-            let item = JsonIdentity {
-                key_blob_hex: hex::encode(&identity.key_blob),
-                comment: &identity.comment,
-                algorithm: None,
-                fingerprint: None,
-                openssh: None,
-            };
-            seq.serialize_element(&item)?;
+            seq.end()?;
+            writeln!(handle)?;
         }
-        seq.end()?;
-        writeln!(handle)?;
     } else {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
@@ -492,6 +545,7 @@ struct Args {
     list: bool,
     show_openssh: bool,
     json: bool,
+    json_compact: bool,
     raw: bool,
     filter: Option<String>,
     sign_key_blob: Option<String>,
@@ -510,6 +564,7 @@ fn parse_args() -> Args {
         list: false,
         show_openssh: false,
         json: false,
+        json_compact: false,
         raw: false,
         filter: None,
         sign_key_blob: None,
@@ -527,6 +582,10 @@ fn parse_args() -> Args {
             "--list" => parsed.list = true,
             "--openssh" => parsed.show_openssh = true,
             "--json" => parsed.json = true,
+            "--json-compact" => {
+                parsed.json = true;
+                parsed.json_compact = true;
+            }
             "--raw" => parsed.raw = true,
             "--filter" => parsed.filter = args.next(),
             "--sign" => parsed.sign_key_blob = args.next(),
@@ -551,16 +610,17 @@ fn parse_args() -> Args {
 
 fn print_help() {
     println!("secretive-client usage:\n");
-    println!("  --list [--json] [--openssh] [--raw] [--filter <substring>]");
-    println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json]");
-    println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json]");
-    println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json]");
+    println!("  --list [--json|--json-compact] [--openssh] [--raw] [--filter <substring>]");
+    println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json|--json-compact]");
+    println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json|--json-compact]");
+    println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --socket <path>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  If --data is omitted, stdin is used for signing.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
+    println!("  --json-compact emits compact JSON (no pretty formatting).");
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
