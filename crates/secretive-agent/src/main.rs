@@ -910,6 +910,7 @@ async fn run_unix(
 
     let std_listener = StdUnixListener::bind(&socket_path)?;
     if let Some(backlog) = socket_backlog.filter(|value| *value > 0) {
+        info!(backlog, "socket backlog override");
         let backlog = backlog.min(i32::MAX as u32) as libc::c_int;
         let rc = unsafe { libc::listen(std_listener.as_raw_fd(), backlog) };
         if rc != 0 {
