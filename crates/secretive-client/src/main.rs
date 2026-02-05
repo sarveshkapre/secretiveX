@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::io::Read;
 
 use anyhow::Result;
-use secretive_proto::{read_response, write_request, AgentRequest, AgentResponse};
+use bytes::BytesMut;
+use secretive_proto::{read_response_with_buffer, write_request, AgentRequest, AgentResponse};
 use ssh_key::Signature;
 
 #[cfg(unix)]
@@ -47,8 +48,9 @@ async fn list_identities(
     json_output: bool,
 ) -> Result<()> {
     let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut buffer = BytesMut::with_capacity(4096);
     write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
-    let response = read_response(&mut reader).await?;
+    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
 
     match response {
         AgentResponse::IdentitiesAnswer { identities } => {
@@ -111,13 +113,14 @@ async fn sign_data(
     flags: u32,
 ) -> Result<Vec<u8>> {
     let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut buffer = BytesMut::with_capacity(4096);
     let request = AgentRequest::SignRequest {
         key_blob,
         data,
         flags,
     };
     write_request(&mut writer, &request).await?;
-    let response = read_response(&mut reader).await?;
+    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
     match response {
         AgentResponse::SignResponse { signature_blob } => Ok(signature_blob),
         _ => Err(anyhow::anyhow!("unexpected response")),

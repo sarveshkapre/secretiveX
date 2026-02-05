@@ -34,6 +34,27 @@ where
     decode_response(&buf)
 }
 
+pub async fn read_response_with_buffer<R>(
+    reader: &mut R,
+    buffer: &mut BytesMut,
+) -> Result<AgentResponse>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    if len > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(len));
+    }
+    buffer.resize(len, 0);
+    reader
+        .read_exact(&mut buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    decode_response(&buffer[..])
+}
+
 pub async fn read_request_with_buffer<R>(
     reader: &mut R,
     buffer: &mut BytesMut,
@@ -293,5 +314,19 @@ mod tests {
             }
             _ => panic!("unexpected response"),
         }
+    }
+
+    #[tokio::test]
+    async fn read_response_with_buffer_roundtrip() {
+        let response = AgentResponse::Failure;
+        let encoded = encode_response(&response);
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&encoded);
+
+        let mut cursor = std::io::Cursor::new(frame);
+        let mut buffer = BytesMut::new();
+        let decoded = read_response_with_buffer(&mut cursor, &mut buffer).await.unwrap();
+        assert!(matches!(decoded, AgentResponse::Failure));
     }
 }

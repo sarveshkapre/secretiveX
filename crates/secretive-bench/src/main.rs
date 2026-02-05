@@ -4,7 +4,8 @@ use std::time::Instant;
 use anyhow::Result;
 use rand::RngCore;
 use rand::SeedableRng;
-use secretive_proto::{read_response, write_request, AgentRequest, AgentResponse};
+use bytes::BytesMut;
+use secretive_proto::{read_response_with_buffer, write_request, AgentRequest, AgentResponse};
 use tracing::{error, info};
 
 #[cfg(unix)]
@@ -87,12 +88,13 @@ async fn run_worker(
 ) -> Result<usize> {
     let stream = connect(&socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut buffer = BytesMut::with_capacity(4096);
 
     let key_blob = if let Some(hex_key) = key_blob_hex {
         hex::decode(hex_key)?
     } else {
         write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
-        let response = read_response(&mut reader).await?;
+        let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
         match response {
             AgentResponse::IdentitiesAnswer { identities } => identities
                 .into_iter()
@@ -116,7 +118,7 @@ async fn run_worker(
             flags,
         };
         write_request(&mut writer, &request).await?;
-        let response = read_response(&mut reader).await?;
+        let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
         if !matches!(response, AgentResponse::SignResponse { .. }) {
             return Err(anyhow::anyhow!("unexpected sign response"));
         }
@@ -131,7 +133,7 @@ async fn run_worker(
             flags,
         };
         write_request(&mut writer, &request).await?;
-        let response = read_response(&mut reader).await?;
+        let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
         if matches!(response, AgentResponse::SignResponse { .. }) {
             completed += 1;
         }
