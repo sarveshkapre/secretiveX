@@ -356,7 +356,7 @@ async fn main() {
     let mut _watchers = Vec::new();
     let watch_files = config.watch_files.unwrap_or(true);
     if watch_files && !reloadable_stores.is_empty() {
-        use std::collections::BTreeMap;
+        use std::collections::HashMap;
 
         let mut raw_paths = Vec::new();
         for store in &reloadable_stores {
@@ -367,7 +367,7 @@ async fn main() {
         raw_paths.sort();
         raw_paths.dedup();
 
-        let mut watch_targets: BTreeMap<PathBuf, RecursiveMode> = BTreeMap::new();
+        let mut watch_targets: HashMap<PathBuf, RecursiveMode> = HashMap::new();
         for path in raw_paths {
             if path.is_file() {
                 let target = path.parent().unwrap_or(&path).to_path_buf();
