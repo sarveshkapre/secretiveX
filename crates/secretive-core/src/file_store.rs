@@ -100,8 +100,8 @@ impl KeyStore for FileStore {
     fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
         let entries = self.entries.load();
         let mut identities = Vec::with_capacity(entries.len());
-        for entry in entries.iter() {
-            identities.push(entry.1.identity.clone());
+        for entry in entries.values() {
+            identities.push(entry.identity.clone());
         }
         Ok(identities)
     }
