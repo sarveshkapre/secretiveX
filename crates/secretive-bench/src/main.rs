@@ -224,10 +224,9 @@ async fn run_worker(
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            let stream = connect(socket_path.as_ref()).await?;
-            let (mut reader, mut writer) = tokio::io::split(stream);
+            let mut stream = connect(socket_path.as_ref()).await?;
             if let Some(frame) = &sign_frame {
-                writer.write_all(frame).await?;
+                stream.write_all(frame).await?;
             } else {
                 if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
                     (&mut rng, request.as_mut())
@@ -235,24 +234,23 @@ async fn run_worker(
                     rng.fill_bytes(data);
                 }
                 write_request_with_buffer(
-                    &mut writer,
+                    &mut stream,
                     request.as_ref().expect("sign request"),
                     &mut request_buffer,
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
             if response_type != MessageType::SignResponse as u8 {
                 return Err(anyhow::anyhow!("unexpected sign response"));
             }
         }
     } else {
-        let stream = connect(socket_path.as_ref()).await?;
-        let (mut reader, mut writer) = tokio::io::split(stream);
+        let mut stream = connect(socket_path.as_ref()).await?;
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
             if let Some(frame) = &sign_frame {
-                writer.write_all(frame).await?;
+                stream.write_all(frame).await?;
             } else {
                 if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
                     (&mut rng, request.as_mut())
@@ -260,13 +258,13 @@ async fn run_worker(
                     rng.fill_bytes(data);
                 }
                 write_request_with_buffer(
-                    &mut writer,
+                    &mut stream,
                     request.as_ref().expect("sign request"),
                     &mut request_buffer,
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
             if response_type != MessageType::SignResponse as u8 {
                 return Err(anyhow::anyhow!("unexpected sign response"));
             }
@@ -276,7 +274,7 @@ async fn run_worker(
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
                 if let Some(frame) = &sign_frame {
-                    writer.write_all(frame).await?;
+                    stream.write_all(frame).await?;
                 } else {
                     if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
                         (&mut rng, request.as_mut())
@@ -284,14 +282,14 @@ async fn run_worker(
                         rng.fill_bytes(data);
                     }
                     write_request_with_buffer(
-                        &mut writer,
+                        &mut stream,
                         request.as_ref().expect("sign request"),
                         &mut request_buffer,
                     )
                     .await?;
                 }
                 let response_type =
-                    read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
                 }
@@ -299,7 +297,7 @@ async fn run_worker(
         } else {
             for _ in 0..requests {
                 if let Some(frame) = &sign_frame {
-                    writer.write_all(frame).await?;
+                    stream.write_all(frame).await?;
                 } else {
                     if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
                         (&mut rng, request.as_mut())
@@ -307,14 +305,14 @@ async fn run_worker(
                         rng.fill_bytes(data);
                     }
                     write_request_with_buffer(
-                        &mut writer,
+                        &mut stream,
                         request.as_ref().expect("sign request"),
                         &mut request_buffer,
                     )
                     .await?;
                 }
                 let response_type =
-                    read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
                 }
@@ -329,10 +327,9 @@ async fn run_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            let stream = connect(socket_path.as_ref()).await?;
-            let (mut reader, mut writer) = tokio::io::split(stream);
+            let mut stream = connect(socket_path.as_ref()).await?;
             if let Some(frame) = &sign_frame {
-                writer.write_all(frame).await?;
+                stream.write_all(frame).await?;
             } else {
                 if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
                     (&mut rng, request.as_mut())
@@ -340,23 +337,22 @@ async fn run_worker(
                     rng.fill_bytes(data);
                 }
                 write_request_with_buffer(
-                    &mut writer,
+                    &mut stream,
                     request.as_ref().expect("sign request"),
                     &mut request_buffer,
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
             }
         }
     } else {
         for _ in 0..requests {
-            let stream = connect(socket_path.as_ref()).await?;
-            let (mut reader, mut writer) = tokio::io::split(stream);
+            let mut stream = connect(socket_path.as_ref()).await?;
             if let Some(frame) = &sign_frame {
-                writer.write_all(frame).await?;
+                stream.write_all(frame).await?;
             } else {
                 if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
                     (&mut rng, request.as_mut())
@@ -364,13 +360,13 @@ async fn run_worker(
                     rng.fill_bytes(data);
                 }
                 write_request_with_buffer(
-                    &mut writer,
+                    &mut stream,
                     request.as_ref().expect("sign request"),
                     &mut request_buffer,
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
             }
@@ -396,12 +392,11 @@ async fn run_list_worker(
             list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
         }
     } else {
-        let stream = connect(socket_path.as_ref()).await?;
-        let (mut reader, mut writer) = tokio::io::split(stream);
+        let mut stream = connect(socket_path.as_ref()).await?;
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            writer.write_all(&list_frame).await?;
-            let response_type = read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+            stream.write_all(&list_frame).await?;
+            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
             if response_type != MessageType::IdentitiesAnswer as u8 {
                 return Err(anyhow::anyhow!("unexpected identities response"));
             }
@@ -410,18 +405,18 @@ async fn run_list_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
-                writer.write_all(&list_frame).await?;
+                stream.write_all(&list_frame).await?;
                 let response_type =
-                    read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
                 }
             }
         } else {
             for _ in 0..requests {
-                writer.write_all(&list_frame).await?;
+                stream.write_all(&list_frame).await?;
                 let response_type =
-                    read_response_type_with_buffer(&mut reader, &mut buffer).await?;
+                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
                 }
@@ -453,10 +448,9 @@ async fn list_once(
     list_frame: &Bytes,
     response_buffer: &mut BytesMut,
 ) -> Result<()> {
-    let stream = connect(socket_path).await?;
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    writer.write_all(list_frame).await?;
-    let response_type = read_response_type_with_buffer(&mut reader, response_buffer).await?;
+    let mut stream = connect(socket_path).await?;
+    stream.write_all(list_frame).await?;
+    let response_type = read_response_type_with_buffer(&mut stream, response_buffer).await?;
     if response_type == MessageType::IdentitiesAnswer as u8 {
         Ok(())
     } else {
@@ -465,11 +459,10 @@ async fn list_once(
 }
 
 async fn fetch_first_key(socket_path: &Path) -> Result<Vec<u8>> {
-    let stream = connect(socket_path).await?;
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut stream = connect(socket_path).await?;
     let mut buffer = BytesMut::with_capacity(4096);
-    writer.write_all(list_request_frame()).await?;
-    let response = secretive_proto::read_response_with_buffer(&mut reader, &mut buffer).await?;
+    stream.write_all(list_request_frame()).await?;
+    let response = secretive_proto::read_response_with_buffer(&mut stream, &mut buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => identities
             .into_iter()
