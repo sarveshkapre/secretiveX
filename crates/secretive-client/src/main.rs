@@ -22,7 +22,14 @@ async fn main() -> Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
 
     if args.list {
-        list_identities(&mut reader, &mut writer, &mut buffer, args.show_openssh, args.json)
+        list_identities(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            args.show_openssh,
+            args.json,
+            args.filter.as_deref(),
+        )
             .await?;
         return Ok(());
     }
@@ -71,12 +78,16 @@ async fn list_identities<R, W>(
     buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
+    filter: Option<&str>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer).await?;
+    let mut identities = fetch_identities(reader, writer, buffer).await?;
+    if let Some(filter) = filter {
+        identities.retain(|id| id.comment.contains(filter));
+    }
 
     if json_output {
         let mut out = Vec::new();
@@ -236,6 +247,7 @@ struct Args {
     list: bool,
     show_openssh: bool,
     json: bool,
+    filter: Option<String>,
     sign_key_blob: Option<String>,
     sign_comment: Option<String>,
     sign_fingerprint: Option<String>,
@@ -250,6 +262,7 @@ fn parse_args() -> Args {
         list: false,
         show_openssh: false,
         json: false,
+        filter: None,
         sign_key_blob: None,
         sign_comment: None,
         sign_fingerprint: None,
@@ -263,6 +276,7 @@ fn parse_args() -> Args {
             "--list" => parsed.list = true,
             "--openssh" => parsed.show_openssh = true,
             "--json" => parsed.json = true,
+            "--filter" => parsed.filter = args.next(),
             "--sign" => parsed.sign_key_blob = args.next(),
             "--comment" => parsed.sign_comment = args.next(),
             "--fingerprint" => parsed.sign_fingerprint = args.next(),
