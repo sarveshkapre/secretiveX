@@ -15,6 +15,7 @@ The existing Swift app remains the reference implementation while the Rust versi
 Current Rust milestones:
 - File-based SSH key discovery (`~/.ssh`) with RSA/Ed25519/ECDSA signing
 - High-concurrency agent skeleton with async I/O and blocking-sign offload
+- Reusable protocol buffers to reduce per-request allocations
 - Hot-reload keys on `SIGHUP` (Unix)
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">

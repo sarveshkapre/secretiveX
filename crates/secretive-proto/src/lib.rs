@@ -2,7 +2,8 @@ mod codec;
 mod message;
 
 pub use codec::{
-    decode_request, encode_response, encode_signature_blob, read_request, write_response,
+    decode_request, encode_response, encode_signature_blob, read_request, read_request_with_buffer,
+    write_response,
     MAX_FRAME_LEN,
 };
 pub use message::{AgentRequest, AgentResponse, Identity, MessageType};

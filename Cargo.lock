@@ -734,6 +734,7 @@ dependencies = [
 name = "secretive-agent"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "secretive-core",
  "secretive-proto",
  "serde",

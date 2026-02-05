@@ -19,6 +19,27 @@ where
     decode_request(&buf)
 }
 
+pub async fn read_request_with_buffer<R>(
+    reader: &mut R,
+    buffer: &mut BytesMut,
+) -> Result<AgentRequest>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    if len > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(len));
+    }
+    buffer.resize(len, 0);
+    reader
+        .read_exact(&mut buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    decode_request(&buffer[..])
+}
+
 pub async fn write_response<W>(writer: &mut W, response: &AgentResponse) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,

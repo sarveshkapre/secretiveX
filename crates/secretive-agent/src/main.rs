@@ -6,7 +6,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info, warn};
 
 use secretive_core::{EmptyStore, FileStore, FileStoreConfig, KeyStore, KeyStoreRegistry};
-use secretive_proto::{read_request, write_response, AgentRequest, AgentResponse, Identity};
+use bytes::BytesMut;
+use secretive_proto::{read_request_with_buffer, write_response, AgentRequest, AgentResponse, Identity};
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -193,8 +194,9 @@ where
 {
     let (mut reader, mut writer) = tokio::io::split(stream);
 
+    let mut buffer = BytesMut::with_capacity(4096);
     loop {
-        let request = match read_request(&mut reader).await {
+        let request = match read_request_with_buffer(&mut reader, &mut buffer).await {
             Ok(req) => req,
             Err(err) => {
                 warn!(?err, "failed to read request");
