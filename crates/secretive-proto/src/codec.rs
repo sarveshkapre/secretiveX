@@ -14,7 +14,10 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    let mut buf = vec![0u8; len];
+    let mut buf = Vec::with_capacity(len);
+    unsafe {
+        buf.set_len(len);
+    }
     reader.read_exact(&mut buf).await.map_err(|_| ProtoError::UnexpectedEof)?;
     decode_request(&buf)
 }
@@ -29,7 +32,10 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    let mut buf = vec![0u8; len];
+    let mut buf = Vec::with_capacity(len);
+    unsafe {
+        buf.set_len(len);
+    }
     reader.read_exact(&mut buf).await.map_err(|_| ProtoError::UnexpectedEof)?;
     decode_response(&buf)
 }
