@@ -121,6 +121,7 @@ async fn main() -> Result<()> {
     };
 
     if args.json {
+        let socket_value = socket_path.display().to_string();
         let payload = serde_json::json!({
             "ok": ok,
             "failures": failures,
@@ -134,6 +135,7 @@ async fn main() -> Result<()> {
             "randomize_payload": args.randomize_payload,
             "payload_size": args.payload_size,
             "flags": args.flags,
+            "socket_path": socket_value,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
