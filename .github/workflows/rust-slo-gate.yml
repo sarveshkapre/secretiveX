@@ -1,0 +1,29 @@
+name: Rust SLO Gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+jobs:
+  slo-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run SLO gate
+        env:
+          SLO_CONCURRENCY: "1000"
+          SLO_DURATION_SECS: "20"
+          SLO_PAYLOAD_SIZE: "64"
+          SLO_MIN_RPS: "20"
+          SLO_MAX_P95_US: "300000"
+          SLO_MAX_FAILURE_RATE: "0.01"
+        run: ./scripts/bench_slo_gate.sh

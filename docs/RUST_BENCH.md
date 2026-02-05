@@ -106,3 +106,11 @@ Tune thresholds:
 ```bash
 MIN_RPS=50 BENCH_CONCURRENCY=256 BENCH_REQUESTS=8 ./scripts/bench_smoke_gate.sh
 ```
+
+## SLO gate
+
+Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
+
+```bash
+./scripts/bench_slo_gate.sh
+```

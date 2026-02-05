@@ -42,7 +42,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - [ ] Add Windows service packaging and named-pipe ACL hardening.
 - [x] Add protocol compatibility tests against OpenSSH client flows (list/sign/error paths).
 - [x] Add CI benchmark smoke gate for reconnect fan-out workloads.
-- [ ] Define and enforce initial SLOs:
+- [x] Define and enforce initial SLOs:
   - Reconnect fan-out with 1000 clients.
   - p95 sign latency and minimum throughput targets.
   - Failure-rate threshold under sustained load.
