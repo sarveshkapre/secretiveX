@@ -6,6 +6,9 @@ If no path is provided, the agent looks for:
 - `$XDG_CONFIG_HOME/secretive/agent.json`
 - `<config_dir>/secretive/agent.json` (from `directories::BaseDirs`)
 
+Socket path overrides:
+- `SECRETIVE_SOCK` (Unix) or `SECRETIVE_PIPE` (Windows) override the socket/pipe path when `socket_path` is unset.
+
 ## Top-level fields
 
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
