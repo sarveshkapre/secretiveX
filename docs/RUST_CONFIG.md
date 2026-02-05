@@ -15,6 +15,7 @@ Socket path overrides:
 - `socket_backlog` (number): override the Unix socket listen backlog (0 or omitted uses system default).
 - `stores` (array): ordered list of key stores to load.
 - `max_signers` (number): optional cap for concurrent sign operations.
+- `max_connections` (number): optional cap for concurrent client connections.
 - `max_blocking_threads` (number): cap for Tokio's blocking thread pool (defaults to `max_signers`).
 - `worker_threads` (number): override Tokio worker thread count (defaults to Tokio's auto-detected value).
 - `watch_files` (bool): enable or disable file-store watching (default: true).
@@ -26,6 +27,7 @@ Socket path overrides:
 
 Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_SIGNERS` sets `max_signers`.
+- `SECRETIVE_MAX_CONNECTIONS` sets `max_connections`.
 - `SECRETIVE_MAX_BLOCKING_THREADS` sets `max_blocking_threads`.
 - `SECRETIVE_WORKER_THREADS` sets `worker_threads`.
 - `SECRETIVE_METRICS_EVERY` sets `metrics_every`.

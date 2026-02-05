@@ -33,6 +33,7 @@ struct Config {
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
     max_signers: Option<usize>,
+    max_connections: Option<usize>,
     max_blocking_threads: Option<usize>,
     worker_threads: Option<usize>,
     watch_files: Option<bool>,
@@ -48,8 +49,10 @@ static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
+static MAX_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static CONNECTION_COUNT: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
+static CONNECTION_REJECTED: AtomicU64 = AtomicU64::new(0);
 static LIST_COUNT: AtomicU64 = AtomicU64::new(0);
 static LIST_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 static LIST_CACHE_STALE: AtomicU64 = AtomicU64::new(0);
@@ -235,6 +238,9 @@ fn main() {
     if let Some(max_signers) = args.max_signers {
         config.max_signers = Some(max_signers);
     }
+    if let Some(max_connections) = args.max_connections {
+        config.max_connections = Some(max_connections);
+    }
     if let Some(max_blocking_threads) = args.max_blocking_threads {
         config.max_blocking_threads = Some(max_blocking_threads);
     }
@@ -265,6 +271,11 @@ fn main() {
     if config.max_signers.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_MAX_SIGNERS") {
             config.max_signers = value.parse().ok();
+        }
+    }
+    if config.max_connections.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_MAX_CONNECTIONS") {
+            config.max_connections = value.parse().ok();
         }
     }
     if config.metrics_every.is_none() {
@@ -611,6 +622,16 @@ async fn run_async(mut config: Config, max_signers: usize) {
     MAX_SIGNERS.store(max_signers as u64, Ordering::Relaxed);
     let sign_semaphore = Arc::new(Semaphore::new(max_signers));
 
+    let max_connections = config.max_connections.unwrap_or(0);
+    MAX_CONNECTIONS.store(max_connections as u64, Ordering::Relaxed);
+    let connection_semaphore = if max_connections == 0 {
+        info!("connection limit disabled");
+        None
+    } else {
+        info!(max_connections, "connection limit");
+        Some(Arc::new(Semaphore::new(max_connections)))
+    };
+
     let metrics_every = config.metrics_every.unwrap_or(1000);
     METRICS_EVERY.store(metrics_every, Ordering::Relaxed);
     if metrics_every == 0 {
@@ -640,6 +661,8 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
                     let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
                     let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
+                    let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
+                    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
                     info!(
                         count,
                         errors,
@@ -648,6 +671,8 @@ async fn run_async(mut config: Config, max_signers: usize) {
                         max_signers,
                         connections,
                         active_connections,
+                        max_connections,
+                        connection_rejected,
                         list_count,
                         list_hit,
                         list_stale,
@@ -670,6 +695,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 socket_backlog,
                 registry.clone(),
                 sign_semaphore.clone(),
+                connection_semaphore.clone(),
                 identity_cache.clone(),
                 idle_timeout,
                 inline_sign,
@@ -687,6 +713,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
             pipe_name,
             registry.clone(),
             sign_semaphore.clone(),
+            connection_semaphore.clone(),
             identity_cache.clone(),
             idle_timeout,
             inline_sign,
@@ -739,6 +766,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         scan_default_dir: None,
         stores: None,
         max_signers: None,
+        max_connections: None,
         max_blocking_threads: None,
         worker_threads: None,
         watch_files: None,
@@ -764,6 +792,7 @@ struct Args {
     key_paths: Vec<String>,
     scan_default_dir: Option<bool>,
     max_signers: Option<usize>,
+    max_connections: Option<usize>,
     max_blocking_threads: Option<usize>,
     worker_threads: Option<usize>,
     watch_files: Option<bool>,
@@ -785,6 +814,7 @@ fn parse_args() -> Args {
         key_paths: Vec::new(),
         scan_default_dir: None,
         max_signers: None,
+        max_connections: None,
         max_blocking_threads: None,
         worker_threads: None,
         watch_files: None,
@@ -816,6 +846,11 @@ fn parse_args() -> Args {
             "--max-signers" => {
                 if let Some(value) = args.next() {
                     parsed.max_signers = value.parse().ok();
+                }
+            }
+            "--max-connections" => {
+                if let Some(value) = args.next() {
+                    parsed.max_connections = value.parse().ok();
                 }
             }
             "--max-blocking-threads" => {
@@ -884,7 +919,7 @@ fn print_help() {
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --socket-backlog <n>");
     println!("  --default-scan | --no-default-scan");
-    println!("  --max-signers <n> --max-blocking-threads <n> --worker-threads <n>");
+    println!("  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>");
     println!("  --metrics-every <n>");
     println!("  --watch | --no-watch --pid-file <path>");
     println!("  --identity-cache-ms <n>");
@@ -966,6 +1001,7 @@ async fn run_unix(
     socket_backlog: Option<u32>,
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
+    connection_semaphore: Option<Arc<Semaphore>>,
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
@@ -1025,6 +1061,23 @@ async fn run_unix(
             accept = listener.accept() => {
                 match accept {
                     Ok((stream, _addr)) => {
+                        let connection_permit = if let Some(semaphore) =
+                            connection_semaphore.as_ref()
+                        {
+                            match semaphore.clone().try_acquire_owned() {
+                                Ok(permit) => Some(permit),
+                                Err(_) => {
+                                    let rejected =
+                                        CONNECTION_REJECTED.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if rejected % 100 == 0 {
+                                        warn!(rejected, "connection limit reached");
+                                    }
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                         let registry = registry.clone();
                         let sign_semaphore = sign_semaphore.clone();
@@ -1032,6 +1085,7 @@ async fn run_unix(
                         let idle_timeout = idle_timeout;
                         let inline_sign = inline_sign;
                         tokio::spawn(async move {
+                            let _permit = connection_permit;
                             if let Err(err) =
                                 handle_connection(
                                     stream,
@@ -1077,6 +1131,7 @@ async fn run_windows(
     pipe_name: String,
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
+    connection_semaphore: Option<Arc<Semaphore>>,
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
@@ -1095,6 +1150,21 @@ async fn run_windows(
                     warn!(?err, "named pipe connect failed");
                     continue;
                 }
+                let connection_permit = if let Some(semaphore) = connection_semaphore.as_ref() {
+                    match semaphore.clone().try_acquire_owned() {
+                        Ok(permit) => Some(permit),
+                        Err(_) => {
+                            let rejected =
+                                CONNECTION_REJECTED.fetch_add(1, Ordering::Relaxed) + 1;
+                            if rejected % 100 == 0 {
+                                warn!(rejected, "connection limit reached");
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 let registry = registry.clone();
                 let sign_semaphore = sign_semaphore.clone();
                 let identity_cache = identity_cache.clone();
@@ -1102,6 +1172,7 @@ async fn run_windows(
                 let inline_sign = inline_sign;
                 CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
+                    let _permit = connection_permit;
                     if let Err(err) =
                         handle_connection(
                             server,
