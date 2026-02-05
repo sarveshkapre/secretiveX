@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use std::io::Write;
 use std::sync::OnceLock;
 
 use anyhow::Result;
@@ -142,7 +143,10 @@ async fn main() -> Result<()> {
             "flags": args.flags,
             "socket_path": socket_value,
         });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        serde_json::to_writer_pretty(&mut handle, &payload)?;
+        writeln!(handle)?;
     } else {
         println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
     }
