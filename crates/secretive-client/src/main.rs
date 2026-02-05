@@ -27,17 +27,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    if args.sign_key_blob.is_some() || args.sign_comment.is_some() {
+    if args.sign_key_blob.is_some() || args.sign_comment.is_some() || args.sign_fingerprint.is_some() {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
+        } else if let Some(comment) = args.sign_comment.as_deref() {
+            select_key_by_comment(&mut reader, &mut writer, &mut buffer, comment).await?
+        } else if let Some(fingerprint) = args.sign_fingerprint.as_deref() {
+            select_key_by_fingerprint(&mut reader, &mut writer, &mut buffer, fingerprint).await?
         } else {
-            select_key_by_comment(
-                &mut reader,
-                &mut writer,
-                &mut buffer,
-                args.sign_comment.as_deref().unwrap_or_default(),
-            )
-            .await?
+            return Err(anyhow::anyhow!("missing key selector"));
         };
         let data = if let Some(path) = args.sign_path {
             std::fs::read(path)?
@@ -187,6 +185,28 @@ where
         .ok_or_else(|| anyhow::anyhow!("no identity with comment: {comment}"))
 }
 
+async fn select_key_by_fingerprint<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    buffer: &mut BytesMut,
+    fingerprint: &str,
+) -> Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let identities = fetch_identities(reader, writer, buffer).await?;
+    for identity in identities {
+        if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+            let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+            if fp == fingerprint {
+                return Ok(identity.key_blob);
+            }
+        }
+    }
+    Err(anyhow::anyhow!("no identity with fingerprint: {fingerprint}"))
+}
+
 fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
     let mut cursor = &blob[..];
     let algorithm = read_string(&mut cursor)?;
@@ -218,6 +238,7 @@ struct Args {
     json: bool,
     sign_key_blob: Option<String>,
     sign_comment: Option<String>,
+    sign_fingerprint: Option<String>,
     sign_path: Option<String>,
     flags: u32,
 }
@@ -231,6 +252,7 @@ fn parse_args() -> Args {
         json: false,
         sign_key_blob: None,
         sign_comment: None,
+        sign_fingerprint: None,
         sign_path: None,
         flags: 0,
     };
@@ -243,6 +265,7 @@ fn parse_args() -> Args {
             "--json" => parsed.json = true,
             "--sign" => parsed.sign_key_blob = args.next(),
             "--comment" => parsed.sign_comment = args.next(),
+            "--fingerprint" => parsed.sign_fingerprint = args.next(),
             "--data" => parsed.sign_path = args.next(),
             "--flags" => {
                 if let Some(value) = args.next() {
