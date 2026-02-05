@@ -54,14 +54,16 @@ impl KeyStoreRegistry {
             return Err(last_err.unwrap_or(CoreError::Internal("no key stores")));
         }
         self.index.store(Arc::new(new_index));
-        out.sort_by(|a, b| {
-            let comment = a.comment.cmp(&b.comment);
-            if comment == std::cmp::Ordering::Equal {
-                a.key_blob.cmp(&b.key_blob)
-            } else {
-                comment
-            }
-        });
+        if out.len() > 1 {
+            out.sort_by(|a, b| {
+                let comment = a.comment.cmp(&b.comment);
+                if comment == std::cmp::Ordering::Equal {
+                    a.key_blob.cmp(&b.key_blob)
+                } else {
+                    comment
+                }
+            });
+        }
         Ok(out)
     }
 
