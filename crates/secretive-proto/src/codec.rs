@@ -356,6 +356,16 @@ mod tests {
     }
 
     #[test]
+    fn encode_response_into_matches() {
+        let response = AgentResponse::SignResponse {
+            signature_blob: vec![7, 8, 9],
+        };
+        let mut buffer = BytesMut::new();
+        encode_response_into(&response, &mut buffer);
+        assert_eq!(buffer.freeze(), encode_response(&response));
+    }
+
+    #[test]
     fn encode_request_sign() {
         let request = AgentRequest::SignRequest {
             key_blob: vec![1, 2],
