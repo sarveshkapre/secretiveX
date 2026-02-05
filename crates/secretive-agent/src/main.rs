@@ -1027,7 +1027,7 @@ where
                 }
             }
             _ => {
-                let response = handle_request(registry.clone(), request, sign_semaphore.clone()).await;
+                let response = handle_request(&registry, request, sign_semaphore.as_ref()).await;
                 match response {
                     AgentResponse::Failure => {
                         if let Err(err) = writer.write_all(failure_frame()).await {
@@ -1074,9 +1074,9 @@ impl Drop for ConnectionGuard {
 }
 
 async fn handle_request(
-    registry: Arc<KeyStoreRegistry>,
+    registry: &Arc<KeyStoreRegistry>,
     request: AgentRequest,
-    sign_semaphore: Arc<Semaphore>,
+    sign_semaphore: &Semaphore,
 ) -> AgentResponse {
     match request {
         AgentRequest::RequestIdentities => AgentResponse::Failure,
@@ -1090,7 +1090,9 @@ async fn handle_request(
                     return AgentResponse::Failure;
                 }
             };
-            let result = tokio::task::spawn_blocking(move || registry.sign(&key_blob, &data, flags)).await;
+            let registry = Arc::clone(registry);
+            let result =
+                tokio::task::spawn_blocking(move || registry.sign(&key_blob, &data, flags)).await;
             drop(permit);
             match result {
                 Ok(Ok(signature_blob)) => {
