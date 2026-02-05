@@ -219,6 +219,7 @@ enum StoreConfig {
 
 #[derive(Debug, Deserialize, Default)]
 struct AccessPolicyConfig {
+    pin_fingerprints: Option<Vec<String>>,
     allow_key_blobs: Option<Vec<String>>,
     deny_key_blobs: Option<Vec<String>>,
     allow_fingerprints: Option<Vec<String>>,
@@ -1044,6 +1045,15 @@ impl AccessPolicy {
                 }
             }
         }
+        if let Some(values) = &config.pin_fingerprints {
+            for value in values {
+                if let Some(normalized) = normalize_fingerprint(value) {
+                    policy.allow_fingerprints.insert(normalized);
+                } else {
+                    warn!(fingerprint = value, "invalid pin_fingerprints entry");
+                }
+            }
+        }
         if let Some(values) = &config.deny_fingerprints {
             for value in values {
                 if let Some(normalized) = normalize_fingerprint(value) {
@@ -1358,6 +1368,15 @@ fn validate_config(config: &Config) -> ConfigValidation {
                 if normalize_fingerprint(value).is_none() {
                     out.errors.push(format!(
                         "policy.allow_fingerprints[{idx}] must be a valid fingerprint"
+                    ));
+                }
+            }
+        }
+        if let Some(values) = &policy.pin_fingerprints {
+            for (idx, value) in values.iter().enumerate() {
+                if normalize_fingerprint(value).is_none() {
+                    out.errors.push(format!(
+                        "policy.pin_fingerprints[{idx}] must be a valid fingerprint"
                     ));
                 }
             }
@@ -2704,6 +2723,19 @@ mod tests {
         let validation = validate_config(&config);
         assert!(validation.errors.iter().any(|entry| {
             entry.contains("policy.allow_fingerprints[0] must be a valid fingerprint")
+        }));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_pin_fingerprint() {
+        let mut config = empty_config();
+        config.policy = Some(AccessPolicyConfig {
+            pin_fingerprints: Some(vec!["bad-pin".to_string()]),
+            ..AccessPolicyConfig::default()
+        });
+        let validation = validate_config(&config);
+        assert!(validation.errors.iter().any(|entry| {
+            entry.contains("policy.pin_fingerprints[0] must be a valid fingerprint")
         }));
     }
 }

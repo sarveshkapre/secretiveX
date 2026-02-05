@@ -102,6 +102,7 @@ Note: PKCS#11 support is behind the `pkcs11` feature in `secretive-core`.
 `policy` supports optional allow/deny lists:
 
 - `allow_key_blobs` / `deny_key_blobs`: array of hex-encoded key blobs.
+- `pin_fingerprints`: array of required fingerprints (acts as an allowlist by fingerprint).
 - `allow_fingerprints` / `deny_fingerprints`: array of SSH fingerprints (for example `SHA256:...`).
 - `allow_comments` / `deny_comments`: array of identity comments (case-insensitive exact match).
 
@@ -112,7 +113,7 @@ Example:
 ```json
 {
   "policy": {
-    "allow_fingerprints": ["SHA256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g"],
+    "pin_fingerprints": ["SHA256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g"],
     "deny_comments": ["deprecated-key"]
   }
 }
