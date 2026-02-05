@@ -33,7 +33,7 @@ Socket path overrides:
 - `pid_file` (string): write the agent PID to this file and remove on shutdown.
 - `identity_cache_ms` (number): cache list-identities responses for N milliseconds (default: 1000). Use `0` to disable.
 - `idle_timeout_ms` (number): close idle client connections after N milliseconds (default: disabled). Use `0` to disable.
-- `inline_sign` (bool): perform signing on the async runtime thread (default: false). Enable only when using fast local keys.
+- `inline_sign` (bool): perform signing on the async runtime thread. Default is auto: `true` when no PKCS#11 store is loaded, `false` when PKCS#11 is present.
 
 Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_SIGNERS` sets `max_signers`.

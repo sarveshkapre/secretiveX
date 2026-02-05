@@ -446,6 +446,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
     };
 
     let mut reloadable_stores: Vec<Arc<FileStore>> = Vec::with_capacity(stores.len());
+    let mut has_pkcs11_store = false;
     for store in stores {
         match store {
             StoreConfig::File {
@@ -486,6 +487,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 pin_env,
                 refresh_min_interval_ms,
             } => {
+                has_pkcs11_store = true;
                 let config = Pkcs11Config {
                     module_path: PathBuf::from(module_path),
                     slot,
@@ -529,7 +531,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
     } else {
         info!("connection idle timeout disabled");
     }
-    let inline_sign = config.inline_sign.unwrap_or(false);
+    let inline_sign = effective_inline_sign(config.inline_sign, has_pkcs11_store);
     if inline_sign {
         info!("inline signing enabled");
     } else {
@@ -895,6 +897,10 @@ fn compute_max_signers(config: &Config) -> usize {
         max_signers = 1;
     }
     max_signers
+}
+
+fn effective_inline_sign(explicit: Option<bool>, has_pkcs11_store: bool) -> bool {
+    explicit.unwrap_or(!has_pkcs11_store)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2713,6 +2719,18 @@ mod tests {
 
         assert_eq!(config.max_connections, Some(123));
         assert_eq!(config.sign_timeout_ms, Some(456));
+    }
+
+    #[test]
+    fn inline_sign_defaults_to_true_without_pkcs11() {
+        assert!(effective_inline_sign(None, false));
+        assert!(!effective_inline_sign(None, true));
+    }
+
+    #[test]
+    fn inline_sign_explicit_override_wins() {
+        assert!(effective_inline_sign(Some(true), true));
+        assert!(!effective_inline_sign(Some(false), false));
     }
 
     #[test]

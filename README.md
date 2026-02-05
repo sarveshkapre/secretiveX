@@ -45,7 +45,7 @@ Current Rust milestones:
 - `pid_file` writes the agent PID for monitoring
 - `identity_cache_ms` caches identity lists for fast fan-out
 - `idle_timeout_ms` closes idle connections to free resources
-- `inline_sign` keeps signing on async threads for lower latency on local keys
+- `inline_sign` auto mode enables async-thread signing when no PKCS#11 store is loaded
 - `--check-config` validates config and exits before starting the daemon
 - Linux `systemd --user` service template and install/uninstall scripts
 - Windows service install/uninstall scripts for `secretive-agent`
