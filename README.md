@@ -25,6 +25,7 @@ Current Rust milestones:
 - Config supports `secure_enclave` store type (stub)
 - Agent exposes simple sign latency metrics in logs
 - Concurrent sign requests are bounded by CPU-aware semaphore
+- `max_signers` lets you override concurrency
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 

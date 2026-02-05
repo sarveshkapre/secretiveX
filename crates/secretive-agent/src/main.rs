@@ -25,6 +25,7 @@ struct Config {
     key_paths: Option<Vec<String>>,
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
+    max_signers: Option<usize>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -65,6 +66,9 @@ async fn main() {
         }
     } else if !args.key_paths.is_empty() || args.scan_default_dir.is_some() {
         warn!("config includes store definitions; ignoring CLI file-store overrides");
+    }
+    if let Some(max_signers) = args.max_signers {
+        config.max_signers = Some(max_signers);
     }
 
     let mut registry = KeyStoreRegistry::new();
@@ -197,10 +201,11 @@ async fn main() {
         });
     }
 
-    let max_signers = std::thread::available_parallelism()
+    let default_max_signers = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4)
         .saturating_mul(4);
+    let max_signers = config.max_signers.unwrap_or(default_max_signers);
     let sign_semaphore = Arc::new(Semaphore::new(max_signers));
 
     #[cfg(unix)]
@@ -236,6 +241,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         key_paths: None,
         scan_default_dir: None,
         stores: None,
+        max_signers: None,
     }
 }
 
@@ -244,6 +250,7 @@ struct Args {
     socket_path: Option<String>,
     key_paths: Vec<String>,
     scan_default_dir: Option<bool>,
+    max_signers: Option<usize>,
 }
 
 fn parse_args() -> Args {
@@ -253,6 +260,7 @@ fn parse_args() -> Args {
         socket_path: None,
         key_paths: Vec::new(),
         scan_default_dir: None,
+        max_signers: None,
     };
 
     while let Some(arg) = args.next() {
@@ -266,6 +274,11 @@ fn parse_args() -> Args {
             }
             "--no-default-scan" => parsed.scan_default_dir = Some(false),
             "--default-scan" => parsed.scan_default_dir = Some(true),
+            "--max-signers" => {
+                if let Some(value) = args.next() {
+                    parsed.max_signers = value.parse().ok();
+                }
+            }
             _ => {}
         }
     }

@@ -6,6 +6,7 @@ The Rust agent supports a JSON configuration file. You can point to it via `SECR
 
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
 - `stores` (array): ordered list of key stores to load.
+- `max_signers` (number): optional cap for concurrent sign operations.
 
 Legacy fields (used only when `stores` is not provided):
 - `key_paths` (array of strings): explicit private key paths.
