@@ -43,6 +43,7 @@ Current Rust milestones:
 - Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out
+- CI includes reconnect fan-out benchmark smoke gating
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output

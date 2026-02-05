@@ -1,0 +1,26 @@
+name: Rust Bench Smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bench-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run reconnect fan-out smoke gate
+        env:
+          BENCH_CONCURRENCY: "128"
+          BENCH_REQUESTS: "8"
+          BENCH_PAYLOAD_SIZE: "64"
+          MIN_RPS: "25"
+        run: ./scripts/bench_smoke_gate.sh
