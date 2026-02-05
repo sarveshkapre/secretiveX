@@ -31,7 +31,7 @@ impl KeyStoreRegistry {
 
     pub fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
         let mut out = Vec::new();
-        let new_index: DashMap<Vec<u8>, Arc<dyn KeyStore>> = DashMap::new();
+        let mut new_index: DashMap<Vec<u8>, Arc<dyn KeyStore>> = DashMap::new();
         let mut last_err = None;
         let mut any_ok = false;
         for store in &self.stores {
@@ -39,6 +39,7 @@ impl KeyStoreRegistry {
                 Ok(identities) => {
                     any_ok = true;
                     out.reserve(identities.len());
+                    let _ = new_index.try_reserve(identities.len());
                     for identity in &identities {
                         new_index.insert(identity.key_blob.clone(), store.clone());
                     }
