@@ -410,9 +410,9 @@ fn ascii_lower(byte: u8) -> u8 {
 
 fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
     let mut cursor = &blob[..];
-    let algorithm = read_string(&mut cursor)?;
+    let algorithm = read_string_ref(&mut cursor)?;
     let signature = read_string(&mut cursor)?;
-    let algorithm = std::str::from_utf8(&algorithm)?;
+    let algorithm = std::str::from_utf8(algorithm)?;
     let signature = Signature::new(ssh_key::Algorithm::new(algorithm)?, signature)?;
     Ok(signature)
 }
@@ -444,6 +444,20 @@ fn read_string(buf: &mut &[u8]) -> Result<Vec<u8>> {
     }
     let out = buf[..len].to_vec();
     *buf = &buf[len..];
+    Ok(out)
+}
+
+fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
+    if buf.len() < 4 {
+        return Err(anyhow::anyhow!("invalid blob"));
+    }
+    let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
+    *buf = &buf[4..];
+    if buf.len() < len {
+        return Err(anyhow::anyhow!("invalid blob"));
+    }
+    let (out, rest) = buf.split_at(len);
+    *buf = rest;
     Ok(out)
 }
 
