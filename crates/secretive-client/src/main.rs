@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::io::Read;
 
 use anyhow::Result;
 use secretive_proto::{read_response, write_request, AgentRequest, AgentResponse};
@@ -22,7 +23,13 @@ async fn main() -> Result<()> {
 
     if let Some(key_hex) = args.sign_key_blob {
         let key_blob = hex::decode(key_hex)?;
-        let data = std::fs::read(args.sign_path.expect("--sign requires --data"))?;
+        let data = if let Some(path) = args.sign_path {
+            std::fs::read(path)?
+        } else {
+            let mut buf = Vec::new();
+            std::io::stdin().read_to_end(&mut buf)?;
+            buf
+        };
         let signature_blob = sign_data(&mut stream, key_blob, data, args.flags).await?;
         let signature = decode_signature_blob(&signature_blob)?;
         println!("algorithm: {}", signature.algorithm().as_str());
