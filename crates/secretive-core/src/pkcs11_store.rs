@@ -225,7 +225,10 @@ mod enabled {
             let signature = ssh_key::Signature::new(algorithm, signature)
                 .map_err(|_| CoreError::Crypto("pkcs11 signature"))?;
 
-            Ok(encode_signature_blob(signature.algorithm(), signature.as_bytes()))
+            Ok(secretive_proto::encode_signature_blob(
+                signature.algorithm().as_str(),
+                signature.as_bytes(),
+            ))
         }
     }
 
@@ -257,20 +260,7 @@ mod enabled {
             .ok_or(CoreError::KeyNotFound)
     }
 
-    fn encode_signature_blob(algorithm: Algorithm, signature: &[u8]) -> Vec<u8> {
-        use bytes::{BufMut, BytesMut};
-
-        let mut buf = BytesMut::new();
-        let algorithm = algorithm.as_str();
-        write_string(&mut buf, algorithm.as_bytes());
-        write_string(&mut buf, signature);
-        buf.to_vec()
-    }
-
-    fn write_string(buf: &mut bytes::BytesMut, bytes: &[u8]) {
-        buf.put_u32(bytes.len() as u32);
-        buf.put_slice(bytes);
-    }
+    // signature encoding delegated to secretive-proto
 
     pub(super) use Pkcs11Store as EnabledPkcs11Store;
 }

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use directories::BaseDirs;
-use bytes::{BufMut, BytesMut};
 use ssh_key::{Algorithm, HashAlg, PrivateKey};
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
@@ -102,7 +101,10 @@ impl KeyStore for FileStore {
                 .map_err(|_| CoreError::Crypto("sign failed"))?
         };
 
-        let signature_blob = encode_signature_blob(signature.algorithm(), signature.as_bytes());
+        let signature_blob = secretive_proto::encode_signature_blob(
+            signature.algorithm().as_str(),
+            signature.as_bytes(),
+        );
         Ok(signature_blob)
     }
 }
@@ -249,15 +251,4 @@ fn sign_rsa(
     .map_err(|_| CoreError::Crypto("rsa sha512 signature"))?)
 }
 
-fn encode_signature_blob(algorithm: Algorithm, signature: &[u8]) -> Vec<u8> {
-    let mut buf = BytesMut::new();
-    let algorithm = algorithm.as_str();
-    write_string(&mut buf, algorithm.as_bytes());
-    write_string(&mut buf, signature);
-    buf.to_vec()
-}
-
-fn write_string(buf: &mut BytesMut, bytes: &[u8]) {
-    buf.put_u32(bytes.len() as u32);
-    buf.put_slice(bytes);
-}
+// signature encoding delegated to secretive-proto
