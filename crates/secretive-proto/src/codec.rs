@@ -82,12 +82,8 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
-    let payload = encode_response(response);
-    if payload.len() > MAX_FRAME_LEN {
-        return Err(ProtoError::FrameTooLarge(payload.len()));
-    }
-    writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
-    writer.write_all(&payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    let frame = encode_response_frame(response)?;
+    writer.write_all(&frame).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -112,12 +108,8 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
-    let payload = encode_request(request);
-    if payload.len() > MAX_FRAME_LEN {
-        return Err(ProtoError::FrameTooLarge(payload.len()));
-    }
-    writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
-    writer.write_all(&payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    let frame = encode_request_frame(request)?;
+    writer.write_all(&frame).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -353,6 +345,12 @@ pub fn encode_request(request: &AgentRequest) -> Bytes {
     buf.freeze()
 }
 
+pub fn encode_request_frame(request: &AgentRequest) -> Result<Bytes> {
+    let mut buffer = BytesMut::new();
+    encode_request_frame_into(request, &mut buffer)?;
+    Ok(buffer.freeze())
+}
+
 pub fn encode_request_into(request: &AgentRequest, buffer: &mut BytesMut) {
     buffer.clear();
     match request {
@@ -501,6 +499,16 @@ mod tests {
         let len = buf.get_u32() as usize;
         assert_eq!(len, 1);
         assert_eq!(buf.get_u8(), MessageType::Failure as u8);
+    }
+
+    #[test]
+    fn encode_request_frame_prefix() {
+        let request = AgentRequest::RequestIdentities;
+        let framed = encode_request_frame(&request).expect("frame");
+        let mut buf = Bytes::from(framed);
+        let len = buf.get_u32() as usize;
+        assert_eq!(len, 1);
+        assert_eq!(buf.get_u8(), MessageType::RequestIdentities as u8);
     }
 
     #[test]
