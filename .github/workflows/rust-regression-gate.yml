@@ -21,3 +21,22 @@ jobs:
 
       - name: Run regression gate
         run: sh ./scripts/regression_gate.sh
+
+  pkcs11-feature-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build secretive-core with pkcs11 feature
+        run: cargo test -p secretive-core --features pkcs11 --no-run
