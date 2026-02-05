@@ -65,6 +65,34 @@ where
     decode_response(&buffer[..])
 }
 
+pub async fn read_response_type_with_buffer<R>(
+    reader: &mut R,
+    buffer: &mut BytesMut,
+) -> Result<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    if len > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(len));
+    }
+    buffer.clear();
+    buffer.reserve(len);
+    unsafe {
+        buffer.set_len(len);
+    }
+    reader
+        .read_exact(&mut buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    if buffer.is_empty() {
+        return Err(ProtoError::InvalidMessage("missing message type"));
+    }
+    Ok(buffer[0])
+}
+
 pub async fn read_request_with_buffer<R>(
     reader: &mut R,
     buffer: &mut BytesMut,
