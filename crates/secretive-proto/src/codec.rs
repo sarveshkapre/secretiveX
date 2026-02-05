@@ -339,7 +339,7 @@ pub fn encode_request_into(request: &AgentRequest, buffer: &mut BytesMut) {
 }
 
 pub fn encode_signature_blob(algorithm: &str, signature: &[u8]) -> Vec<u8> {
-    let mut buf = BytesMut::new();
+    let mut buf = BytesMut::with_capacity(8 + algorithm.len() + signature.len());
     write_string(&mut buf, algorithm.as_bytes());
     write_string(&mut buf, signature);
     buf.to_vec()
