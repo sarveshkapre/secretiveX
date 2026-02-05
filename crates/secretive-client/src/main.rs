@@ -13,6 +13,7 @@ use secretive_proto::{
 };
 use ssh_key::Signature;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::time::Duration;
 
 #[cfg(unix)]
 use tokio::net::UnixStream as AgentStream;
@@ -34,6 +35,13 @@ async fn main() -> Result<()> {
     }
     let socket_path = resolve_socket_path(args.socket_path.clone());
     let stream = connect(&socket_path).await?;
+    let response_timeout = args.response_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
 
     let mut stream = stream;
     let mut buffer = BytesMut::with_capacity(4096);
@@ -47,6 +55,7 @@ async fn main() -> Result<()> {
             args.json_compact,
             args.raw,
             args.filter.as_deref(),
+            response_timeout,
         )
             .await?;
         return Ok(());
@@ -57,13 +66,14 @@ async fn main() -> Result<()> {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
         } else if let Some(comment) = args.sign_comment.as_deref() {
-            select_key_by_comment(&mut stream, &mut buffer, comment)
+            select_key_by_comment(&mut stream, &mut buffer, comment, response_timeout)
                 .await?
         } else if let Some(fingerprint) = args.sign_fingerprint.as_deref() {
             select_key_by_fingerprint(
                 &mut stream,
                 &mut buffer,
                 fingerprint,
+                response_timeout,
             )
             .await?
         } else {
@@ -85,6 +95,7 @@ async fn main() -> Result<()> {
             key_blob,
             data,
             args.flags,
+            response_timeout,
         )
         .await?;
         let signature = decode_signature_blob(&signature_blob)?;
@@ -124,11 +135,12 @@ async fn list_identities<S>(
     json_compact: bool,
     raw_output: bool,
     filter: Option<&str>,
+    response_timeout: Option<Duration>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut identities = fetch_identities(stream, buffer).await?;
+    let mut identities = fetch_identities(stream, buffer, response_timeout).await?;
     if let Some(filter) = filter {
         let filter_lower = if is_ascii_lowercase(filter) {
             Cow::Borrowed(filter.as_bytes())
@@ -306,6 +318,7 @@ async fn sign_data<S>(
     key_blob: Vec<u8>,
     data: Vec<u8>,
     flags: u32,
+    response_timeout: Option<Duration>,
 ) -> Result<Vec<u8>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -316,7 +329,7 @@ where
         flags,
     };
     write_request_with_buffer(stream, &request, request_buffer).await?;
-    let response = read_response_with_buffer(stream, buffer).await?;
+    let response = read_response_with_timeout(stream, buffer, response_timeout).await?;
     match response {
         AgentResponse::SignResponse { signature_blob } => Ok(signature_blob),
         _ => Err(anyhow::anyhow!("unexpected response")),
@@ -326,12 +339,13 @@ where
 async fn fetch_identities<S>(
     stream: &mut S,
     buffer: &mut BytesMut,
+    response_timeout: Option<Duration>,
 ) -> Result<Vec<Identity>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     stream.write_all(list_request_frame()).await?;
-    let response = read_response_with_buffer(stream, buffer).await?;
+    let response = read_response_with_timeout(stream, buffer, response_timeout).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
         _ => Err(anyhow::anyhow!("unexpected response")),
@@ -345,15 +359,33 @@ fn list_request_frame() -> &'static Bytes {
     })
 }
 
+async fn read_response_with_timeout<S>(
+    stream: &mut S,
+    buffer: &mut BytesMut,
+    response_timeout: Option<Duration>,
+) -> Result<AgentResponse>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    match response_timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, read_response_with_buffer(stream, buffer)).await {
+            Ok(result) => Ok(result?),
+            Err(_) => Err(anyhow::anyhow!("response timeout")),
+        },
+        None => Ok(read_response_with_buffer(stream, buffer).await?),
+    }
+}
+
 async fn select_key_by_comment<S>(
     stream: &mut S,
     buffer: &mut BytesMut,
     comment: &str,
+    response_timeout: Option<Duration>,
 ) -> Result<Vec<u8>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(stream, buffer).await?;
+    let identities = fetch_identities(stream, buffer, response_timeout).await?;
     identities
         .into_iter()
         .find(|id| id.comment == comment || id.comment.eq_ignore_ascii_case(comment))
@@ -365,11 +397,12 @@ async fn select_key_by_fingerprint<S>(
     stream: &mut S,
     buffer: &mut BytesMut,
     fingerprint: &str,
+    response_timeout: Option<Duration>,
 ) -> Result<Vec<u8>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(stream, buffer).await?;
+    let identities = fetch_identities(stream, buffer, response_timeout).await?;
     let target = fingerprint.trim();
     let target_stripped = strip_sha256_prefix(target);
     let target_fp = parse_fingerprint_input(target);
@@ -553,6 +586,7 @@ struct Args {
     sign_fingerprint: Option<String>,
     sign_path: Option<String>,
     flags: u32,
+    response_timeout_ms: Option<u64>,
     help: bool,
     version: bool,
 }
@@ -572,6 +606,7 @@ fn parse_args() -> Args {
         sign_fingerprint: None,
         sign_path: None,
         flags: 0,
+        response_timeout_ms: None,
         help: false,
         version: false,
     };
@@ -599,6 +634,11 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--response-timeout-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.response_timeout_ms = value.parse().ok();
+                }
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -614,7 +654,8 @@ fn print_help() {
     println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json|--json-compact]");
-    println!("  --socket <path>\n");
+    println!("  --socket <path>");
+    println!("  --response-timeout-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  If --data is omitted, stdin is used for signing.");
