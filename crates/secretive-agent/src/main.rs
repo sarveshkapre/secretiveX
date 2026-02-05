@@ -1060,21 +1060,13 @@ where
     let mut buffer = BytesMut::new();
     let mut response_buffer: Option<BytesMut> = None;
     loop {
-        let frame = match read_request_frame_with_buffer(&mut stream, &mut buffer).await {
-            Ok(frame) => frame,
+        let request = match read_request_with_buffer(&mut stream, &mut buffer).await {
+            Ok(request) => request,
             Err(err) => {
                 if matches!(err, ProtoError::UnexpectedEof) {
                     break;
                 }
                 warn!(?err, "failed to read request");
-                break;
-            }
-        };
-
-        let request = match decode_request_frame(&frame) {
-            Ok(request) => request,
-            Err(err) => {
-                warn!(?err, "failed to decode request");
                 break;
             }
         };
@@ -1154,10 +1146,10 @@ impl Drop for ConnectionGuard {
     }
 }
 
-async fn read_request_frame_with_buffer<R>(
+async fn read_request_with_buffer<R>(
     reader: &mut R,
     buffer: &mut BytesMut,
-) -> Result<Bytes, ProtoError>
+) -> Result<ParsedRequest, ProtoError>
 where
     R: AsyncRead + Unpin,
 {
@@ -1166,6 +1158,22 @@ where
     let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
+    }
+    if len == 0 {
+        return Err(ProtoError::InvalidMessage("missing message type"));
+    }
+    if len == 1 {
+        let mut byte = [0u8; 1];
+        reader
+            .read_exact(&mut byte)
+            .await
+            .map_err(|_| ProtoError::UnexpectedEof)?;
+        let message_type = byte[0];
+        return match message_type {
+            x if x == MessageType::RequestIdentities as u8 => Ok(ParsedRequest::RequestIdentities),
+            x if x == MessageType::SignRequest as u8 => Err(ProtoError::UnexpectedEof),
+            _ => Ok(ParsedRequest::Unknown { message_type }),
+        };
     }
     buffer.clear();
     buffer.reserve(len);
@@ -1176,7 +1184,8 @@ where
         .read_exact(&mut buffer[..])
         .await
         .map_err(|_| ProtoError::UnexpectedEof)?;
-    Ok(buffer.clone().freeze())
+    let frame = buffer.clone().freeze();
+    decode_request_frame(&frame)
 }
 
 fn decode_request_frame(frame: &Bytes) -> Result<ParsedRequest, ProtoError> {
