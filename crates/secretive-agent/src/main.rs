@@ -364,7 +364,8 @@ async fn main() {
             raw_paths.reserve(paths.len());
             raw_paths.extend(paths);
         }
-        let mut watch_targets: HashMap<PathBuf, RecursiveMode> = HashMap::new();
+        let mut watch_targets: HashMap<PathBuf, RecursiveMode> =
+            HashMap::with_capacity(raw_paths.len());
         for path in raw_paths {
             if path.is_file() {
                 let target = path.parent().unwrap_or(&path).to_path_buf();
