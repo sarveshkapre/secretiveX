@@ -211,6 +211,11 @@ async fn main() {
             config.max_signers = value.parse().ok();
         }
     }
+    if config.metrics_every.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_METRICS_EVERY") {
+            config.metrics_every = value.parse().ok();
+        }
+    }
     if config.identity_cache_ms.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_IDENTITY_CACHE_MS") {
             config.identity_cache_ms = value.parse().ok();

@@ -18,6 +18,7 @@ If no path is provided, the agent looks for:
 
 Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_SIGNERS` sets `max_signers`.
+- `SECRETIVE_METRICS_EVERY` sets `metrics_every`.
 - `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
 
 Legacy fields (used only when `stores` is not provided):
