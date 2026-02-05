@@ -48,6 +48,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let socket_path = resolve_socket_path(args.socket_path.clone());
+    let shared_key = if args.list_only {
+        None
+    } else if let Some(hex_key) = args.key_blob_hex.as_deref() {
+        Some(hex::decode(hex_key)?)
+    } else {
+        Some(fetch_first_key(&socket_path).await?)
+    };
 
     let total_requests = args.concurrency * args.requests_per_worker;
     if let Some(duration) = args.duration_secs {
@@ -66,7 +73,7 @@ async fn main() -> Result<()> {
         let warmup = args.warmup;
         let payload_size = args.payload_size;
         let flags = args.flags;
-        let key_blob_hex = args.key_blob_hex.clone();
+        let shared_key = shared_key.clone();
         let reconnect = args.reconnect;
         let list_only = args.list_only;
         let deadline = deadline.clone();
@@ -78,7 +85,7 @@ async fn main() -> Result<()> {
                 warmup,
                 payload_size,
                 flags,
-                key_blob_hex,
+                shared_key,
                 reconnect,
                 list_only,
                 deadline,
@@ -132,7 +139,7 @@ async fn run_worker(
     warmup: usize,
     payload_size: usize,
     flags: u32,
-    key_blob_hex: Option<String>,
+    shared_key: Option<Vec<u8>>,
     reconnect: bool,
     list_only: bool,
     deadline: Option<Instant>,
@@ -141,30 +148,10 @@ async fn run_worker(
         return run_list_worker(socket_path, requests, warmup, reconnect, deadline).await;
     }
 
-    let key_blob = if let Some(hex_key) = key_blob_hex {
-        hex::decode(hex_key)?
+    let key_blob = if let Some(key_blob) = shared_key {
+        key_blob
     } else {
-        let stream = connect(&socket_path).await?;
-        let (mut reader, mut writer) = tokio::io::split(stream);
-        let mut buffer = BytesMut::with_capacity(4096);
-        let mut request_buffer = BytesMut::with_capacity(128);
-        write_request_with_buffer(
-            &mut writer,
-            &AgentRequest::RequestIdentities,
-            &mut request_buffer,
-        )
-        .await?;
-        let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
-        match response {
-            AgentResponse::IdentitiesAnswer { identities } => identities
-                .into_iter()
-                .next()
-                .map(|id| id.key_blob)
-                .ok_or_else(|| anyhow::anyhow!("no identities"))?,
-            _ => {
-                return Err(anyhow::anyhow!("unexpected response"))
-            }
-        }
+        fetch_first_key(&socket_path).await?
     };
 
     let mut rng = rand::rngs::StdRng::from_entropy();
@@ -361,6 +348,28 @@ async fn list_once(socket_path: &PathBuf, request_buffer: &mut BytesMut) -> Resu
         Ok(())
     } else {
         Err(anyhow::anyhow!("unexpected identities response"))
+    }
+}
+
+async fn fetch_first_key(socket_path: &Path) -> Result<Vec<u8>> {
+    let stream = connect(socket_path).await?;
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut request_buffer = BytesMut::with_capacity(128);
+    write_request_with_buffer(
+        &mut writer,
+        &AgentRequest::RequestIdentities,
+        &mut request_buffer,
+    )
+    .await?;
+    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+    match response {
+        AgentResponse::IdentitiesAnswer { identities } => identities
+            .into_iter()
+            .next()
+            .map(|id| id.key_blob)
+            .ok_or_else(|| anyhow::anyhow!("no identities")),
+        _ => Err(anyhow::anyhow!("unexpected response")),
     }
 }
 
