@@ -1,7 +1,10 @@
 mod codec;
 mod message;
 
-pub use codec::{decode_request, encode_response, read_request, write_response, MAX_FRAME_LEN};
+pub use codec::{
+    decode_request, encode_response, encode_signature_blob, read_request, write_response,
+    MAX_FRAME_LEN,
+};
 pub use message::{AgentRequest, AgentResponse, Identity, MessageType};
 
 pub type Result<T> = std::result::Result<T, ProtoError>;

@@ -5,12 +5,14 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info, warn};
 
-use secretive_core::{EmptyStore, KeyStoreRegistry};
+use secretive_core::{EmptyStore, FileStore, FileStoreConfig, KeyStore, KeyStoreRegistry};
 use secretive_proto::{read_request, write_response, AgentRequest, AgentResponse, Identity};
 
 #[derive(Debug, Deserialize)]
 struct Config {
     socket_path: Option<String>,
+    key_paths: Option<Vec<String>>,
+    scan_default_dir: Option<bool>,
 }
 
 #[tokio::main]
@@ -22,7 +24,46 @@ async fn main() {
     let config = load_config();
 
     let mut registry = KeyStoreRegistry::new();
-    registry.register(Arc::new(EmptyStore));
+    let mut store_config = FileStoreConfig::default();
+    if let Some(paths) = config.key_paths.clone() {
+        store_config.paths = paths.into_iter().map(PathBuf::from).collect();
+    }
+    if let Some(scan) = config.scan_default_dir {
+        store_config.scan_default_dir = scan;
+    }
+
+    let file_store = match FileStore::load(store_config) {
+        Ok(store) => {
+            let store = Arc::new(store);
+            registry.register(store.clone());
+            Some(store)
+        }
+        Err(err) => {
+            warn!(?err, "failed to load file-based keys");
+            registry.register(Arc::new(EmptyStore));
+            None
+        }
+    };
+
+    if let Ok(identities) = registry.list_identities() {
+        info!(count = identities.len(), "loaded identities");
+    }
+
+    #[cfg(unix)]
+    if let Some(store) = file_store.clone() {
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut stream) = signal(SignalKind::hangup()) {
+                while stream.recv().await.is_some() {
+                    if let Err(err) = store.reload() {
+                        warn!(?err, "failed to reload keys");
+                    } else if let Ok(identities) = store.list_identities() {
+                        info!(count = identities.len(), "reloaded identities");
+                    }
+                }
+            }
+        });
+    }
 
     #[cfg(unix)]
     {
@@ -50,7 +91,11 @@ fn load_config() -> Config {
             }
         }
     }
-    Config { socket_path: None }
+    Config {
+        socket_path: None,
+        key_paths: None,
+        scan_default_dir: None,
+    }
 }
 
 #[cfg(unix)]
@@ -157,7 +202,7 @@ where
             }
         };
 
-        let response = handle_request(&registry, request).await;
+        let response = handle_request(registry.clone(), request).await;
         if let Err(err) = write_response(&mut writer, &response).await {
             warn!(?err, "failed to write response");
             break;
@@ -167,7 +212,7 @@ where
     Ok(())
 }
 
-async fn handle_request(registry: &KeyStoreRegistry, request: AgentRequest) -> AgentResponse {
+async fn handle_request(registry: Arc<KeyStoreRegistry>, request: AgentRequest) -> AgentResponse {
     match request {
         AgentRequest::RequestIdentities => {
             match registry.list_identities() {
@@ -184,10 +229,15 @@ async fn handle_request(registry: &KeyStoreRegistry, request: AgentRequest) -> A
             }
         }
         AgentRequest::SignRequest { key_blob, data, flags } => {
-            match registry.sign(&key_blob, &data, flags) {
-                Ok(signature_blob) => AgentResponse::SignResponse { signature_blob },
-                Err(err) => {
+            let result = tokio::task::spawn_blocking(move || registry.sign(&key_blob, &data, flags)).await;
+            match result {
+                Ok(Ok(signature_blob)) => AgentResponse::SignResponse { signature_blob },
+                Ok(Err(err)) => {
                     warn!(?err, "sign request failed");
+                    AgentResponse::Failure
+                }
+                Err(err) => {
+                    warn!(?err, "sign worker failed");
                     AgentResponse::Failure
                 }
             }

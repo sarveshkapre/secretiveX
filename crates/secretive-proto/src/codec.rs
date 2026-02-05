@@ -77,6 +77,13 @@ pub fn encode_response(response: &AgentResponse) -> Bytes {
     buf.freeze()
 }
 
+pub fn encode_signature_blob(algorithm: &str, signature: &[u8]) -> Vec<u8> {
+    let mut buf = BytesMut::new();
+    write_string(&mut buf, algorithm.as_bytes());
+    write_string(&mut buf, signature);
+    buf.to_vec()
+}
+
 fn read_string(buf: &mut Bytes) -> Result<Vec<u8>> {
     if buf.remaining() < 4 {
         return Err(ProtoError::UnexpectedEof);
@@ -122,5 +129,15 @@ mod tests {
         assert_eq!(buf.copy_to_bytes(3).to_vec(), vec![1, 2, 3]);
         assert_eq!(buf.get_u32(), 4);
         assert_eq!(buf.copy_to_bytes(4).to_vec(), b"test");
+    }
+
+    #[test]
+    fn encode_signature_blob_format() {
+        let encoded = encode_signature_blob("ssh-ed25519", &[1, 2, 3, 4]);
+        let mut buf = Bytes::from(encoded);
+        assert_eq!(buf.get_u32(), 11);
+        assert_eq!(buf.copy_to_bytes(11).to_vec(), b"ssh-ed25519");
+        assert_eq!(buf.get_u32(), 4);
+        assert_eq!(buf.copy_to_bytes(4).to_vec(), vec![1, 2, 3, 4]);
     }
 }

@@ -11,6 +11,11 @@ This repository now includes an in-progress Rust rewrite focused on cross-platfo
 - `secretive-agent`: cross-platform daemon skeleton (Unix socket / Windows named pipe)
 
 The existing Swift app remains the reference implementation while the Rust version reaches feature parity.
+
+Current Rust milestones:
+- File-based SSH key discovery (`~/.ssh`) with RSA/Ed25519/ECDSA signing
+- High-concurrency agent skeleton with async I/O and blocking-sign offload
+- Hot-reload keys on `SIGHUP` (Unix)
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">

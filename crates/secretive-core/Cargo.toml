@@ -8,3 +8,11 @@ license.workspace = true
 secretive-proto = { path = "../secretive-proto" }
 thiserror.workspace = true
 serde.workspace = true
+bytes.workspace = true
+dashmap = "6.1"
+directories = "5.0"
+ssh-key = { version = "0.6", features = ["ed25519", "p256", "p384", "p521", "rsa"] }
+signature = "2.2"
+rsa = "0.9"
+sha2 = "0.10"
+zeroize = "1.8"
