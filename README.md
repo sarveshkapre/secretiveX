@@ -20,6 +20,8 @@ Current Rust milestones:
 - CLI flags for config, socket path, and key overrides
 - Config-driven store list (file now; pkcs11 placeholder)
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
+
+Rust config format: see `docs/RUST_CONFIG.md`.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">
