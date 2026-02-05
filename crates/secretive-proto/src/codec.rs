@@ -137,7 +137,20 @@ pub fn decode_response(frame: &[u8]) -> Result<AgentResponse> {
 }
 
 pub fn encode_response(response: &AgentResponse) -> Bytes {
-    let mut buf = BytesMut::new();
+    let mut buf = match response {
+        AgentResponse::IdentitiesAnswer { identities } => {
+            let mut cap = 1 + 4;
+            for identity in identities {
+                cap += 4 + identity.key_blob.len();
+                cap += 4 + identity.comment.len();
+            }
+            BytesMut::with_capacity(cap)
+        }
+        AgentResponse::SignResponse { signature_blob } => {
+            BytesMut::with_capacity(1 + 4 + signature_blob.len())
+        }
+        _ => BytesMut::with_capacity(1),
+    };
     match response {
         AgentResponse::Failure => buf.put_u8(MessageType::Failure as u8),
         AgentResponse::Success => buf.put_u8(MessageType::Success as u8),
