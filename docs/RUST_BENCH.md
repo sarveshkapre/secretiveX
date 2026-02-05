@@ -8,6 +8,12 @@
 cargo run -p secretive-bench -- --concurrency 64 --requests 200
 ```
 
+## JSON output
+
+```bash
+cargo run -p secretive-bench -- --concurrency 100 --requests 50 --json
+```
+
 ## High fan-out simulation
 
 ```bash

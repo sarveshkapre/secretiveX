@@ -13,3 +13,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow = "1.0"
 hex = "0.4"
+serde_json.workspace = true

@@ -22,10 +22,11 @@ struct Args {
     payload_size: usize,
     flags: u32,
     key_blob_hex: Option<String>,
+    json: bool,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -74,7 +75,19 @@ async fn main() {
         0.0
     };
 
-    println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
+    if args.json {
+        let payload = serde_json::json!({
+            "ok": ok,
+            "failures": failures,
+            "elapsed_ms": elapsed.as_millis(),
+            "rps": rps,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
+    }
+
+    Ok(())
 }
 
 async fn run_worker(
@@ -153,6 +166,7 @@ fn parse_args() -> Args {
         payload_size: 32,
         flags: 0,
         key_blob_hex: None,
+        json: false,
     };
 
     while let Some(arg) = args.next() {
@@ -184,6 +198,7 @@ fn parse_args() -> Args {
                 }
             }
             "--key" => parsed.key_blob_hex = args.next(),
+            "--json" => parsed.json = true,
             _ => {}
         }
     }
