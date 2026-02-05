@@ -290,6 +290,9 @@ async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::
         if let Err(err) = std::fs::create_dir_all(dir) {
             warn!(?err, "failed to create socket directory");
         }
+        if let Err(err) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+            warn!(?err, "failed to set socket directory permissions");
+        }
     }
 
     if socket_path.exists() {
