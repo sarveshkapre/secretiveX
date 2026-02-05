@@ -40,6 +40,7 @@ struct Config {
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
+static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static LIST_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -460,6 +461,7 @@ async fn main() {
             if let Ok(mut stream) = signal(SignalKind::user_defined1()) {
                 while stream.recv().await.is_some() {
                     let count = SIGN_COUNT.load(Ordering::Relaxed);
+                    let errors = SIGN_ERRORS.load(Ordering::Relaxed);
                     let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                     let avg = if count > 0 { total / count as f64 } else { 0.0 };
                     let available = sign_semaphore.available_permits() as u64;
@@ -471,6 +473,7 @@ async fn main() {
                     let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
                     info!(
                         count,
+                        errors,
                         avg_ns = avg,
                         in_flight,
                         max_signers,
@@ -892,6 +895,7 @@ async fn handle_request(
                     SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
                     let every = METRICS_EVERY.load(Ordering::Relaxed);
                     if every > 0 && count % every == 0 {
+                        let errors = SIGN_ERRORS.load(Ordering::Relaxed);
                         let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                         let avg = total / count as f64;
                         let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
@@ -899,6 +903,7 @@ async fn handle_request(
                         let in_flight = max_signers.saturating_sub(available);
                         info!(
                             count,
+                            errors,
                             avg_ns = avg,
                             in_flight,
                             max_signers,
@@ -909,10 +914,12 @@ async fn handle_request(
                 }
                 Ok(Err(err)) => {
                     warn!(?err, "sign request failed");
+                    SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                     AgentResponse::Failure
                 }
                 Err(err) => {
                     warn!(?err, "sign worker failed");
+                    SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                     AgentResponse::Failure
                 }
             }
