@@ -57,6 +57,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    info!(version = env!("CARGO_PKG_VERSION"), "secretive-agent starting");
 
     let args = parse_args();
     if args.help {
