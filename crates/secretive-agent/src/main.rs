@@ -810,24 +810,38 @@ async fn run_windows(
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()> {
-    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+    use tokio::net::windows::named_pipe::ServerOptions;
 
     info!(pipe = %pipe_name, "secretive agent listening");
 
     loop {
         let server = ServerOptions::new().create(&pipe_name)?;
-        server.connect().await?;
-        let registry = registry.clone();
-        let sign_semaphore = sign_semaphore.clone();
-        let identity_cache = identity_cache.clone();
-        CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
-        tokio::spawn(async move {
-            if let Err(err) = handle_connection(server, registry, sign_semaphore, identity_cache).await
-            {
-                warn!(?err, "connection error");
+        tokio::select! {
+            result = server.connect() => {
+                if let Err(err) = result {
+                    warn!(?err, "named pipe connect failed");
+                    continue;
+                }
+                let registry = registry.clone();
+                let sign_semaphore = sign_semaphore.clone();
+                let identity_cache = identity_cache.clone();
+                CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        handle_connection(server, registry, sign_semaphore, identity_cache).await
+                    {
+                        warn!(?err, "connection error");
+                    }
+                });
             }
-        });
+            _ = tokio::signal::ctrl_c() => {
+                info!("shutdown requested");
+                break;
+            }
+        }
     }
+
+    Ok(())
 }
 
 async fn handle_connection<S>(
