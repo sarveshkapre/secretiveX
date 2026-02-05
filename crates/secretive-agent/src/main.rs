@@ -957,7 +957,7 @@ where
     let _guard = ConnectionGuard::acquire();
     let (mut reader, mut writer) = tokio::io::split(stream);
 
-    let mut buffer = BytesMut::with_capacity(4096);
+    let mut buffer = BytesMut::new();
     let mut response_buffer: Option<BytesMut> = None;
     loop {
         let request = match read_request_with_buffer(&mut reader, &mut buffer).await {
