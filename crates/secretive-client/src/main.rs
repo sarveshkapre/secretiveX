@@ -419,10 +419,24 @@ fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
 #[cfg(windows)]
 fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
     if let Some(path) = override_path {
-        return PathBuf::from(path);
+        return PathBuf::from(normalize_pipe_name(path));
     }
     if let Ok(path) = std::env::var("SECRETIVE_PIPE") {
-        return PathBuf::from(path);
+        return PathBuf::from(normalize_pipe_name(path));
     }
     PathBuf::from(r"\\.\pipe\secretive-agent")
+}
+
+#[cfg(windows)]
+fn normalize_pipe_name(value: String) -> String {
+    const PREFIX: &str = r"\\.\pipe\";
+    if value.starts_with(PREFIX) {
+        return value;
+    }
+    let trimmed = value.trim_start_matches('\\').trim_start_matches('/');
+    let trimmed = trimmed
+        .strip_prefix("pipe\\")
+        .or_else(|| trimmed.strip_prefix("pipe/"))
+        .unwrap_or(trimmed);
+    format!("{PREFIX}{trimmed}")
 }
