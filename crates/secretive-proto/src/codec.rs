@@ -430,6 +430,18 @@ mod tests {
     }
 
     #[test]
+    fn encode_request_into_matches() {
+        let request = AgentRequest::SignRequest {
+            key_blob: vec![1, 2],
+            data: vec![3, 4, 5],
+            flags: 7,
+        };
+        let mut buffer = BytesMut::new();
+        encode_request_into(&request, &mut buffer);
+        assert_eq!(buffer.freeze(), encode_request(&request));
+    }
+
+    #[test]
     fn decode_response_identities() {
         let response = AgentResponse::IdentitiesAnswer {
             identities: vec![Identity {
