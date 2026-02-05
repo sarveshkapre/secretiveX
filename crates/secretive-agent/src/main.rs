@@ -445,6 +445,11 @@ async fn main() {
 
     let metrics_every = config.metrics_every.unwrap_or(1000);
     METRICS_EVERY.store(metrics_every, Ordering::Relaxed);
+    if metrics_every == 0 {
+        info!("signing metrics disabled");
+    } else {
+        info!(metrics_every, "signing metrics interval");
+    }
 
     #[cfg(unix)]
     {
