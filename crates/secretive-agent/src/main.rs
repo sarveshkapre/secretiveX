@@ -334,6 +334,7 @@ async fn main() {
     if reloadable_stores.is_empty() {
         registry.register(Arc::new(EmptyStore));
     }
+    let reloadable_stores = Arc::new(reloadable_stores);
 
     let identity_cache_ms = config.identity_cache_ms.unwrap_or(1000);
     info!(identity_cache_ms, "identity cache ttl");
@@ -359,7 +360,7 @@ async fn main() {
         use std::collections::HashMap;
 
         let mut raw_paths = Vec::new();
-        for store in &reloadable_stores {
+        for store in reloadable_stores.iter() {
             let paths = store.watch_paths();
             raw_paths.reserve(paths.len());
             raw_paths.extend(paths);
@@ -447,7 +448,7 @@ async fn main() {
                 let stores = reloadable_stores.clone();
                 let registry = registry.clone();
                 let reload = tokio::task::spawn_blocking(move || {
-                    for store in &stores {
+                    for store in stores.iter() {
                         if let Err(err) = store.reload() {
                             warn!(?err, "failed to reload keys");
                         }
@@ -491,7 +492,7 @@ async fn main() {
                     let stores = reloadable_stores.clone();
                     let registry = registry.clone();
                     let reload = tokio::task::spawn_blocking(move || {
-                        for store in &stores {
+                        for store in stores.iter() {
                             if let Err(err) = store.reload() {
                                 warn!(?err, "failed to reload keys");
                             }
