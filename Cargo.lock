@@ -990,6 +990,7 @@ dependencies = [
  "anyhow",
  "hex",
  "secretive-proto",
+ "serde_json",
  "ssh-key",
  "tokio",
 ]

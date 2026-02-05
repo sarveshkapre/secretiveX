@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     let mut stream = connect(&socket_path).await?;
 
     if args.list {
-        list_identities(&mut stream, args.show_openssh).await?;
+        list_identities(&mut stream, args.show_openssh, args.json).await?;
         return Ok(());
     }
 
@@ -41,29 +41,59 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn list_identities(stream: &mut AgentStream, show_openssh: bool) -> Result<()> {
+async fn list_identities(
+    stream: &mut AgentStream,
+    show_openssh: bool,
+    json_output: bool,
+) -> Result<()> {
     let (mut reader, mut writer) = tokio::io::split(stream);
     write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
     let response = read_response(&mut reader).await?;
 
     match response {
         AgentResponse::IdentitiesAnswer { identities } => {
-            for identity in identities {
-                let mut details = String::new();
-                if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-                    let alg = public_key.algorithm().as_str().to_string();
-                    let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
-                    if show_openssh {
-                        if let Ok(ssh) = public_key.to_openssh() {
-                            details = format!(" {} {} {}", alg, fp, ssh.trim());
+            if json_output {
+                let mut out = Vec::new();
+                for identity in identities {
+                    let mut alg = None;
+                    let mut fp = None;
+                    let mut openssh = None;
+                    if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                        alg = Some(public_key.algorithm().as_str().to_string());
+                        fp = Some(public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string());
+                        if show_openssh {
+                            if let Ok(ssh) = public_key.to_openssh() {
+                                openssh = Some(ssh.trim().to_string());
+                            }
+                        }
+                    }
+                    out.push(serde_json::json!({
+                        "key_blob_hex": hex::encode(&identity.key_blob),
+                        "comment": identity.comment,
+                        "algorithm": alg,
+                        "fingerprint": fp,
+                        "openssh": openssh,
+                    }));
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                for identity in identities {
+                    let mut details = String::new();
+                    if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                        let alg = public_key.algorithm().as_str().to_string();
+                        let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
+                        if show_openssh {
+                            if let Ok(ssh) = public_key.to_openssh() {
+                                details = format!(" {} {} {}", alg, fp, ssh.trim());
+                            } else {
+                                details = format!(" {} {}", alg, fp);
+                            }
                         } else {
                             details = format!(" {} {}", alg, fp);
                         }
-                    } else {
-                        details = format!(" {} {}", alg, fp);
                     }
+                    println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
                 }
-                println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
             }
         }
         _ => {
@@ -122,6 +152,7 @@ struct Args {
     socket_path: Option<String>,
     list: bool,
     show_openssh: bool,
+    json: bool,
     sign_key_blob: Option<String>,
     sign_path: Option<String>,
     flags: u32,
@@ -133,6 +164,7 @@ fn parse_args() -> Args {
         socket_path: None,
         list: false,
         show_openssh: false,
+        json: false,
         sign_key_blob: None,
         sign_path: None,
         flags: 0,
@@ -143,6 +175,7 @@ fn parse_args() -> Args {
             "--socket" => parsed.socket_path = args.next(),
             "--list" => parsed.list = true,
             "--openssh" => parsed.show_openssh = true,
+            "--json" => parsed.json = true,
             "--sign" => parsed.sign_key_blob = args.next(),
             "--data" => parsed.sign_path = args.next(),
             "--flags" => {
