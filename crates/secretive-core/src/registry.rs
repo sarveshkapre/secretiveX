@@ -30,12 +30,24 @@ impl KeyStoreRegistry {
     pub fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
         self.index.clear();
         let mut out = Vec::new();
+        let mut last_err = None;
+        let mut any_ok = false;
         for store in &self.stores {
-            let identities = store.list_identities()?;
-            for identity in &identities {
-                self.index.insert(identity.key_blob.clone(), store.clone());
+            match store.list_identities() {
+                Ok(identities) => {
+                    any_ok = true;
+                    for identity in &identities {
+                        self.index.insert(identity.key_blob.clone(), store.clone());
+                    }
+                    out.extend(identities);
+                }
+                Err(err) => {
+                    last_err = Some(err);
+                }
             }
-            out.extend(identities);
+        }
+        if !any_ok {
+            return Err(last_err.unwrap_or(CoreError::Internal("no key stores")));
         }
         out.sort_by(|a, b| {
             let comment = a.comment.cmp(&b.comment);
