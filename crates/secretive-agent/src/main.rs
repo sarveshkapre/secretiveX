@@ -51,6 +51,7 @@ static LIST_CACHE_STALE: AtomicU64 = AtomicU64::new(0);
 static LIST_REFRESH: AtomicU64 = AtomicU64::new(0);
 static LIST_ERRORS: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
+static FAILURE_FRAME: OnceLock<Bytes> = OnceLock::new();
 
 #[derive(Debug)]
 struct IdentityCache {
@@ -896,13 +897,7 @@ where
                     }
                     Err(err) => {
                         warn!(?err, "failed to list identities");
-                        if let Err(err) = write_response_with_buffer(
-                            &mut writer,
-                            &AgentResponse::Failure,
-                            &mut response_buffer,
-                        )
-                        .await
-                        {
+                        if let Err(err) = writer.write_all(failure_frame()).await {
                             warn!(?err, "failed to write failure response");
                             break;
                         }
@@ -910,17 +905,26 @@ where
                 }
             }
             _ => {
-                let response =
-                    handle_request(registry.clone(), request, sign_semaphore.clone()).await;
-                if let Err(err) = write_response_with_buffer(
-                    &mut writer,
-                    &response,
-                    &mut response_buffer,
-                )
-                .await
-                {
-                    warn!(?err, "failed to write response");
-                    break;
+                let response = handle_request(registry.clone(), request, sign_semaphore.clone()).await;
+                match response {
+                    AgentResponse::Failure => {
+                        if let Err(err) = writer.write_all(failure_frame()).await {
+                            warn!(?err, "failed to write failure response");
+                            break;
+                        }
+                    }
+                    response => {
+                        if let Err(err) = write_response_with_buffer(
+                            &mut writer,
+                            &response,
+                            &mut response_buffer,
+                        )
+                        .await
+                        {
+                            warn!(?err, "failed to write response");
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -1018,6 +1022,13 @@ fn map_identities(identities: Vec<KeyIdentity>) -> Vec<Identity> {
 
 fn encode_identities_frame(identities: Vec<Identity>) -> Result<Bytes, ProtoError> {
     secretive_proto::encode_response_frame(&AgentResponse::IdentitiesAnswer { identities })
+}
+
+fn failure_frame() -> &'static Bytes {
+    FAILURE_FRAME.get_or_init(|| {
+        secretive_proto::encode_response_frame(&AgentResponse::Failure)
+            .expect("failure frame encoding failed")
+    })
 }
 
 fn now_ms() -> u64 {
