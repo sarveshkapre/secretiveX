@@ -1422,7 +1422,8 @@ where
         .read_exact(&mut buffer[..])
         .await
         .map_err(|_| ProtoError::UnexpectedEof)?;
-    let frame = buffer.clone().freeze();
+    // Move the frame out without cloning to avoid a full copy per request.
+    let frame = buffer.split().freeze();
     decode_request_frame(&frame)
 }
 
@@ -1672,5 +1673,31 @@ mod tests {
             .await
             .expect("read");
         assert!(matches!(parsed, ParsedRequest::RequestIdentities));
+    }
+
+    #[tokio::test]
+    async fn read_request_sign_drains_buffer() {
+        let request = secretive_proto::AgentRequest::SignRequest {
+            key_blob: vec![1, 2, 3, 4],
+            data: vec![5, 6, 7, 8],
+            flags: 9,
+        };
+        let frame = secretive_proto::encode_request_frame(&request).expect("frame");
+        let (mut client, mut server) = tokio::io::duplex(256);
+        client.write_all(&frame).await.expect("write");
+
+        let mut buffer = BytesMut::with_capacity(64);
+        let parsed = read_request_with_buffer(&mut server, &mut buffer)
+            .await
+            .expect("read");
+        match parsed {
+            ParsedRequest::SignRequest { key_blob, data, flags } => {
+                assert_eq!(key_blob.as_ref(), [1, 2, 3, 4]);
+                assert_eq!(data.as_ref(), [5, 6, 7, 8]);
+                assert_eq!(flags, 9);
+            }
+            other => panic!("unexpected request: {other:?}"),
+        }
+        assert!(buffer.is_empty());
     }
 }
