@@ -356,7 +356,9 @@ fn parse_fingerprint_input(input: &str) -> Option<ssh_key::Fingerprint> {
 }
 
 fn ascii_lowercase_bytes(value: &str) -> Vec<u8> {
-    value.as_bytes().iter().map(|b| ascii_lower(*b)).collect()
+    let mut out = Vec::with_capacity(value.len());
+    out.extend(value.as_bytes().iter().map(|b| ascii_lower(*b)));
+    out
 }
 
 fn is_ascii_lowercase(value: &str) -> bool {
