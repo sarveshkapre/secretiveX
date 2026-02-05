@@ -126,11 +126,16 @@ where
     let mut identities = fetch_identities(reader, writer, buffer).await?;
     if let Some(filter) = filter {
         let filter_lower = ascii_lowercase_bytes(filter);
+        let filter_fp = parse_fingerprint_input(filter);
         identities.retain(|id| {
             if contains_ignore_ascii_case(&id.comment, &filter_lower) {
                 return true;
             }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
+                if let Some(target_fp) = filter_fp {
+                    let fp = public_key.fingerprint(target_fp.algorithm());
+                    return fp == target_fp;
+                }
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
                 return contains_ignore_ascii_case(&fp, &filter_lower);
             }
