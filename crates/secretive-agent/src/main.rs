@@ -219,6 +219,21 @@ async fn main() {
         });
     }
 
+    #[cfg(unix)]
+    {
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut stream) = signal(SignalKind::user_defined1()) {
+                while stream.recv().await.is_some() {
+                    let count = SIGN_COUNT.load(Ordering::Relaxed);
+                    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
+                    let avg = if count > 0 { total / count as f64 } else { 0.0 };
+                    info!(count, avg_ns = avg, "signing metrics snapshot");
+                }
+            }
+        });
+    }
+
     let default_max_signers = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4)

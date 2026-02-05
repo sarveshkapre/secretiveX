@@ -26,6 +26,7 @@ Current Rust milestones:
 - Agent exposes simple sign latency metrics in logs
 - Concurrent sign requests are bounded by CPU-aware semaphore
 - `max_signers` lets you override concurrency
+- Send `SIGUSR1` on Unix to log a metrics snapshot
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
