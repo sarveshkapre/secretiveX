@@ -118,13 +118,14 @@ where
 {
     let mut identities = fetch_identities(reader, writer, buffer).await?;
     if let Some(filter) = filter {
+        let filter_lower = ascii_lowercase_bytes(filter);
         identities.retain(|id| {
-            if contains_ignore_ascii_case(&id.comment, filter) {
+            if contains_ignore_ascii_case(&id.comment, &filter_lower) {
                 return true;
             }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                return contains_ignore_ascii_case(&fp, filter);
+                return contains_ignore_ascii_case(&fp, &filter_lower);
             }
             false
         });
@@ -301,27 +302,30 @@ fn strip_sha256_prefix(value: &str) -> &str {
     }
 }
 
-fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
+fn ascii_lowercase_bytes(value: &str) -> Vec<u8> {
+    value.as_bytes().iter().map(|b| ascii_lower(*b)).collect()
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle_lower: &[u8]) -> bool {
+    if needle_lower.is_empty() {
         return true;
     }
-    let needle_bytes = needle.as_bytes();
     let haystack_bytes = haystack.as_bytes();
-    if needle_bytes.len() > haystack_bytes.len() {
+    if needle_lower.len() > haystack_bytes.len() {
         return false;
     }
-    let first = ascii_lower(needle_bytes[0]);
-    let limit = haystack_bytes.len() - needle_bytes.len();
+    let first = needle_lower[0];
+    let limit = haystack_bytes.len() - needle_lower.len();
     for idx in 0..=limit {
         if ascii_lower(haystack_bytes[idx]) != first {
             continue;
         }
-        if needle_bytes.len() == 1 {
+        if needle_lower.len() == 1 {
             return true;
         }
         let mut matched = true;
-        for (offset, &b) in needle_bytes[1..].iter().enumerate() {
-            if ascii_lower(haystack_bytes[idx + 1 + offset]) != ascii_lower(b) {
+        for (offset, &b) in needle_lower[1..].iter().enumerate() {
+            if ascii_lower(haystack_bytes[idx + 1 + offset]) != b {
                 matched = false;
                 break;
             }
