@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::OnceLock;
 
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
+use serde::ser::{SerializeSeq, Serializer};
+use serde::Serialize;
 use secretive_proto::{
     encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, Identity, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
@@ -87,12 +89,15 @@ async fn main() -> Result<()> {
         .await?;
         let signature = decode_signature_blob(&signature_blob)?;
         if args.json {
-            let payload = serde_json::json!({
-                "algorithm": signature.algorithm().as_str(),
-                "signature_hex": hex::encode(signature.as_bytes()),
-                "signature_blob_hex": hex::encode(signature_blob),
-            });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            let payload = JsonSignature {
+                algorithm: signature.algorithm().as_str().to_string(),
+                signature_hex: hex::encode(signature.as_bytes()),
+                signature_blob_hex: hex::encode(signature_blob),
+            };
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            serde_json::to_writer_pretty(&mut handle, &payload)?;
+            writeln!(handle)?;
         } else {
             println!("algorithm: {}", signature.algorithm().as_str());
             println!("signature: {}", hex::encode(signature.as_bytes()));
@@ -132,7 +137,10 @@ where
     }
 
     if json_output {
-        let mut out = Vec::with_capacity(identities.len());
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        let mut ser = serde_json::Serializer::pretty(&mut handle);
+        let mut seq = ser.serialize_seq(Some(identities.len()))?;
         for identity in identities {
             let mut alg = None;
             let mut fp = None;
@@ -146,15 +154,17 @@ where
                     }
                 }
             }
-            out.push(serde_json::json!({
-                "key_blob_hex": hex::encode(&identity.key_blob),
-                "comment": identity.comment,
-                "algorithm": alg,
-                "fingerprint": fp,
-                "openssh": openssh,
-            }));
+            let item = JsonIdentity {
+                key_blob_hex: hex::encode(&identity.key_blob),
+                comment: identity.comment,
+                algorithm: alg,
+                fingerprint: fp,
+                openssh,
+            };
+            seq.serialize_element(&item)?;
         }
-        println!("{}", serde_json::to_string_pretty(&out)?);
+        seq.end()?;
+        writeln!(handle)?;
     } else {
         for identity in identities {
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
@@ -353,6 +363,22 @@ fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
     let algorithm = std::str::from_utf8(&algorithm)?;
     let signature = Signature::new(ssh_key::Algorithm::new(algorithm)?, signature)?;
     Ok(signature)
+}
+
+#[derive(Serialize)]
+struct JsonIdentity {
+    key_blob_hex: String,
+    comment: String,
+    algorithm: Option<String>,
+    fingerprint: Option<String>,
+    openssh: Option<String>,
+}
+
+#[derive(Serialize)]
+struct JsonSignature {
+    algorithm: String,
+    signature_hex: String,
+    signature_blob_hex: String,
 }
 
 fn read_string(buf: &mut &[u8]) -> Result<Vec<u8>> {
