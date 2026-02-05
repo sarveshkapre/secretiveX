@@ -47,7 +47,11 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    buffer.resize(len, 0);
+    buffer.clear();
+    buffer.reserve(len);
+    unsafe {
+        buffer.set_len(len);
+    }
     reader
         .read_exact(&mut buffer[..])
         .await
@@ -68,7 +72,11 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    buffer.resize(len, 0);
+    buffer.clear();
+    buffer.reserve(len);
+    unsafe {
+        buffer.set_len(len);
+    }
     reader
         .read_exact(&mut buffer[..])
         .await
