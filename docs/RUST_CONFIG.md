@@ -13,6 +13,7 @@ If no path is provided, the agent looks for:
 - `stores` (array): ordered list of key stores to load.
 - `max_signers` (number): optional cap for concurrent sign operations.
 - `max_blocking_threads` (number): cap for Tokio's blocking thread pool (defaults to `max_signers`).
+- `worker_threads` (number): override Tokio worker thread count (defaults to Tokio's auto-detected value).
 - `watch_files` (bool): enable or disable file-store watching (default: true).
 - `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
 - `pid_file` (string): write the agent PID to this file and remove on shutdown.
@@ -21,6 +22,7 @@ If no path is provided, the agent looks for:
 Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_SIGNERS` sets `max_signers`.
 - `SECRETIVE_MAX_BLOCKING_THREADS` sets `max_blocking_threads`.
+- `SECRETIVE_WORKER_THREADS` sets `worker_threads`.
 - `SECRETIVE_METRICS_EVERY` sets `metrics_every`.
 - `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
 - `SECRETIVE_WATCH_FILES` sets `watch_files` (`true`/`false`).

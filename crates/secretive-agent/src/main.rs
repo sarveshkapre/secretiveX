@@ -34,6 +34,7 @@ struct Config {
     stores: Option<Vec<StoreConfig>>,
     max_signers: Option<usize>,
     max_blocking_threads: Option<usize>,
+    worker_threads: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
@@ -235,6 +236,9 @@ fn main() {
     if let Some(max_blocking_threads) = args.max_blocking_threads {
         config.max_blocking_threads = Some(max_blocking_threads);
     }
+    if let Some(worker_threads) = args.worker_threads {
+        config.worker_threads = Some(worker_threads);
+    }
     if let Some(watch_files) = args.watch_files {
         config.watch_files = Some(watch_files);
     }
@@ -275,6 +279,11 @@ fn main() {
             config.max_blocking_threads = value.parse().ok();
         }
     }
+    if config.worker_threads.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_WORKER_THREADS") {
+            config.worker_threads = value.parse().ok();
+        }
+    }
     if config.socket_backlog.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_SOCKET_BACKLOG") {
             config.socket_backlog = value.parse().ok();
@@ -286,11 +295,18 @@ fn main() {
         .max_blocking_threads
         .unwrap_or(max_signers)
         .max(1);
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .max_blocking_threads(max_blocking_threads)
-        .build()
-        .expect("failed to build tokio runtime");
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    runtime.enable_all().max_blocking_threads(max_blocking_threads);
+    if let Some(worker_threads) = config.worker_threads {
+        let worker_threads = if worker_threads == 0 {
+            warn!("worker_threads was 0; defaulting to 1");
+            1
+        } else {
+            worker_threads
+        };
+        runtime.worker_threads(worker_threads);
+    }
+    let runtime = runtime.build().expect("failed to build tokio runtime");
 
     runtime.block_on(run_async(config, max_signers));
 }
@@ -678,6 +694,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         stores: None,
         max_signers: None,
         max_blocking_threads: None,
+        worker_threads: None,
         watch_files: None,
         metrics_every: None,
         pid_file: None,
@@ -700,6 +717,7 @@ struct Args {
     scan_default_dir: Option<bool>,
     max_signers: Option<usize>,
     max_blocking_threads: Option<usize>,
+    worker_threads: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
@@ -718,6 +736,7 @@ fn parse_args() -> Args {
         scan_default_dir: None,
         max_signers: None,
         max_blocking_threads: None,
+        worker_threads: None,
         watch_files: None,
         metrics_every: None,
         pid_file: None,
@@ -750,6 +769,11 @@ fn parse_args() -> Args {
             "--max-blocking-threads" => {
                 if let Some(value) = args.next() {
                     parsed.max_blocking_threads = value.parse().ok();
+                }
+            }
+            "--worker-threads" => {
+                if let Some(value) = args.next() {
+                    parsed.worker_threads = value.parse().ok();
                 }
             }
             "--watch" => parsed.watch_files = Some(true),
@@ -801,7 +825,7 @@ fn print_help() {
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --socket-backlog <n>");
     println!("  --default-scan | --no-default-scan");
-    println!("  --max-signers <n> --max-blocking-threads <n>");
+    println!("  --max-signers <n> --max-blocking-threads <n> --worker-threads <n>");
     println!("  --metrics-every <n>");
     println!("  --watch | --no-watch --pid-file <path>");
     println!("  --identity-cache-ms <n>\n");
