@@ -4,12 +4,13 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use rand::RngCore;
 use rand::SeedableRng;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use secretive_proto::{
-    read_response_with_buffer, write_request_with_buffer, AgentRequest, AgentResponse,
-    SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
+    encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
+    AgentResponse, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
 use tracing::{debug, error, info};
+use tokio::io::AsyncWriteExt;
 
 #[cfg(unix)]
 use tokio::net::UnixStream as AgentStream;
@@ -285,24 +286,19 @@ async fn run_list_worker(
     reconnect: bool,
     deadline: Option<Instant>,
 ) -> Result<usize> {
-    let mut request_buffer = BytesMut::with_capacity(64);
+    let list_frame = encode_request_frame(&AgentRequest::RequestIdentities)?;
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            list_once(&socket_path, &mut request_buffer, &mut buffer).await?;
+            list_once(&socket_path, &list_frame, &mut buffer).await?;
         }
     } else {
         let stream = connect(&socket_path).await?;
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            write_request_with_buffer(
-                &mut writer,
-                &AgentRequest::RequestIdentities,
-                &mut request_buffer,
-            )
-            .await?;
+            writer.write_all(&list_frame).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
                 return Err(anyhow::anyhow!("unexpected identities response"));
@@ -312,12 +308,7 @@ async fn run_list_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
-                write_request_with_buffer(
-                    &mut writer,
-                    &AgentRequest::RequestIdentities,
-                    &mut request_buffer,
-                )
-                .await?;
+                writer.write_all(&list_frame).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
                     completed += 1;
@@ -325,12 +316,7 @@ async fn run_list_worker(
             }
         } else {
             for _ in 0..requests {
-                write_request_with_buffer(
-                    &mut writer,
-                    &AgentRequest::RequestIdentities,
-                    &mut request_buffer,
-                )
-                .await?;
+                writer.write_all(&list_frame).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
                     completed += 1;
@@ -345,12 +331,12 @@ async fn run_list_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            list_once(&socket_path, &mut request_buffer, &mut buffer).await?;
+            list_once(&socket_path, &list_frame, &mut buffer).await?;
             completed += 1;
         }
     } else {
         for _ in 0..requests {
-            list_once(&socket_path, &mut request_buffer, &mut buffer).await?;
+            list_once(&socket_path, &list_frame, &mut buffer).await?;
             completed += 1;
         }
     }
@@ -360,17 +346,12 @@ async fn run_list_worker(
 
 async fn list_once(
     socket_path: &PathBuf,
-    request_buffer: &mut BytesMut,
+    list_frame: &Bytes,
     response_buffer: &mut BytesMut,
 ) -> Result<()> {
     let stream = connect(socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
-    write_request_with_buffer(
-        &mut writer,
-        &AgentRequest::RequestIdentities,
-        request_buffer,
-    )
-    .await?;
+    writer.write_all(list_frame).await?;
     let response = read_response_with_buffer(&mut reader, response_buffer).await?;
     if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
         Ok(())
