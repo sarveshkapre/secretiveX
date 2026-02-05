@@ -5,8 +5,8 @@ use std::sync::Arc;
 use ahash::RandomState;
 use arc_swap::ArcSwap;
 use directories::BaseDirs;
-use ssh_key::PrivateKey;
 use sha1::Sha1;
+use ssh_key::PrivateKey;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
@@ -60,7 +60,11 @@ impl RsaSigners {
             .map_err(|_| CoreError::Crypto("rsa sha256 signing key"))?;
         let sha512 = rsa::pkcs1v15::SigningKey::<sha2::Sha512>::try_from(keypair)
             .map_err(|_| CoreError::Crypto("rsa sha512 signing key"))?;
-        Ok(Self { sha1, sha256, sha512 })
+        Ok(Self {
+            sha1,
+            sha256,
+            sha512,
+        })
     }
 }
 
@@ -172,9 +176,7 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-fn load_entries(
-    config: &FileStoreConfig,
-) -> Result<EntryMap> {
+fn load_entries(config: &FileStoreConfig) -> Result<EntryMap> {
     let mut candidates = VecDeque::with_capacity(config.paths.len().saturating_add(1));
     candidates.extend(config.paths.iter().cloned());
 
@@ -213,9 +215,7 @@ fn load_entries(
         }
 
         let public_key = private_key.public_key();
-        let key_blob = public_key
-            .to_bytes()
-            .map_err(|_| CoreError::InvalidKey)?;
+        let key_blob = public_key.to_bytes().map_err(|_| CoreError::InvalidKey)?;
 
         let comment = public_key.comment();
         let comment = if comment.is_empty() {
@@ -304,11 +304,7 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
     ))
 }
 
-fn sign_rsa_with_signers(
-    signers: &RsaSigners,
-    data: &[u8],
-    flags: u32,
-) -> Result<Vec<u8>> {
+fn sign_rsa_with_signers(signers: &RsaSigners, data: &[u8], flags: u32) -> Result<Vec<u8>> {
     use signature::{SignatureEncoding, Signer};
 
     let (algorithm, signature) = match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
@@ -357,7 +353,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("id_ed25519");
         let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).expect("key");
-        key.write_openssh_file(&path, LineEnding::LF).expect("write");
+        key.write_openssh_file(&path, LineEnding::LF)
+            .expect("write");
 
         let store = FileStore::load(FileStoreConfig {
             paths: vec![path],

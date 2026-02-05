@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use ahash::RandomState;
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
-use ahash::RandomState;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 

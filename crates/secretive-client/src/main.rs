@@ -1,24 +1,25 @@
-use std::path::{Path, PathBuf};
-use std::io::{Read, Write};
-use std::sync::OnceLock;
 use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
-use serde::ser::{SerializeSeq, Serializer};
-use serde::Serialize;
 use secretive_proto::{
     encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, Identity, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
+use serde::ser::{SerializeSeq, Serializer};
+use serde::Serialize;
 use ssh_key::Signature;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::time::Duration;
 
-#[cfg(unix)]
-use tokio::net::UnixStream as AgentStream;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
+#[cfg(unix)]
+use tokio::net::UnixStream as AgentStream;
 
 static LIST_FRAME: OnceLock<Bytes> = OnceLock::new();
 
@@ -57,25 +58,35 @@ async fn main() -> Result<()> {
             args.filter.as_deref(),
             response_timeout,
         )
-            .await?;
+        .await?;
+        return Ok(());
+    }
+
+    if args.health {
+        health_identities(
+            &mut stream,
+            &mut buffer,
+            args.json,
+            args.json_compact,
+            args.filter.as_deref(),
+            response_timeout,
+        )
+        .await?;
         return Ok(());
     }
 
     let mut request_buffer = BytesMut::with_capacity(256);
-    if args.sign_key_blob.is_some() || args.sign_comment.is_some() || args.sign_fingerprint.is_some() {
+    if args.sign_key_blob.is_some()
+        || args.sign_comment.is_some()
+        || args.sign_fingerprint.is_some()
+    {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
         } else if let Some(comment) = args.sign_comment.as_deref() {
-            select_key_by_comment(&mut stream, &mut buffer, comment, response_timeout)
-                .await?
+            select_key_by_comment(&mut stream, &mut buffer, comment, response_timeout).await?
         } else if let Some(fingerprint) = args.sign_fingerprint.as_deref() {
-            select_key_by_fingerprint(
-                &mut stream,
-                &mut buffer,
-                fingerprint,
-                response_timeout,
-            )
-            .await?
+            select_key_by_fingerprint(&mut stream, &mut buffer, fingerprint, response_timeout)
+                .await?
         } else {
             return Err(anyhow::anyhow!("missing key selector"));
         };
@@ -142,26 +153,7 @@ where
 {
     let mut identities = fetch_identities(stream, buffer, response_timeout).await?;
     if let Some(filter) = filter {
-        let filter_lower = if is_ascii_lowercase(filter) {
-            Cow::Borrowed(filter.as_bytes())
-        } else {
-            Cow::Owned(ascii_lowercase_bytes(filter))
-        };
-        let filter_fp = parse_fingerprint_input(filter);
-        identities.retain(|id| {
-            if contains_ignore_ascii_case(&id.comment, filter_lower.as_ref()) {
-                return true;
-            }
-            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
-                if let Some(target_fp) = filter_fp {
-                    let fp = public_key.fingerprint(target_fp.algorithm());
-                    return fp == target_fp;
-                }
-                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                return contains_ignore_ascii_case(&fp, filter_lower.as_ref());
-            }
-            false
-        });
+        apply_identity_filter(&mut identities, filter);
     }
 
     if json_output {
@@ -187,7 +179,10 @@ where
                     let alg = algorithm.as_str();
                     let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
                     let openssh = if show_openssh {
-                        public_key.to_openssh().ok().map(|ssh| ssh.trim().to_string())
+                        public_key
+                            .to_openssh()
+                            .ok()
+                            .map(|ssh| ssh.trim().to_string())
                     } else {
                         None
                     };
@@ -232,7 +227,10 @@ where
                     let alg = algorithm.as_str();
                     let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
                     let openssh = if show_openssh {
-                        public_key.to_openssh().ok().map(|ssh| ssh.trim().to_string())
+                        public_key
+                            .to_openssh()
+                            .ok()
+                            .map(|ssh| ssh.trim().to_string())
                     } else {
                         None
                     };
@@ -263,7 +261,12 @@ where
         let mut handle = stdout.lock();
         for identity in identities {
             if raw_output {
-                writeln!(handle, "{} {}", hex::encode(identity.key_blob), identity.comment)?;
+                writeln!(
+                    handle,
+                    "{} {}",
+                    hex::encode(identity.key_blob),
+                    identity.comment
+                )?;
                 continue;
             }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
@@ -304,11 +307,145 @@ where
                     continue;
                 }
             }
-            writeln!(handle, "{} {}", hex::encode(identity.key_blob), identity.comment)?;
+            writeln!(
+                handle,
+                "{} {}",
+                hex::encode(identity.key_blob),
+                identity.comment
+            )?;
         }
     }
 
     Ok(())
+}
+
+async fn health_identities<S>(
+    stream: &mut S,
+    buffer: &mut BytesMut,
+    json_output: bool,
+    json_compact: bool,
+    filter: Option<&str>,
+    response_timeout: Option<Duration>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut identities = fetch_identities(stream, buffer, response_timeout).await?;
+    if let Some(filter) = filter {
+        apply_identity_filter(&mut identities, filter);
+    }
+    let report = build_health_report(&identities);
+
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    if json_output {
+        if json_compact {
+            serde_json::to_writer(&mut handle, &report)?;
+        } else {
+            serde_json::to_writer_pretty(&mut handle, &report)?;
+        }
+        writeln!(handle)?;
+        return Ok(());
+    }
+
+    writeln!(handle, "total_identities: {}", report.total_identities)?;
+    writeln!(handle, "valid_identities: {}", report.valid_identities)?;
+    writeln!(handle, "invalid_key_blobs: {}", report.invalid_key_blobs)?;
+    writeln!(handle, "unique_key_blobs: {}", report.unique_key_blobs)?;
+    writeln!(
+        handle,
+        "duplicate_key_blobs: {}",
+        report.duplicate_key_blobs
+    )?;
+    writeln!(
+        handle,
+        "unique_fingerprints: {}",
+        report.unique_fingerprints
+    )?;
+    writeln!(
+        handle,
+        "duplicate_fingerprints: {}",
+        report.duplicate_fingerprints
+    )?;
+    writeln!(handle, "duplicate_comments: {}", report.duplicate_comments)?;
+    writeln!(handle, "algorithms:")?;
+    for (algorithm, count) in report.algorithms {
+        writeln!(handle, "{} {}", algorithm, count)?;
+    }
+
+    Ok(())
+}
+
+fn apply_identity_filter(identities: &mut Vec<Identity>, filter: &str) {
+    let filter_lower = if is_ascii_lowercase(filter) {
+        Cow::Borrowed(filter.as_bytes())
+    } else {
+        Cow::Owned(ascii_lowercase_bytes(filter))
+    };
+    let filter_fp = parse_fingerprint_input(filter);
+    identities.retain(|id| {
+        if contains_ignore_ascii_case(&id.comment, filter_lower.as_ref()) {
+            return true;
+        }
+        if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
+            if let Some(target_fp) = filter_fp {
+                let fp = public_key.fingerprint(target_fp.algorithm());
+                return fp == target_fp;
+            }
+            let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+            return contains_ignore_ascii_case(&fp, filter_lower.as_ref());
+        }
+        false
+    });
+}
+
+fn build_health_report(identities: &[Identity]) -> HealthReport {
+    let mut unique_blobs = HashSet::with_capacity(identities.len());
+    let mut fingerprint_counts: HashMap<String, usize> = HashMap::new();
+    let mut comment_counts: HashMap<String, usize> = HashMap::new();
+    let mut algorithms: BTreeMap<String, usize> = BTreeMap::new();
+    let mut valid_identities = 0usize;
+    let mut invalid_key_blobs = 0usize;
+
+    for identity in identities {
+        unique_blobs.insert(identity.key_blob.clone());
+        *comment_counts.entry(identity.comment.clone()).or_insert(0) += 1;
+
+        if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+            valid_identities += 1;
+            let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+            *fingerprint_counts.entry(fp).or_insert(0) += 1;
+            let algorithm = public_key.algorithm().as_str().to_string();
+            *algorithms.entry(algorithm).or_insert(0) += 1;
+        } else {
+            invalid_key_blobs += 1;
+        }
+    }
+
+    let total_identities = identities.len();
+    let unique_key_blobs = unique_blobs.len();
+    let duplicate_key_blobs = total_identities.saturating_sub(unique_key_blobs);
+    let unique_fingerprints = fingerprint_counts.len();
+    let duplicate_fingerprints = fingerprint_counts
+        .values()
+        .map(|count| count.saturating_sub(1))
+        .sum();
+    let duplicate_comments = comment_counts
+        .values()
+        .map(|count| count.saturating_sub(1))
+        .sum();
+
+    HealthReport {
+        total_identities,
+        valid_identities,
+        invalid_key_blobs,
+        unique_key_blobs,
+        duplicate_key_blobs,
+        unique_fingerprints,
+        duplicate_fingerprints,
+        duplicate_comments,
+        algorithms,
+    }
 }
 
 async fn sign_data<S>(
@@ -368,10 +505,12 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     match response_timeout {
-        Some(timeout) => match tokio::time::timeout(timeout, read_response_with_buffer(stream, buffer)).await {
-            Ok(result) => Ok(result?),
-            Err(_) => Err(anyhow::anyhow!("response timeout")),
-        },
+        Some(timeout) => {
+            match tokio::time::timeout(timeout, read_response_with_buffer(stream, buffer)).await {
+                Ok(result) => Ok(result?),
+                Err(_) => Err(anyhow::anyhow!("response timeout")),
+            }
+        }
         None => Ok(read_response_with_buffer(stream, buffer).await?),
     }
 }
@@ -423,16 +562,18 @@ where
                 if fp == target
                     || fp_stripped == target
                     || fp == target_stripped
-                || fp.eq_ignore_ascii_case(target)
-                || fp_stripped.eq_ignore_ascii_case(target)
-                || fp.eq_ignore_ascii_case(target_stripped)
+                    || fp.eq_ignore_ascii_case(target)
+                    || fp_stripped.eq_ignore_ascii_case(target)
+                    || fp.eq_ignore_ascii_case(target_stripped)
                 {
                     return Ok(identity.key_blob);
                 }
             }
         }
     }
-    Err(anyhow::anyhow!("no identity with fingerprint: {fingerprint}"))
+    Err(anyhow::anyhow!(
+        "no identity with fingerprint: {fingerprint}"
+    ))
 }
 
 fn strip_sha256_prefix(value: &str) -> &str {
@@ -469,10 +610,7 @@ fn ascii_lowercase_bytes(value: &str) -> Vec<u8> {
 }
 
 fn is_ascii_lowercase(value: &str) -> bool {
-    value
-        .as_bytes()
-        .iter()
-        .all(|b| !matches!(b, b'A'..=b'Z'))
+    value.as_bytes().iter().all(|b| !matches!(b, b'A'..=b'Z'))
 }
 
 fn contains_ignore_ascii_case(haystack: &str, needle_lower: &[u8]) -> bool {
@@ -540,6 +678,19 @@ struct JsonSignature<'a> {
     signature_blob_hex: String,
 }
 
+#[derive(Serialize)]
+struct HealthReport {
+    total_identities: usize,
+    valid_identities: usize,
+    invalid_key_blobs: usize,
+    unique_key_blobs: usize,
+    duplicate_key_blobs: usize,
+    unique_fingerprints: usize,
+    duplicate_fingerprints: usize,
+    duplicate_comments: usize,
+    algorithms: BTreeMap<String, usize>,
+}
+
 fn read_string(buf: &mut &[u8]) -> Result<Vec<u8>> {
     if buf.len() < 4 {
         return Err(anyhow::anyhow!("invalid blob"));
@@ -576,6 +727,7 @@ fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
 struct Args {
     socket_path: Option<String>,
     list: bool,
+    health: bool,
     show_openssh: bool,
     json: bool,
     json_compact: bool,
@@ -596,6 +748,7 @@ fn parse_args() -> Args {
     let mut parsed = Args {
         socket_path: None,
         list: false,
+        health: false,
         show_openssh: false,
         json: false,
         json_compact: false,
@@ -615,6 +768,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--socket" => parsed.socket_path = args.next(),
             "--list" => parsed.list = true,
+            "--health" => parsed.health = true,
             "--openssh" => parsed.show_openssh = true,
             "--json" => parsed.json = true,
             "--json-compact" => {
@@ -651,14 +805,18 @@ fn parse_args() -> Args {
 fn print_help() {
     println!("secretive-client usage:\n");
     println!("  --list [--json|--json-compact] [--openssh] [--raw] [--filter <substring>]");
+    println!("  --health [--json|--json-compact] [--filter <substring>]");
     println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json|--json-compact]");
-    println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json|--json-compact]");
+    println!(
+        "  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json|--json-compact]"
+    );
     println!("  --socket <path>");
     println!("  --response-timeout-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  If --data is omitted, stdin is used for signing.");
+    println!("  --health reports identity quality and duplicate diagnostics.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
     println!("  --json-compact emits compact JSON (no pretty formatting).");
@@ -683,7 +841,8 @@ fn parse_flags(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_flags, parse_fingerprint_input};
+    use super::{build_health_report, parse_fingerprint_input, parse_flags};
+    use secretive_proto::Identity;
 
     #[test]
     fn parse_flags_names() {
@@ -699,13 +858,49 @@ mod tests {
     fn parse_fingerprint_accepts_prefixes() {
         let sample = "SHA256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g";
         assert!(parse_fingerprint_input(sample).is_some());
-        assert!(parse_fingerprint_input("sha256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g").is_some());
+        assert!(
+            parse_fingerprint_input("sha256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g").is_some()
+        );
     }
 
     #[test]
     fn parse_fingerprint_accepts_bare() {
         let sample = "JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g";
         assert!(parse_fingerprint_input(sample).is_some());
+    }
+
+    #[test]
+    fn health_report_counts_invalid_and_duplicates() {
+        let key = ssh_key::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICG6kjK0iJxESpkwvCTOwwcUsJcggrGhSdHyaP0JHGub",
+        )
+        .expect("public key");
+        let key_blob = key.to_bytes().expect("key blob");
+        let identities = vec![
+            Identity {
+                key_blob: key_blob.clone(),
+                comment: "one".to_string(),
+            },
+            Identity {
+                key_blob: key_blob.clone(),
+                comment: "dup".to_string(),
+            },
+            Identity {
+                key_blob: vec![1, 2, 3],
+                comment: "dup".to_string(),
+            },
+        ];
+
+        let report = build_health_report(&identities);
+        assert_eq!(report.total_identities, 3);
+        assert_eq!(report.valid_identities, 2);
+        assert_eq!(report.invalid_key_blobs, 1);
+        assert_eq!(report.unique_key_blobs, 2);
+        assert_eq!(report.duplicate_key_blobs, 1);
+        assert_eq!(report.unique_fingerprints, 1);
+        assert_eq!(report.duplicate_fingerprints, 1);
+        assert_eq!(report.duplicate_comments, 1);
+        assert_eq!(report.algorithms.get("ssh-ed25519"), Some(&2));
     }
 }
 

@@ -1,13 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use arc_swap::ArcSwap;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tokio::time::Duration;
-use arc_swap::ArcSwap;
 
 use directories::BaseDirs;
 use serde::Deserialize;
@@ -15,12 +15,12 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
+use bytes::{BufMut, Bytes, BytesMut};
 use notify::{RecursiveMode, Watcher};
 use secretive_core::{
     EmptyStore, FileStore, FileStoreConfig, KeyIdentity, KeyStoreRegistry, Pkcs11Config,
     Pkcs11Store,
 };
-use bytes::{BufMut, Bytes, BytesMut};
 use secretive_proto::{
     write_response_with_buffer, AgentResponse, MessageType, ProtoError, MAX_FRAME_LEN,
 };
@@ -217,7 +217,10 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    info!(version = env!("CARGO_PKG_VERSION"), "secretive-agent starting");
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "secretive-agent starting"
+    );
 
     let args = parse_args();
     if args.help {
@@ -376,13 +379,12 @@ fn main() {
     }
 
     let max_signers = compute_max_signers(&config);
-    let max_blocking_threads = config
-        .max_blocking_threads
-        .unwrap_or(max_signers)
-        .max(1);
+    let max_blocking_threads = config.max_blocking_threads.unwrap_or(max_signers).max(1);
     info!(max_blocking_threads, "blocking thread pool size");
     let mut runtime = tokio::runtime::Builder::new_multi_thread();
-    runtime.enable_all().max_blocking_threads(max_blocking_threads);
+    runtime
+        .enable_all()
+        .max_blocking_threads(max_blocking_threads);
     if let Some(worker_threads) = config.worker_threads {
         let worker_threads = if worker_threads == 0 {
             warn!("worker_threads was 0; defaulting to 1");
@@ -418,7 +420,10 @@ async fn run_async(mut config: Config, max_signers: usize) {
     let mut reloadable_stores: Vec<Arc<FileStore>> = Vec::with_capacity(stores.len());
     for store in stores {
         match store {
-            StoreConfig::File { paths, scan_default_dir } => {
+            StoreConfig::File {
+                paths,
+                scan_default_dir,
+            } => {
                 let mut store_config = FileStoreConfig::default();
                 if let Some(paths) = paths {
                     store_config.paths = paths.into_iter().map(PathBuf::from).collect();
@@ -447,7 +452,11 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     warn!(?err, "failed to load secure enclave store");
                 }
             },
-            StoreConfig::Pkcs11 { module_path, slot, pin_env } => {
+            StoreConfig::Pkcs11 {
+                module_path,
+                slot,
+                pin_env,
+            } => {
                 let config = Pkcs11Config {
                     module_path: PathBuf::from(module_path),
                     slot,
@@ -483,7 +492,10 @@ async fn run_async(mut config: Config, max_signers: usize) {
         }
     });
     if let Some(timeout) = idle_timeout {
-        info!(idle_timeout_ms = timeout.as_millis(), "connection idle timeout");
+        info!(
+            idle_timeout_ms = timeout.as_millis(),
+            "connection idle timeout"
+        );
     } else {
         info!("connection idle timeout disabled");
     }
@@ -584,7 +596,9 @@ async fn run_async(mut config: Config, max_signers: usize) {
         tokio::spawn(async move {
             let debounce = Duration::from_millis(debounce_ms);
             loop {
-                let Some(_event) = notify_rx.recv().await else { break; };
+                let Some(_event) = notify_rx.recv().await else {
+                    break;
+                };
                 let mut deadline = Instant::now() + debounce;
                 loop {
                     let now = Instant::now();
@@ -770,19 +784,18 @@ async fn run_async(mut config: Config, max_signers: usize) {
     {
         let socket_path = resolve_socket_path(config.socket_path);
         let socket_backlog = config.socket_backlog;
-        if let Err(err) =
-            run_unix(
-                socket_path,
-                socket_backlog,
-                registry.clone(),
-                sign_semaphore.clone(),
-                connection_semaphore.clone(),
-                identity_cache.clone(),
-                idle_timeout,
-                inline_sign,
-                sign_timeout,
-            )
-            .await
+        if let Err(err) = run_unix(
+            socket_path,
+            socket_backlog,
+            registry.clone(),
+            sign_semaphore.clone(),
+            connection_semaphore.clone(),
+            identity_cache.clone(),
+            idle_timeout,
+            inline_sign,
+            sign_timeout,
+        )
+        .await
         {
             error!(?err, "agent exited with error");
         }
@@ -1046,7 +1059,10 @@ fn validate_config(config: &Config) -> ConfigValidation {
                     paths,
                     scan_default_dir,
                 } => {
-                    let has_paths = paths.as_ref().map(|value| !value.is_empty()).unwrap_or(false);
+                    let has_paths = paths
+                        .as_ref()
+                        .map(|value| !value.is_empty())
+                        .unwrap_or(false);
                     let scan_default_dir = scan_default_dir.unwrap_or(true);
                     if has_paths || scan_default_dir {
                         has_key_source = true;
@@ -1074,8 +1090,9 @@ fn validate_config(config: &Config) -> ConfigValidation {
                         ));
                     }
                     if module_path.trim().is_empty() {
-                        out.errors
-                            .push(format!("stores[{idx}] pkcs11 module_path must not be empty"));
+                        out.errors.push(format!(
+                            "stores[{idx}] pkcs11 module_path must not be empty"
+                        ));
                     } else if !Path::new(module_path).exists() {
                         out.warnings.push(format!(
                             "stores[{idx}] pkcs11 module_path does not exist on this machine: {module_path}"
@@ -1095,8 +1112,10 @@ fn validate_config(config: &Config) -> ConfigValidation {
     }
 
     if !has_key_source {
-        out.warnings
-            .push("configuration defines no key source; list/sign requests will return no identities".to_string());
+        out.warnings.push(
+            "configuration defines no key source; list/sign requests will return no identities"
+                .to_string(),
+        );
     }
 
     if config.inline_sign == Some(true) && has_pkcs11 {
@@ -1319,7 +1338,9 @@ fn print_help() {
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --socket-backlog <n>");
     println!("  --default-scan | --no-default-scan");
-    println!("  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>");
+    println!(
+        "  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>"
+    );
     println!("  --metrics-every <n>");
     println!("  --metrics-json | --no-metrics-json");
     println!("  --sign-timeout-ms <n>");
@@ -1410,10 +1431,10 @@ async fn run_unix(
     inline_sign: bool,
     sign_timeout: Option<Duration>,
 ) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    use std::os::unix::net::UnixListener as StdUnixListener;
     use tokio::net::UnixListener;
     use tokio::sync::oneshot;
-    use std::os::unix::net::UnixListener as StdUnixListener;
-    use std::os::unix::io::AsRawFd;
 
     if let Some(dir) = socket_path.parent() {
         if let Err(err) = std::fs::create_dir_all(dir) {
@@ -1446,13 +1467,16 @@ async fn run_unix(
     }
     std_listener.set_nonblocking(true)?;
     let listener = UnixListener::from_std(std_listener)?;
-    if let Err(err) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+    if let Err(err) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+    {
         warn!(?err, "failed to set socket permissions");
     }
     info!(path = %socket_path.display(), "secretive agent listening");
 
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
-    if let Ok(mut sigterm) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+    if let Ok(mut sigterm) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
         tokio::spawn(async move {
             let _ = sigterm.recv().await;
             let _ = shutdown_tx.send(());
@@ -1665,18 +1689,21 @@ where
                     }
                 }
             }
-            ParsedRequest::SignRequest { key_blob, data, flags } => {
-                let response =
-                    handle_sign_request(
-                        &registry,
-                        key_blob,
-                        data,
-                        flags,
-                        sign_semaphore.as_ref(),
-                        inline_sign,
-                        sign_timeout,
-                    )
-                        .await;
+            ParsedRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            } => {
+                let response = handle_sign_request(
+                    &registry,
+                    key_blob,
+                    data,
+                    flags,
+                    sign_semaphore.as_ref(),
+                    inline_sign,
+                    sign_timeout,
+                )
+                .await;
                 match response {
                     AgentResponse::Failure => {
                         if let Err(err) = stream.write_all(failure_frame()).await {
@@ -1739,7 +1766,10 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    let len = reader
+        .read_u32()
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
@@ -1790,11 +1820,7 @@ fn decode_request_frame(frame: &Bytes) -> Result<ParsedRequest, ProtoError> {
         Ok(value)
     }
 
-    fn read_slice(
-        frame: &Bytes,
-        bytes: &[u8],
-        offset: &mut usize,
-    ) -> Result<Bytes, ProtoError> {
+    fn read_slice(frame: &Bytes, bytes: &[u8], offset: &mut usize) -> Result<Bytes, ProtoError> {
         let len = read_u32(bytes, offset)? as usize;
         if len > MAX_FRAME_LEN {
             return Err(ProtoError::FrameTooLarge(len));
@@ -2034,7 +2060,11 @@ mod tests {
         let frame = secretive_proto::encode_request(&request);
         let parsed = decode_request_frame(&frame).expect("decode");
         match parsed {
-            ParsedRequest::SignRequest { key_blob, data, flags } => {
+            ParsedRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            } => {
                 assert_eq!(key_blob.as_ref(), expected_key_blob.as_slice());
                 assert_eq!(data.as_ref(), expected_data.as_slice());
                 assert_eq!(flags, 42);
@@ -2075,7 +2105,11 @@ mod tests {
             .await
             .expect("read");
         match parsed {
-            ParsedRequest::SignRequest { key_blob, data, flags } => {
+            ParsedRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            } => {
                 assert_eq!(key_blob.as_ref(), [1, 2, 3, 4]);
                 assert_eq!(data.as_ref(), [5, 6, 7, 8]);
                 assert_eq!(flags, 9);

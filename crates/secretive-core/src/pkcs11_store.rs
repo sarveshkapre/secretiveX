@@ -48,6 +48,7 @@ mod enabled {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use crate::{CoreError, KeyIdentity, KeyStore, Result};
     use ahash::RandomState;
     use arc_swap::ArcSwap;
     use cryptoki::context::{Pkcs11, Pkcs11Flags};
@@ -56,7 +57,6 @@ mod enabled {
     use cryptoki::session::{Session, SessionFlags, UserType};
     use cryptoki::types::slot::Slot;
     use ssh_key::{public::KeyData, PublicKey};
-    use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
     const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
     const SSH_AGENT_RSA_SHA2_512: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_512;
@@ -79,8 +79,8 @@ mod enabled {
 
     impl Pkcs11Store {
         pub fn load(config: Pkcs11Config) -> Result<Self> {
-            let context = Pkcs11::new(config.module_path)
-                .map_err(|_| CoreError::Internal("pkcs11 init"))?;
+            let context =
+                Pkcs11::new(config.module_path).map_err(|_| CoreError::Internal("pkcs11 init"))?;
             context
                 .initialize(Pkcs11Flags::empty())
                 .map_err(|_| CoreError::Internal("pkcs11 initialize"))?;
@@ -99,7 +99,9 @@ mod enabled {
                 context: Arc::new(context),
                 slot,
                 pin,
-                key_map: Arc::new(ArcSwap::from_pointee(HashMap::with_hasher(RandomState::new()))),
+                key_map: Arc::new(ArcSwap::from_pointee(HashMap::with_hasher(
+                    RandomState::new(),
+                ))),
             };
 
             store.refresh_keys()?;
@@ -139,7 +141,11 @@ mod enabled {
                 let attributes = session
                     .get_attributes(
                         object,
-                        &[AttributeType::Modulus, AttributeType::PublicExponent, AttributeType::Label],
+                        &[
+                            AttributeType::Modulus,
+                            AttributeType::PublicExponent,
+                            AttributeType::Label,
+                        ],
                     )
                     .unwrap_or_default();
 
@@ -209,17 +215,20 @@ mod enabled {
 
             let session = self.open_session()?;
 
-            let (mechanism, algorithm) = match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
-                SSH_AGENT_RSA_SHA2_512 => (Mechanism::Sha512RsaPkcs, "rsa-sha2-512"),
-                SSH_AGENT_RSA_SHA2_256 => (Mechanism::Sha256RsaPkcs, "rsa-sha2-256"),
-                _ => (Mechanism::Sha1RsaPkcs, "ssh-rsa"),
-            };
+            let (mechanism, algorithm) =
+                match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
+                    SSH_AGENT_RSA_SHA2_512 => (Mechanism::Sha512RsaPkcs, "rsa-sha2-512"),
+                    SSH_AGENT_RSA_SHA2_256 => (Mechanism::Sha256RsaPkcs, "rsa-sha2-256"),
+                    _ => (Mechanism::Sha1RsaPkcs, "ssh-rsa"),
+                };
 
             let signature = session
                 .sign(&mechanism, key_handle, data)
                 .map_err(|_| CoreError::Crypto("pkcs11 sign"))?;
 
-            Ok(secretive_proto::encode_signature_blob(algorithm, &signature))
+            Ok(secretive_proto::encode_signature_blob(
+                algorithm, &signature,
+            ))
         }
     }
 
@@ -230,12 +239,14 @@ mod enabled {
         };
         let key_data = KeyData::Rsa(rsa);
         let public_key = PublicKey::from(key_data);
-        public_key
-            .to_bytes()
-            .map_err(|_| CoreError::InvalidKey)
+        public_key.to_bytes().map_err(|_| CoreError::InvalidKey)
     }
 
-    fn find_private_key(session: &Session, modulus: &[u8], exponent: &[u8]) -> Result<cryptoki::object::ObjectHandle> {
+    fn find_private_key(
+        session: &Session,
+        modulus: &[u8],
+        exponent: &[u8],
+    ) -> Result<cryptoki::object::ObjectHandle> {
         let template = vec![
             Attribute::Class(ObjectClass::PRIVATE_KEY),
             Attribute::Modulus(modulus.to_vec()),
@@ -246,9 +257,7 @@ mod enabled {
             .find_objects(&template)
             .map_err(|_| CoreError::Internal("pkcs11 find private"))?;
 
-        objects
-            .pop()
-            .ok_or(CoreError::KeyNotFound)
+        objects.pop().ok_or(CoreError::KeyNotFound)
     }
 
     // signature encoding delegated to secretive-proto

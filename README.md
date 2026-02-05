@@ -50,11 +50,13 @@ Current Rust milestones:
 - Initial SLO gate script and scheduled CI job for reconnect workloads
 - End-to-end soak test script for multi-minute/hour reliability runs
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
+- Client `--health` diagnostics for invalid keys, duplicates, and algorithm mix
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
 
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
+Client usage: see `docs/RUST_CLIENT.md`.
 Tuning guidance: see `docs/RUST_TUNING.md`.
 Linux service setup: see `docs/LINUX_SYSTEMD.md`.
 OpenSSH compatibility smoke: see `docs/OPENSSH_COMPAT.md`.

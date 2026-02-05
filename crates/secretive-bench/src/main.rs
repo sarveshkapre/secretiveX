@@ -1,25 +1,25 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::io::Write;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use bytes::{Bytes, BytesMut};
 use rand::RngCore;
 use rand::SeedableRng;
-use bytes::{Bytes, BytesMut};
 use secretive_proto::{
     encode_request_frame, read_response_type_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, MessageType, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
 use serde::Serialize;
-use tracing::{debug, error, info};
 use tokio::io::AsyncWriteExt;
+use tracing::{debug, error, info};
 
-#[cfg(unix)]
-use tokio::net::UnixStream as AgentStream;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
+#[cfg(unix)]
+use tokio::net::UnixStream as AgentStream;
 
 static LIST_FRAME: OnceLock<Bytes> = OnceLock::new();
 
@@ -77,13 +77,25 @@ async fn main() -> Result<()> {
 
     let total_requests = args.concurrency * args.requests_per_worker;
     if let Some(duration) = args.duration_secs {
-        info!(?socket_path, concurrency = args.concurrency, duration, "starting benchmark");
+        info!(
+            ?socket_path,
+            concurrency = args.concurrency,
+            duration,
+            "starting benchmark"
+        );
     } else {
-        info!(?socket_path, concurrency = args.concurrency, total_requests, "starting benchmark");
+        info!(
+            ?socket_path,
+            concurrency = args.concurrency,
+            total_requests,
+            "starting benchmark"
+        );
     }
 
     let start = Instant::now();
-    let deadline = args.duration_secs.map(|secs| start + Duration::from_secs(secs));
+    let deadline = args
+        .duration_secs
+        .map(|secs| start + Duration::from_secs(secs));
     let response_timeout = args.response_timeout_ms.and_then(|value| {
         if value == 0 {
             None
@@ -270,7 +282,11 @@ fn compute_latency_stats(mut latencies_us: Vec<u64>) -> Option<LatencyStats> {
     })
 }
 
-fn maybe_record_latency(started_at: Option<Instant>, latencies_us: &mut Vec<u64>, max_samples: usize) {
+fn maybe_record_latency(
+    started_at: Option<Instant>,
+    latencies_us: &mut Vec<u64>,
+    max_samples: usize,
+) {
     if let Some(started_at) = started_at {
         if latencies_us.len() < max_samples {
             latencies_us.push(started_at.elapsed().as_micros() as u64);
@@ -359,8 +375,7 @@ async fn run_worker(
                 .await?;
             }
             let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                    .await?;
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
             if response_type != MessageType::SignResponse as u8 {
                 return Err(anyhow::anyhow!("unexpected sign response"));
             }
@@ -385,8 +400,7 @@ async fn run_worker(
                 .await?;
             }
             let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                    .await?;
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
             if response_type != MessageType::SignResponse as u8 {
                 return Err(anyhow::anyhow!("unexpected sign response"));
             }
@@ -488,8 +502,7 @@ async fn run_worker(
                 .await?;
             }
             let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                    .await?;
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
                 maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
@@ -519,8 +532,7 @@ async fn run_worker(
                 .await?;
             }
             let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                    .await?;
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
                 maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
@@ -564,8 +576,7 @@ async fn run_list_worker(
         for _ in 0..warmup {
             stream.write_all(&list_frame).await?;
             let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                    .await?;
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
             if response_type != MessageType::IdentitiesAnswer as u8 {
                 return Err(anyhow::anyhow!("unexpected identities response"));
             }
@@ -665,15 +676,14 @@ where
     R: tokio::io::AsyncRead + Unpin,
 {
     match timeout {
-        Some(timeout) => match tokio::time::timeout(
-            timeout,
-            read_response_type_with_buffer(reader, buffer),
-        )
-        .await
-        {
-            Ok(result) => Ok(result?),
-            Err(_) => Err(anyhow::anyhow!("response timeout")),
-        },
+        Some(timeout) => {
+            match tokio::time::timeout(timeout, read_response_type_with_buffer(reader, buffer))
+                .await
+            {
+                Ok(result) => Ok(result?),
+                Err(_) => Err(anyhow::anyhow!("response timeout")),
+            }
+        }
         None => Ok(read_response_type_with_buffer(reader, buffer).await?),
     }
 }
@@ -750,7 +760,8 @@ fn parse_args() -> Args {
             }
             "--requests" => {
                 if let Some(value) = args.next() {
-                    parsed.requests_per_worker = value.parse().unwrap_or(parsed.requests_per_worker);
+                    parsed.requests_per_worker =
+                        value.parse().unwrap_or(parsed.requests_per_worker);
                 }
             }
             "--warmup" => {

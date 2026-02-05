@@ -10,7 +10,10 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    let len = reader
+        .read_u32()
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
@@ -18,7 +21,10 @@ where
     unsafe {
         buf.set_len(len);
     }
-    reader.read_exact(&mut buf).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    reader
+        .read_exact(&mut buf)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     decode_request(&buf)
 }
 
@@ -28,7 +34,10 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    let len = reader
+        .read_u32()
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
@@ -36,7 +45,10 @@ where
     unsafe {
         buf.set_len(len);
     }
-    reader.read_exact(&mut buf).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    reader
+        .read_exact(&mut buf)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     decode_response(&buf)
 }
 
@@ -49,7 +61,10 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    let len = reader
+        .read_u32()
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
@@ -65,16 +80,16 @@ where
     decode_response(&buffer[..])
 }
 
-pub async fn read_response_type_with_buffer<R>(
-    reader: &mut R,
-    buffer: &mut BytesMut,
-) -> Result<u8>
+pub async fn read_response_type_with_buffer<R>(reader: &mut R, buffer: &mut BytesMut) -> Result<u8>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     use tokio::io::AsyncReadExt;
 
-    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    let len = reader
+        .read_u32()
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
@@ -120,7 +135,10 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    let len = reader
+        .read_u32()
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)? as usize;
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
@@ -143,7 +161,10 @@ where
     use tokio::io::AsyncWriteExt;
 
     let frame = encode_response_frame(response)?;
-    writer.write_all(&frame).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&frame)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -158,7 +179,10 @@ where
     use tokio::io::AsyncWriteExt;
 
     encode_response_frame_into(response, buffer)?;
-    writer.write_all(&buffer[..]).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -169,7 +193,10 @@ where
     use tokio::io::AsyncWriteExt;
 
     let frame = encode_request_frame(request)?;
-    writer.write_all(&frame).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&frame)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -184,7 +211,10 @@ where
     use tokio::io::AsyncWriteExt;
 
     encode_request_frame_into(request, buffer)?;
-    writer.write_all(&buffer[..]).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -195,7 +225,10 @@ where
     use tokio::io::AsyncWriteExt;
 
     let frame = encode_frame(payload)?;
-    writer.write_all(&frame).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    writer
+        .write_all(&frame)
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -214,7 +247,11 @@ pub fn decode_request(frame: &[u8]) -> Result<AgentRequest> {
                 return Err(ProtoError::UnexpectedEof);
             }
             let flags = buf.get_u32();
-            Ok(AgentRequest::SignRequest { key_blob, data, flags })
+            Ok(AgentRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            })
         }
         other => Ok(AgentRequest::Unknown {
             message_type: other,
@@ -241,7 +278,8 @@ pub fn decode_response(frame: &[u8]) -> Result<AgentResponse> {
             for _ in 0..count {
                 let key_blob = read_string(&mut buf)?;
                 let comment = read_string(&mut buf)?;
-                let comment = String::from_utf8(comment).map_err(|_| ProtoError::InvalidMessage("invalid utf8 comment"))?;
+                let comment = String::from_utf8(comment)
+                    .map_err(|_| ProtoError::InvalidMessage("invalid utf8 comment"))?;
                 identities.push(Identity { key_blob, comment });
             }
             Ok(AgentResponse::IdentitiesAnswer { identities })
@@ -386,13 +424,20 @@ pub fn encode_request(request: &AgentRequest) -> Bytes {
     };
     match request {
         AgentRequest::RequestIdentities => buf.put_u8(MessageType::RequestIdentities as u8),
-        AgentRequest::SignRequest { key_blob, data, flags } => {
+        AgentRequest::SignRequest {
+            key_blob,
+            data,
+            flags,
+        } => {
             buf.put_u8(MessageType::SignRequest as u8);
             write_string(&mut buf, key_blob);
             write_string(&mut buf, data);
             buf.put_u32(*flags);
         }
-        AgentRequest::Unknown { message_type, payload } => {
+        AgentRequest::Unknown {
+            message_type,
+            payload,
+        } => {
             buf.put_u8(*message_type);
             buf.put_slice(payload);
         }
@@ -413,14 +458,21 @@ pub fn encode_request_into(request: &AgentRequest, buffer: &mut BytesMut) {
             buffer.reserve(1);
             buffer.put_u8(MessageType::RequestIdentities as u8);
         }
-        AgentRequest::SignRequest { key_blob, data, flags } => {
+        AgentRequest::SignRequest {
+            key_blob,
+            data,
+            flags,
+        } => {
             buffer.reserve(1 + 4 + key_blob.len() + 4 + data.len() + 4);
             buffer.put_u8(MessageType::SignRequest as u8);
             write_string(buffer, key_blob);
             write_string(buffer, data);
             buffer.put_u32(*flags);
         }
-        AgentRequest::Unknown { message_type, payload } => {
+        AgentRequest::Unknown {
+            message_type,
+            payload,
+        } => {
             buffer.reserve(1 + payload.len());
             buffer.put_u8(*message_type);
             buffer.put_slice(payload);
@@ -444,13 +496,20 @@ pub fn encode_request_frame_into(request: &AgentRequest, buffer: &mut BytesMut) 
     buffer.put_u32(payload_cap as u32);
     match request {
         AgentRequest::RequestIdentities => buffer.put_u8(MessageType::RequestIdentities as u8),
-        AgentRequest::SignRequest { key_blob, data, flags } => {
+        AgentRequest::SignRequest {
+            key_blob,
+            data,
+            flags,
+        } => {
             buffer.put_u8(MessageType::SignRequest as u8);
             write_string(buffer, key_blob);
             write_string(buffer, data);
             buffer.put_u32(*flags);
         }
-        AgentRequest::Unknown { message_type, payload } => {
+        AgentRequest::Unknown {
+            message_type,
+            payload,
+        } => {
             buffer.put_u8(*message_type);
             buffer.put_slice(payload);
         }
@@ -507,7 +566,10 @@ mod tests {
     #[test]
     fn encode_identities_answer() {
         let response = AgentResponse::IdentitiesAnswer {
-            identities: vec![Identity { key_blob: vec![1, 2, 3], comment: "test".into() }],
+            identities: vec![Identity {
+                key_blob: vec![1, 2, 3],
+                comment: "test".into(),
+            }],
         };
         let encoded = encode_response(&response);
         let mut buf = Bytes::from(encoded);
@@ -629,7 +691,9 @@ mod tests {
 
         let mut cursor = std::io::Cursor::new(frame);
         let mut buffer = BytesMut::new();
-        let decoded = read_response_with_buffer(&mut cursor, &mut buffer).await.unwrap();
+        let decoded = read_response_with_buffer(&mut cursor, &mut buffer)
+            .await
+            .unwrap();
         assert!(matches!(decoded, AgentResponse::Failure));
     }
 
