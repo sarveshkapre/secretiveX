@@ -715,11 +715,25 @@ fn parse_args() -> Args {
 }
 
 fn parse_bool_env(value: &str) -> Option<bool> {
-    match value.trim().to_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
+    let trimmed = value.trim();
+    match trimmed {
+        "1" => return Some(true),
+        "0" => return Some(false),
+        _ => {}
     }
+    if trimmed.eq_ignore_ascii_case("true")
+        || trimmed.eq_ignore_ascii_case("yes")
+        || trimmed.eq_ignore_ascii_case("on")
+    {
+        return Some(true);
+    }
+    if trimmed.eq_ignore_ascii_case("false")
+        || trimmed.eq_ignore_ascii_case("no")
+        || trimmed.eq_ignore_ascii_case("off")
+    {
+        return Some(false);
+    }
+    None
 }
 
 fn print_help() {
