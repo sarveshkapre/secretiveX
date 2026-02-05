@@ -74,7 +74,6 @@ mod enabled {
     #[derive(Clone)]
     struct Pkcs11Key {
         key_handle: cryptoki::object::ObjectHandle,
-        key_blob: Vec<u8>,
         label: String,
     }
 
@@ -168,10 +167,9 @@ mod enabled {
 
                 let private_key = find_private_key(&session, &modulus, &exponent)?;
                 map.insert(
-                    key_blob.clone(),
+                    key_blob,
                     Pkcs11Key {
                         key_handle: private_key,
-                        key_blob,
                         label,
                     },
                 );
@@ -187,10 +185,10 @@ mod enabled {
             self.refresh_keys()?;
             let guard = self.key_map.load();
             let mut identities = Vec::with_capacity(guard.len());
-            for entry in guard.values() {
+            for entry in guard.iter() {
                 identities.push(KeyIdentity {
-                    key_blob: entry.key_blob.clone(),
-                    comment: entry.label.clone(),
+                    key_blob: entry.key().clone(),
+                    comment: entry.value().label.clone(),
                     source: "pkcs11".to_string(),
                 });
             }
