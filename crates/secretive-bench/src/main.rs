@@ -182,16 +182,27 @@ async fn run_worker(
         data: vec![0u8; payload_size],
         flags,
     };
+    let sign_frame = if randomize_payload {
+        None
+    } else {
+        Some(encode_request_frame(&request)?)
+    };
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
-                rng.fill_bytes(data);
-            }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
-            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+            if let Some(frame) = &sign_frame {
+                writer.write_all(frame).await?;
+            } else {
+                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                    (&mut rng, &mut request)
+                {
+                    rng.fill_bytes(data);
+                }
+                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+            }
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
                 return Err(anyhow::anyhow!("unexpected sign response"));
@@ -202,10 +213,16 @@ async fn run_worker(
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
-                rng.fill_bytes(data);
+            if let Some(frame) = &sign_frame {
+                writer.write_all(frame).await?;
+            } else {
+                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                    (&mut rng, &mut request)
+                {
+                    rng.fill_bytes(data);
+                }
+                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             }
-            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
                 return Err(anyhow::anyhow!("unexpected sign response"));
@@ -215,12 +232,16 @@ async fn run_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
-                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                    (&mut rng, &mut request)
-                {
-                    rng.fill_bytes(data);
+                if let Some(frame) = &sign_frame {
+                    writer.write_all(frame).await?;
+                } else {
+                    if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                        (&mut rng, &mut request)
+                    {
+                        rng.fill_bytes(data);
+                    }
+                    write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
                 }
-                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::SignResponse { .. }) {
                     completed += 1;
@@ -228,12 +249,16 @@ async fn run_worker(
             }
         } else {
             for _ in 0..requests {
-                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
-                    (&mut rng, &mut request)
-                {
-                    rng.fill_bytes(data);
+                if let Some(frame) = &sign_frame {
+                    writer.write_all(frame).await?;
+                } else {
+                    if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                        (&mut rng, &mut request)
+                    {
+                        rng.fill_bytes(data);
+                    }
+                    write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
                 }
-                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::SignResponse { .. }) {
                     completed += 1;
@@ -249,12 +274,18 @@ async fn run_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
-                rng.fill_bytes(data);
-            }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
-            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+            if let Some(frame) = &sign_frame {
+                writer.write_all(frame).await?;
+            } else {
+                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                    (&mut rng, &mut request)
+                {
+                    rng.fill_bytes(data);
+                }
+                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+            }
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
                 completed += 1;
@@ -262,12 +293,18 @@ async fn run_worker(
         }
     } else {
         for _ in 0..requests {
-            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
-                rng.fill_bytes(data);
-            }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
-            write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+            if let Some(frame) = &sign_frame {
+                writer.write_all(frame).await?;
+            } else {
+                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                    (&mut rng, &mut request)
+                {
+                    rng.fill_bytes(data);
+                }
+                write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
+            }
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
                 completed += 1;
