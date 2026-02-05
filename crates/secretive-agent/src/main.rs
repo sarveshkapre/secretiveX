@@ -314,6 +314,7 @@ async fn main() {
     }
 
     let identity_cache_ms = config.identity_cache_ms.unwrap_or(1000);
+    info!(identity_cache_ms, "identity cache ttl");
     let registry = Arc::new(registry);
     let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
     if let Ok(identities) = registry.list_identities() {
