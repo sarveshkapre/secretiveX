@@ -123,6 +123,11 @@ async fn main() -> Result<()> {
             "failures": failures,
             "elapsed_ms": elapsed.as_millis(),
             "rps": rps,
+            "mode": if args.list_only { "list" } else { "sign" },
+            "reconnect": args.reconnect,
+            "concurrency": args.concurrency,
+            "requests_per_worker": args.requests_per_worker,
+            "duration_secs": args.duration_secs,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
