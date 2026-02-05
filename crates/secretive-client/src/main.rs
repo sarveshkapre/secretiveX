@@ -90,8 +90,9 @@ async fn main() -> Result<()> {
         .await?;
         let signature = decode_signature_blob(&signature_blob)?;
         if args.json {
+            let algorithm = signature.algorithm();
             let payload = JsonSignature {
-                algorithm: signature.algorithm().as_str().to_string(),
+                algorithm: algorithm.as_str(),
                 signature_hex: hex::encode(signature.as_bytes()),
                 signature_blob_hex: hex::encode(signature_blob),
             };
@@ -153,25 +154,32 @@ where
         let mut handle = stdout.lock();
         let mut ser = serde_json::Serializer::pretty(&mut handle);
         let mut seq = ser.serialize_seq(Some(identities.len()))?;
-        for identity in identities {
-            let mut alg = None;
-            let mut fp = None;
-            let mut openssh = None;
+        for identity in &identities {
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-                alg = Some(public_key.algorithm().as_str().to_string());
-                fp = Some(public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string());
-                if show_openssh {
-                    if let Ok(ssh) = public_key.to_openssh() {
-                        openssh = Some(ssh.trim().to_string());
-                    }
-                }
+                let algorithm = public_key.algorithm();
+                let alg = algorithm.as_str();
+                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+                let openssh = if show_openssh {
+                    public_key.to_openssh().ok().map(|ssh| ssh.trim().to_string())
+                } else {
+                    None
+                };
+                let item = JsonIdentity {
+                    key_blob_hex: hex::encode(&identity.key_blob),
+                    comment: &identity.comment,
+                    algorithm: Some(alg),
+                    fingerprint: Some(fp),
+                    openssh,
+                };
+                seq.serialize_element(&item)?;
+                continue;
             }
             let item = JsonIdentity {
                 key_blob_hex: hex::encode(&identity.key_blob),
-                comment: identity.comment,
-                algorithm: alg,
-                fingerprint: fp,
-                openssh,
+                comment: &identity.comment,
+                algorithm: None,
+                fingerprint: None,
+                openssh: None,
             };
             seq.serialize_element(&item)?;
         }
@@ -418,17 +426,17 @@ fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
 }
 
 #[derive(Serialize)]
-struct JsonIdentity {
+struct JsonIdentity<'a> {
     key_blob_hex: String,
-    comment: String,
-    algorithm: Option<String>,
+    comment: &'a str,
+    algorithm: Option<&'a str>,
     fingerprint: Option<String>,
     openssh: Option<String>,
 }
 
 #[derive(Serialize)]
-struct JsonSignature {
-    algorithm: String,
+struct JsonSignature<'a> {
+    algorithm: &'a str,
     signature_hex: String,
     signature_blob_hex: String,
 }
