@@ -31,7 +31,7 @@ impl KeyStoreRegistry {
 
     pub fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
         let mut out = Vec::new();
-        let mut index_entries: Vec<(Vec<u8>, Arc<dyn KeyStore>)> = Vec::new();
+        let new_index: DashMap<Vec<u8>, Arc<dyn KeyStore>> = DashMap::new();
         let mut last_err = None;
         let mut any_ok = false;
         for store in &self.stores {
@@ -39,9 +39,8 @@ impl KeyStoreRegistry {
                 Ok(identities) => {
                     any_ok = true;
                     out.reserve(identities.len());
-                    index_entries.reserve(identities.len());
                     for identity in &identities {
-                        index_entries.push((identity.key_blob.clone(), store.clone()));
+                        new_index.insert(identity.key_blob.clone(), store.clone());
                     }
                     out.extend(identities);
                 }
@@ -52,10 +51,6 @@ impl KeyStoreRegistry {
         }
         if !any_ok {
             return Err(last_err.unwrap_or(CoreError::Internal("no key stores")));
-        }
-        let new_index = DashMap::with_capacity(index_entries.len());
-        for (key_blob, store) in index_entries {
-            new_index.insert(key_blob, store);
         }
         self.index.store(Arc::new(new_index));
         out.sort_by(|a, b| {
