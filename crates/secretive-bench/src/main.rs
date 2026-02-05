@@ -152,19 +152,20 @@ async fn run_worker(
     };
 
     let mut rng = rand::rngs::StdRng::from_entropy();
-    let mut data = vec![0u8; payload_size];
+    let mut request = AgentRequest::SignRequest {
+        key_blob: key_blob.clone(),
+        data: vec![0u8; payload_size],
+        flags,
+    };
 
     if reconnect {
         for _ in 0..warmup {
-            rng.fill_bytes(&mut data);
+            if let AgentRequest::SignRequest { data, .. } = &mut request {
+                rng.fill_bytes(data);
+            }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             let mut buffer = BytesMut::with_capacity(4096);
-            let request = AgentRequest::SignRequest {
-                key_blob: key_blob.clone(),
-                data: data.clone(),
-                flags,
-            };
             write_request(&mut writer, &request).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
@@ -176,12 +177,9 @@ async fn run_worker(
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            rng.fill_bytes(&mut data);
-            let request = AgentRequest::SignRequest {
-                key_blob: key_blob.clone(),
-                data: data.clone(),
-                flags,
-            };
+            if let AgentRequest::SignRequest { data, .. } = &mut request {
+                rng.fill_bytes(data);
+            }
             write_request(&mut writer, &request).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
@@ -192,12 +190,9 @@ async fn run_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
-                rng.fill_bytes(&mut data);
-                let request = AgentRequest::SignRequest {
-                    key_blob: key_blob.clone(),
-                    data: data.clone(),
-                    flags,
-                };
+                if let AgentRequest::SignRequest { data, .. } = &mut request {
+                    rng.fill_bytes(data);
+                }
                 write_request(&mut writer, &request).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::SignResponse { .. }) {
@@ -206,12 +201,9 @@ async fn run_worker(
             }
         } else {
             for _ in 0..requests {
-                rng.fill_bytes(&mut data);
-                let request = AgentRequest::SignRequest {
-                    key_blob: key_blob.clone(),
-                    data: data.clone(),
-                    flags,
-                };
+                if let AgentRequest::SignRequest { data, .. } = &mut request {
+                    rng.fill_bytes(data);
+                }
                 write_request(&mut writer, &request).await?;
                 let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
                 if matches!(response, AgentResponse::SignResponse { .. }) {
@@ -227,12 +219,9 @@ async fn run_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            rng.fill_bytes(&mut data);
-            let request = AgentRequest::SignRequest {
-                key_blob: key_blob.clone(),
-                data: data.clone(),
-                flags,
-            };
+            if let AgentRequest::SignRequest { data, .. } = &mut request {
+                rng.fill_bytes(data);
+            }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             let mut buffer = BytesMut::with_capacity(4096);
@@ -244,12 +233,9 @@ async fn run_worker(
         }
     } else {
         for _ in 0..requests {
-            rng.fill_bytes(&mut data);
-            let request = AgentRequest::SignRequest {
-                key_blob: key_blob.clone(),
-                data: data.clone(),
-                flags,
-            };
+            if let AgentRequest::SignRequest { data, .. } = &mut request {
+                rng.fill_bytes(data);
+            }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             let mut buffer = BytesMut::with_capacity(4096);
