@@ -8,7 +8,6 @@ use ssh_key::{Algorithm, HashAlg, PrivateKey};
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
-const SSH_AGENT_RSA_SHA2_256: u32 = 2;
 const SSH_AGENT_RSA_SHA2_512: u32 = 4;
 
 #[derive(Clone, Debug)]
@@ -228,9 +227,7 @@ fn sign_rsa(
     use signature::{SignatureEncoding, Signer};
 
     let use_sha512 = flags & SSH_AGENT_RSA_SHA2_512 != 0;
-    let use_sha256 = flags & SSH_AGENT_RSA_SHA2_256 != 0;
-
-    if use_sha256 && !use_sha512 {
+    if !use_sha512 {
         let signing_key = SigningKey::<Sha256>::try_from(keypair)
             .map_err(|_| CoreError::Crypto("rsa signing key"))?;
         let signature = signing_key

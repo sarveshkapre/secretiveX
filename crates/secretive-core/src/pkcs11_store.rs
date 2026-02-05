@@ -204,10 +204,8 @@ mod enabled {
 
             let mechanism = if flags & SSH_AGENT_RSA_SHA2_512 != 0 {
                 Mechanism::Sha512RsaPkcs
-            } else if flags & SSH_AGENT_RSA_SHA2_256 != 0 {
-                Mechanism::Sha256RsaPkcs
             } else {
-                Mechanism::RsaPkcs
+                Mechanism::Sha256RsaPkcs
             };
 
             let signature = session
@@ -216,10 +214,8 @@ mod enabled {
 
             let algorithm = if flags & SSH_AGENT_RSA_SHA2_512 != 0 {
                 Algorithm::Rsa { hash: Some(ssh_key::HashAlg::Sha512) }
-            } else if flags & SSH_AGENT_RSA_SHA2_256 != 0 {
-                Algorithm::Rsa { hash: Some(ssh_key::HashAlg::Sha256) }
             } else {
-                Algorithm::Rsa { hash: Some(ssh_key::HashAlg::Sha512) }
+                Algorithm::Rsa { hash: Some(ssh_key::HashAlg::Sha256) }
             };
 
             let signature = ssh_key::Signature::new(algorithm, signature)
