@@ -9,8 +9,8 @@ use sha1::Sha1;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
-const SSH_AGENT_RSA_SHA2_256: u32 = 2;
-const SSH_AGENT_RSA_SHA2_512: u32 = 4;
+const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
+const SSH_AGENT_RSA_SHA2_512: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_512;
 
 #[derive(Clone, Debug)]
 pub struct FileStoreConfig {

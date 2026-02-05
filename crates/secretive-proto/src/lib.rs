@@ -12,6 +12,9 @@ pub use message::{AgentRequest, AgentResponse, Identity, MessageType};
 
 pub type Result<T> = std::result::Result<T, ProtoError>;
 
+pub const SSH_AGENT_RSA_SHA2_256: u32 = 2;
+pub const SSH_AGENT_RSA_SHA2_512: u32 = 4;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ProtoError {
     #[error("frame too large: {0} bytes")]
