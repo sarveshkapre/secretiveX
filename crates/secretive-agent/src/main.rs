@@ -367,7 +367,8 @@ async fn main() {
         let mut watch_targets: HashMap<PathBuf, RecursiveMode> =
             HashMap::with_capacity(raw_paths.len());
         for path in raw_paths {
-            if path.is_file() {
+            let meta = path.metadata();
+            if meta.as_ref().map(|m| m.is_file()).unwrap_or(false) {
                 let target = path.parent().unwrap_or(&path).to_path_buf();
                 watch_targets
                     .entry(target)
@@ -378,7 +379,7 @@ async fn main() {
                         *mode = RecursiveMode::NonRecursive;
                     })
                     .or_insert(RecursiveMode::NonRecursive);
-            } else if path.is_dir() {
+            } else if meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
                 watch_targets
                     .entry(path)
                     .and_modify(|mode| {
