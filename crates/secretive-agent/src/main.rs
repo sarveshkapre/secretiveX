@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+use tokio::time::Duration;
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -162,7 +163,24 @@ async fn main() {
 
         let reloadable_stores = reloadable_stores.clone();
         tokio::spawn(async move {
-            while let Some(_event) = notify_rx.recv().await {
+            let debounce = Duration::from_millis(200);
+            loop {
+                let Some(_event) = notify_rx.recv().await else { break; };
+                let mut deadline = Instant::now() + debounce;
+                loop {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    let wait = deadline - now;
+                    match tokio::time::timeout(wait, notify_rx.recv()).await {
+                        Ok(Some(_)) => {
+                            deadline = Instant::now() + debounce;
+                        }
+                        _ => break,
+                    }
+                }
+
                 for store in &reloadable_stores {
                     if let Err(err) = store.reload() {
                         warn!(?err, "failed to reload keys");
