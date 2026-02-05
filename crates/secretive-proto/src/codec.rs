@@ -171,7 +171,13 @@ pub fn encode_response(response: &AgentResponse) -> Bytes {
 }
 
 pub fn encode_request(request: &AgentRequest) -> Bytes {
-    let mut buf = BytesMut::new();
+    let mut buf = match request {
+        AgentRequest::RequestIdentities => BytesMut::with_capacity(1),
+        AgentRequest::SignRequest { key_blob, data, .. } => {
+            BytesMut::with_capacity(1 + 4 + key_blob.len() + 4 + data.len() + 4)
+        }
+        AgentRequest::Unknown { payload, .. } => BytesMut::with_capacity(1 + payload.len()),
+    };
     match request {
         AgentRequest::RequestIdentities => buf.put_u8(MessageType::RequestIdentities as u8),
         AgentRequest::SignRequest { key_blob, data, flags } => {
