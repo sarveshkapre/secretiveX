@@ -170,7 +170,7 @@ async fn run_worker(
         fetch_first_key(&socket_path).await?
     };
 
-    let mut rng = if randomize_payload {
+    let mut rng = if randomize_payload && payload_size > 0 {
         Some(rand::rngs::SmallRng::from_entropy())
     } else {
         None
@@ -182,7 +182,7 @@ async fn run_worker(
         data: vec![0u8; payload_size],
         flags,
     };
-    let sign_frame = if randomize_payload {
+    let sign_frame = if randomize_payload && payload_size > 0 {
         None
     } else {
         Some(encode_request_frame(&request)?)
