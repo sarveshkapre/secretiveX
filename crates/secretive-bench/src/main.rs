@@ -38,9 +38,17 @@ struct Args {
     json: bool,
     json_compact: bool,
     response_timeout_ms: Option<u64>,
+    latency: bool,
+    latency_max_samples: usize,
     help: bool,
     version: bool,
     duration_secs: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct WorkerResult {
+    completed: usize,
+    latencies_us: Vec<u64>,
 }
 
 #[tokio::main]
@@ -83,6 +91,14 @@ async fn main() -> Result<()> {
             Some(Duration::from_millis(value))
         }
     });
+    let latency_samples_per_worker = if args.latency {
+        args.latency_max_samples
+            .checked_div(args.concurrency.max(1))
+            .unwrap_or(0)
+            .max(1)
+    } else {
+        0
+    };
 
     let mut handles = Vec::with_capacity(args.concurrency);
     for worker_id in 0..args.concurrency {
@@ -97,6 +113,7 @@ async fn main() -> Result<()> {
         let randomize_payload = args.randomize_payload;
         let deadline = deadline.clone();
         let response_timeout = response_timeout;
+        let latency_samples_per_worker = latency_samples_per_worker;
         handles.push(tokio::spawn(async move {
             run_worker(
                 worker_id,
@@ -111,6 +128,7 @@ async fn main() -> Result<()> {
                 randomize_payload,
                 deadline,
                 response_timeout,
+                latency_samples_per_worker,
             )
             .await
         }));
@@ -118,9 +136,20 @@ async fn main() -> Result<()> {
 
     let mut ok = 0usize;
     let mut failures = 0usize;
+    let mut latencies_us = Vec::new();
     for handle in handles {
         match handle.await {
-            Ok(Ok(count)) => ok += count,
+            Ok(Ok(worker)) => {
+                ok += worker.completed;
+                if args.latency {
+                    for sample in worker.latencies_us {
+                        if latencies_us.len() >= args.latency_max_samples {
+                            break;
+                        }
+                        latencies_us.push(sample);
+                    }
+                }
+            }
             Ok(Err(err)) => {
                 error!(?err, "worker failed");
                 failures += 1;
@@ -138,6 +167,7 @@ async fn main() -> Result<()> {
     } else {
         0.0
     };
+    let latency = compute_latency_stats(latencies_us);
 
     if args.json || args.json_compact {
         let socket_value = socket_path.display().to_string();
@@ -156,6 +186,9 @@ async fn main() -> Result<()> {
             flags: args.flags,
             socket_path: socket_value,
             response_timeout_ms: args.response_timeout_ms,
+            latency_enabled: args.latency,
+            latency_max_samples: args.latency_max_samples,
+            latency,
         };
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
@@ -167,6 +200,17 @@ async fn main() -> Result<()> {
         writeln!(handle)?;
     } else {
         println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
+        if let Some(latency) = latency {
+            println!(
+                "Latency(us): p50={} p95={} p99={} max={} avg={:.2} samples={}",
+                latency.p50_us,
+                latency.p95_us,
+                latency.p99_us,
+                latency.max_us,
+                latency.avg_us,
+                latency.samples
+            );
+        }
     }
 
     Ok(())
@@ -188,6 +232,50 @@ struct BenchOutput {
     flags: u32,
     socket_path: String,
     response_timeout_ms: Option<u64>,
+    latency_enabled: bool,
+    latency_max_samples: usize,
+    latency: Option<LatencyStats>,
+}
+
+#[derive(Serialize)]
+struct LatencyStats {
+    samples: usize,
+    p50_us: u64,
+    p95_us: u64,
+    p99_us: u64,
+    max_us: u64,
+    avg_us: f64,
+}
+
+fn compute_latency_stats(mut latencies_us: Vec<u64>) -> Option<LatencyStats> {
+    if latencies_us.is_empty() {
+        return None;
+    }
+    latencies_us.sort_unstable();
+    let len = latencies_us.len();
+    let percentile = |p: usize| -> u64 {
+        let idx = ((len.saturating_sub(1)) * p) / 100;
+        latencies_us[idx]
+    };
+    let sum: u128 = latencies_us.iter().map(|value| *value as u128).sum();
+    let avg_us = sum as f64 / len as f64;
+    let max_us = *latencies_us.last().expect("non-empty latency samples");
+    Some(LatencyStats {
+        samples: len,
+        p50_us: percentile(50),
+        p95_us: percentile(95),
+        p99_us: percentile(99),
+        max_us,
+        avg_us,
+    })
+}
+
+fn maybe_record_latency(started_at: Option<Instant>, latencies_us: &mut Vec<u64>, max_samples: usize) {
+    if let Some(started_at) = started_at {
+        if latencies_us.len() < max_samples {
+            latencies_us.push(started_at.elapsed().as_micros() as u64);
+        }
+    }
 }
 
 async fn run_worker(
@@ -203,7 +291,8 @@ async fn run_worker(
     randomize_payload: bool,
     deadline: Option<Instant>,
     response_timeout: Option<Duration>,
-) -> Result<usize> {
+    latency_max_samples: usize,
+) -> Result<WorkerResult> {
     if list_only {
         return run_list_worker(
             socket_path,
@@ -212,9 +301,12 @@ async fn run_worker(
             reconnect,
             deadline,
             response_timeout,
+            latency_max_samples,
         )
         .await;
     }
+
+    let mut latencies_us = Vec::with_capacity(latency_max_samples.min(4096));
 
     let key_blob = if let Some(key_blob) = shared_key {
         key_blob
@@ -303,6 +395,11 @@ async fn run_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
+                let started_at = if latency_max_samples > 0 {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 if let Some(frame) = &sign_frame {
                     stream.write_all(frame).await?;
                 } else {
@@ -323,10 +420,16 @@ async fn run_worker(
                         .await?;
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
+                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
                 }
             }
         } else {
             for _ in 0..requests {
+                let started_at = if latency_max_samples > 0 {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 if let Some(frame) = &sign_frame {
                     stream.write_all(frame).await?;
                 } else {
@@ -347,18 +450,27 @@ async fn run_worker(
                         .await?;
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
+                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
                 }
             }
         }
 
         debug!(worker_id, completed, "worker done");
-        return Ok(completed);
+        return Ok(WorkerResult {
+            completed,
+            latencies_us,
+        });
     }
 
     let mut buffer = BytesMut::with_capacity(4096);
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
+            let started_at = if latency_max_samples > 0 {
+                Some(Instant::now())
+            } else {
+                None
+            };
             let mut stream = connect(socket_path.as_ref()).await?;
             if let Some(frame) = &sign_frame {
                 stream.write_all(frame).await?;
@@ -380,10 +492,16 @@ async fn run_worker(
                     .await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
+                maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
             }
         }
     } else {
         for _ in 0..requests {
+            let started_at = if latency_max_samples > 0 {
+                Some(Instant::now())
+            } else {
+                None
+            };
             let mut stream = connect(socket_path.as_ref()).await?;
             if let Some(frame) = &sign_frame {
                 stream.write_all(frame).await?;
@@ -405,12 +523,16 @@ async fn run_worker(
                     .await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
+                maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
             }
         }
     }
 
     debug!(worker_id, completed, "worker done");
-    Ok(completed)
+    Ok(WorkerResult {
+        completed,
+        latencies_us,
+    })
 }
 
 async fn run_list_worker(
@@ -420,8 +542,10 @@ async fn run_list_worker(
     reconnect: bool,
     deadline: Option<Instant>,
     response_timeout: Option<Duration>,
-) -> Result<usize> {
+    latency_max_samples: usize,
+) -> Result<WorkerResult> {
     let list_frame = list_request_frame();
+    let mut latencies_us = Vec::with_capacity(latency_max_samples.min(4096));
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
@@ -450,33 +574,53 @@ async fn run_list_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
+                let started_at = if latency_max_samples > 0 {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 stream.write_all(&list_frame).await?;
                 let response_type =
                     read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
                         .await?;
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
+                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
                 }
             }
         } else {
             for _ in 0..requests {
+                let started_at = if latency_max_samples > 0 {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 stream.write_all(&list_frame).await?;
                 let response_type =
                     read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
                         .await?;
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
+                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
                 }
             }
         }
 
-        return Ok(completed);
+        return Ok(WorkerResult {
+            completed,
+            latencies_us,
+        });
     }
 
     let mut buffer = BytesMut::with_capacity(4096);
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
+            let started_at = if latency_max_samples > 0 {
+                Some(Instant::now())
+            } else {
+                None
+            };
             list_once(
                 socket_path.as_ref(),
                 &list_frame,
@@ -485,9 +629,15 @@ async fn run_list_worker(
             )
             .await?;
             completed += 1;
+            maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
         }
     } else {
         for _ in 0..requests {
+            let started_at = if latency_max_samples > 0 {
+                Some(Instant::now())
+            } else {
+                None
+            };
             list_once(
                 socket_path.as_ref(),
                 &list_frame,
@@ -496,10 +646,14 @@ async fn run_list_worker(
             )
             .await?;
             completed += 1;
+            maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
         }
     }
 
-    Ok(completed)
+    Ok(WorkerResult {
+        completed,
+        latencies_us,
+    })
 }
 
 async fn read_response_type_with_timeout<R>(
@@ -579,6 +733,8 @@ fn parse_args() -> Args {
         json: false,
         json_compact: false,
         response_timeout_ms: None,
+        latency: false,
+        latency_max_samples: 100_000,
         help: false,
         version: false,
         duration_secs: None,
@@ -630,6 +786,13 @@ fn parse_args() -> Args {
                     parsed.response_timeout_ms = value.parse().ok();
                 }
             }
+            "--latency" => parsed.latency = true,
+            "--latency-max-samples" => {
+                if let Some(value) = args.next() {
+                    parsed.latency_max_samples =
+                        value.parse().unwrap_or(parsed.latency_max_samples);
+                }
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -645,13 +808,14 @@ fn print_help() {
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json --json-compact --reconnect --list --fixed");
-    println!("  --response-timeout-ms <n>\n");
+    println!("  --response-timeout-ms <n> --latency --latency-max-samples <n>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
     println!("  Use --list to benchmark list-identities instead of signing.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --fixed disables randomizing payload bytes per request.");
+    println!("  --latency records request latencies and reports p50/p95/p99/max/avg.");
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
@@ -673,7 +837,7 @@ fn parse_flags(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_flags;
+    use super::{compute_latency_stats, parse_flags};
 
     #[test]
     fn parse_flags_names() {
@@ -683,6 +847,17 @@ mod tests {
         assert_eq!(parse_flags("rsa-sha2-512"), Some(4));
         assert_eq!(parse_flags("ssh-rsa"), Some(0));
         assert_eq!(parse_flags("sha1"), Some(0));
+    }
+
+    #[test]
+    fn latency_stats_percentiles() {
+        let stats = compute_latency_stats(vec![100, 200, 300, 400, 500]).expect("stats");
+        assert_eq!(stats.samples, 5);
+        assert_eq!(stats.p50_us, 300);
+        assert_eq!(stats.p95_us, 400);
+        assert_eq!(stats.p99_us, 400);
+        assert_eq!(stats.max_us, 500);
+        assert!((stats.avg_us - 300.0).abs() < f64::EPSILON);
     }
 }
 

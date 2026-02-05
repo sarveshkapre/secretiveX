@@ -61,6 +61,20 @@ cargo run -p secretive-bench -- --concurrency 200 --duration 30
 cargo run -p secretive-bench -- --concurrency 200 --duration 30 --response-timeout-ms 500
 ```
 
+## Latency percentiles
+
+Collect p50/p95/p99/max/avg request latency in microseconds:
+
+```bash
+cargo run -p secretive-bench -- --concurrency 200 --duration 30 --latency
+```
+
+Cap latency samples to bound memory:
+
+```bash
+cargo run -p secretive-bench -- --concurrency 200 --duration 30 --latency --latency-max-samples 50000
+```
+
 ## Identity list benchmark
 
 ```bash
