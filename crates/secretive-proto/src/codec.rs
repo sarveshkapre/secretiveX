@@ -85,7 +85,6 @@ where
     let payload = encode_response(response);
     writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
     writer.write_all(&payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
-    writer.flush().await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
@@ -98,7 +97,6 @@ where
     let payload = encode_request(request);
     writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
     writer.write_all(&payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
-    writer.flush().await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
