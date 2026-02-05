@@ -338,15 +338,19 @@ async fn main() {
     info!(identity_cache_ms, "identity cache ttl");
     let registry = Arc::new(registry);
     let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
-    match registry.list_identities() {
-        Ok(identities) => {
+    let registry_clone = registry.clone();
+    match tokio::task::spawn_blocking(move || registry_clone.list_identities()).await {
+        Ok(Ok(identities)) => {
             info!(count = identities.len(), "loaded identities");
             identity_cache
                 .update_from_identities(map_identities(identities))
                 .await;
         }
-        Err(err) => {
+        Ok(Err(err)) => {
             warn!(?err, "failed to load identities on startup");
+        }
+        Err(err) => {
+            warn!(?err, "identity load task failed");
         }
     }
 
