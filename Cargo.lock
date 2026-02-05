@@ -1027,6 +1027,7 @@ dependencies = [
  "ssh-key",
  "tempfile",
  "thiserror",
+ "tracing",
  "zeroize",
 ]
 

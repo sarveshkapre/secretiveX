@@ -230,11 +230,20 @@ fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntr
             source: canonical.display().to_string(),
         };
 
-        let rsa_signers = private_key
-            .key_data()
-            .rsa()
-            .and_then(|rsa| RsaSigners::new(rsa).ok())
-            .map(Arc::new);
+        let rsa_signers = match private_key.key_data().rsa() {
+            Some(rsa) => match RsaSigners::new(rsa) {
+                Ok(signers) => Some(Arc::new(signers)),
+                Err(err) => {
+                    tracing::warn!(
+                        ?err,
+                        path = %canonical.display(),
+                        "failed to precompute RSA signers"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
 
         let entry = Arc::new(KeyEntry {
             private_key,
