@@ -30,6 +30,7 @@ Current Rust milestones:
 - `watch_files` controls automatic reloads
 - `metrics_every` controls logging frequency
 - `pid_file` writes the agent PID for monitoring
+- Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 

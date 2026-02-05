@@ -377,6 +377,9 @@ fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
     if let Ok(path) = std::env::var("SECRETIVE_SOCK") {
         return PathBuf::from(path);
     }
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime).join("secretive").join("agent.sock");
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".secretive").join("agent.sock")
 }
