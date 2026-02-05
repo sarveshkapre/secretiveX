@@ -31,7 +31,6 @@ async fn main() -> Result<()> {
 
     let (mut reader, mut writer) = tokio::io::split(stream);
     let mut buffer = BytesMut::with_capacity(4096);
-    let mut request_buffer = BytesMut::with_capacity(256);
 
     if args.list {
         list_identities(
@@ -46,6 +45,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let mut request_buffer = BytesMut::with_capacity(256);
     if args.sign_key_blob.is_some() || args.sign_comment.is_some() || args.sign_fingerprint.is_some() {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
