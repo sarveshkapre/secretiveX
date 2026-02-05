@@ -316,39 +316,34 @@ fn sign_rsa_with_signers(
 ) -> Result<Vec<u8>> {
     use signature::{SignatureEncoding, Signer};
 
-    let use_sha512 = flags & SSH_AGENT_RSA_SHA2_512 != 0;
-    let use_sha256 = flags & SSH_AGENT_RSA_SHA2_256 != 0;
-
-    if use_sha512 {
-        let signature = signers
-            .sha512
-            .try_sign(data)
-            .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
-            .to_vec();
-        return Ok(secretive_proto::encode_signature_blob(
+    let (algorithm, signature) = match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
+        SSH_AGENT_RSA_SHA2_512 => (
             "rsa-sha2-512",
-            &signature,
-        ));
-    }
-
-    if use_sha256 {
-        let signature = signers
-            .sha256
-            .try_sign(data)
-            .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
-            .to_vec();
-        return Ok(secretive_proto::encode_signature_blob(
+            signers
+                .sha512
+                .try_sign(data)
+                .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?,
+        ),
+        SSH_AGENT_RSA_SHA2_256 => (
             "rsa-sha2-256",
-            &signature,
-        ));
-    }
+            signers
+                .sha256
+                .try_sign(data)
+                .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?,
+        ),
+        _ => (
+            "ssh-rsa",
+            signers
+                .sha1
+                .try_sign(data)
+                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?,
+        ),
+    };
 
-    let signature = signers
-        .sha1
-        .try_sign(data)
-        .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
-        .to_vec();
-    Ok(secretive_proto::encode_signature_blob("ssh-rsa", &signature))
+    Ok(secretive_proto::encode_signature_blob(
+        algorithm,
+        &signature.to_vec(),
+    ))
 }
 
 // signature encoding delegated to secretive-proto
