@@ -22,8 +22,7 @@ use secretive_core::{
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use secretive_proto::{
-    read_request_with_buffer, write_response_with_buffer, AgentRequest, AgentResponse, MessageType,
-    ProtoError, MAX_FRAME_LEN,
+    write_response_with_buffer, AgentResponse, MessageType, ProtoError, MAX_FRAME_LEN,
 };
 
 #[derive(Debug, Deserialize)]
@@ -1035,8 +1034,8 @@ where
     let mut buffer = BytesMut::new();
     let mut response_buffer: Option<BytesMut> = None;
     loop {
-        let request = match read_request_with_buffer(&mut stream, &mut buffer).await {
-            Ok(req) => req,
+        let frame = match read_request_frame_with_buffer(&mut stream, &mut buffer).await {
+            Ok(frame) => frame,
             Err(err) => {
                 if matches!(err, ProtoError::UnexpectedEof) {
                     break;
@@ -1046,8 +1045,16 @@ where
             }
         };
 
+        let request = match decode_request_frame(&frame) {
+            Ok(request) => request,
+            Err(err) => {
+                warn!(?err, "failed to decode request");
+                break;
+            }
+        };
+
         match request {
-            AgentRequest::RequestIdentities => {
+            ParsedRequest::RequestIdentities => {
                 LIST_COUNT.fetch_add(1, Ordering::Relaxed);
                 match identity_cache.get_payload_or_refresh(&registry).await {
                     Ok(payload) => {
@@ -1065,8 +1072,10 @@ where
                     }
                 }
             }
-            _ => {
-                let response = handle_request(&registry, request, sign_semaphore.as_ref()).await;
+            ParsedRequest::SignRequest { key_blob, data, flags } => {
+                let response =
+                    handle_sign_request(&registry, key_blob, data, flags, sign_semaphore.as_ref())
+                        .await;
                 match response {
                     AgentResponse::Failure => {
                         if let Err(err) = stream.write_all(failure_frame()).await {
@@ -1091,6 +1100,13 @@ where
                     }
                 }
             }
+            ParsedRequest::Unknown { message_type } => {
+                warn!(message_type, "unknown request type");
+                if let Err(err) = stream.write_all(failure_frame()).await {
+                    warn!(?err, "failed to write failure response");
+                    break;
+                }
+            }
         }
     }
 
@@ -1112,71 +1128,154 @@ impl Drop for ConnectionGuard {
     }
 }
 
-async fn handle_request(
+async fn read_request_frame_with_buffer<R>(
+    reader: &mut R,
+    buffer: &mut BytesMut,
+) -> Result<Bytes, ProtoError>
+where
+    R: AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let len = reader.read_u32().await.map_err(|_| ProtoError::UnexpectedEof)? as usize;
+    if len > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(len));
+    }
+    buffer.clear();
+    buffer.reserve(len);
+    unsafe {
+        buffer.set_len(len);
+    }
+    reader
+        .read_exact(&mut buffer[..])
+        .await
+        .map_err(|_| ProtoError::UnexpectedEof)?;
+    Ok(buffer.clone().freeze())
+}
+
+fn decode_request_frame(frame: &Bytes) -> Result<ParsedRequest, ProtoError> {
+    let bytes = frame.as_ref();
+    if bytes.is_empty() {
+        return Err(ProtoError::InvalidMessage("missing message type"));
+    }
+    let message_type = bytes[0];
+    let mut offset = 1usize;
+
+    fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32, ProtoError> {
+        if bytes.len() < *offset + 4 {
+            return Err(ProtoError::UnexpectedEof);
+        }
+        let value = u32::from_be_bytes(bytes[*offset..*offset + 4].try_into().unwrap());
+        *offset += 4;
+        Ok(value)
+    }
+
+    fn read_slice(
+        frame: &Bytes,
+        bytes: &[u8],
+        offset: &mut usize,
+    ) -> Result<Bytes, ProtoError> {
+        let len = read_u32(bytes, offset)? as usize;
+        if len > MAX_FRAME_LEN {
+            return Err(ProtoError::FrameTooLarge(len));
+        }
+        if bytes.len() < *offset + len {
+            return Err(ProtoError::UnexpectedEof);
+        }
+        let start = *offset;
+        let end = start + len;
+        *offset = end;
+        Ok(frame.slice(start..end))
+    }
+
+    match message_type {
+        x if x == MessageType::RequestIdentities as u8 => Ok(ParsedRequest::RequestIdentities),
+        x if x == MessageType::SignRequest as u8 => {
+            let key_blob = read_slice(frame, bytes, &mut offset)?;
+            let data = read_slice(frame, bytes, &mut offset)?;
+            let flags = read_u32(bytes, &mut offset)?;
+            Ok(ParsedRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            })
+        }
+        _ => Ok(ParsedRequest::Unknown { message_type }),
+    }
+}
+
+enum ParsedRequest {
+    RequestIdentities,
+    SignRequest {
+        key_blob: Bytes,
+        data: Bytes,
+        flags: u32,
+    },
+    Unknown {
+        message_type: u8,
+    },
+}
+
+async fn handle_sign_request(
     registry: &Arc<KeyStoreRegistry>,
-    request: AgentRequest,
+    key_blob: Bytes,
+    data: Bytes,
+    flags: u32,
     sign_semaphore: &Semaphore,
 ) -> AgentResponse {
-    match request {
-        AgentRequest::RequestIdentities => AgentResponse::Failure,
-        AgentRequest::SignRequest { key_blob, data, flags } => {
-            let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
-            let start = if metrics_every > 0 {
-                Some(Instant::now())
-            } else {
-                None
-            };
-            let permit = match sign_semaphore.acquire().await {
-                Ok(permit) => permit,
-                Err(_) => {
-                    warn!("signing semaphore closed");
-                    SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
-                    return AgentResponse::Failure;
-                }
-            };
-            let registry = Arc::clone(registry);
-            let result =
-                tokio::task::spawn_blocking(move || registry.sign(&key_blob, &data, flags)).await;
-            drop(permit);
-            match result {
-                Ok(Ok(signature_blob)) => {
-                    let count = SIGN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-                    if let Some(start) = start {
-                        let elapsed = start.elapsed();
-                        SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-                        if count % metrics_every == 0 {
-                            let errors = SIGN_ERRORS.load(Ordering::Relaxed);
-                            let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
-                            let avg = total / count as f64;
-                            let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
-                            let available = sign_semaphore.available_permits() as u64;
-                            let in_flight = max_signers.saturating_sub(available);
-                            info!(
-                                count,
-                                errors,
-                                avg_ns = avg,
-                                in_flight,
-                                max_signers,
-                                "signing metrics"
-                            );
-                        }
-                    }
-                    AgentResponse::SignResponse { signature_blob }
-                }
-                Ok(Err(err)) => {
-                    warn!(?err, "sign request failed");
-                    SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
-                    AgentResponse::Failure
-                }
-                Err(err) => {
-                    warn!(?err, "sign worker failed");
-                    SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
-                    AgentResponse::Failure
+    let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
+    let start = if metrics_every > 0 {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let permit = match sign_semaphore.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            warn!("signing semaphore closed");
+            SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+            return AgentResponse::Failure;
+        }
+    };
+    let registry = Arc::clone(registry);
+    let result = tokio::task::spawn_blocking(move || {
+        registry.sign(key_blob.as_ref(), data.as_ref(), flags)
+    })
+    .await;
+    drop(permit);
+    match result {
+        Ok(Ok(signature_blob)) => {
+            let count = SIGN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Some(start) = start {
+                let elapsed = start.elapsed();
+                SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                if count % metrics_every == 0 {
+                    let errors = SIGN_ERRORS.load(Ordering::Relaxed);
+                    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
+                    let avg = total / count as f64;
+                    let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
+                    let available = sign_semaphore.available_permits() as u64;
+                    let in_flight = max_signers.saturating_sub(available);
+                    info!(
+                        count,
+                        errors,
+                        avg_ns = avg,
+                        in_flight,
+                        max_signers,
+                        "signing metrics"
+                    );
                 }
             }
+            AgentResponse::SignResponse { signature_blob }
         }
-        AgentRequest::Unknown { message_type, .. } => {
-            warn!(message_type, "unknown request type");
+        Ok(Err(err)) => {
+            warn!(?err, "sign request failed");
+            SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+            AgentResponse::Failure
+        }
+        Err(err) => {
+            warn!(?err, "sign worker failed");
+            SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
             AgentResponse::Failure
         }
     }
