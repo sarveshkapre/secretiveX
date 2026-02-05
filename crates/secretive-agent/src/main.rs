@@ -40,6 +40,7 @@ struct Config {
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
+    inline_sign: Option<bool>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -258,6 +259,9 @@ fn main() {
     if let Some(idle_timeout_ms) = args.idle_timeout_ms {
         config.idle_timeout_ms = Some(idle_timeout_ms);
     }
+    if let Some(inline_sign) = args.inline_sign {
+        config.inline_sign = Some(inline_sign);
+    }
     if config.max_signers.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_MAX_SIGNERS") {
             config.max_signers = value.parse().ok();
@@ -296,6 +300,11 @@ fn main() {
     if config.idle_timeout_ms.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_IDLE_TIMEOUT_MS") {
             config.idle_timeout_ms = value.parse().ok();
+        }
+    }
+    if config.inline_sign.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_INLINE_SIGN") {
+            config.inline_sign = parse_bool_env(&value);
         }
     }
 
@@ -410,6 +419,12 @@ async fn run_async(mut config: Config, max_signers: usize) {
         info!(idle_timeout_ms = timeout.as_millis(), "connection idle timeout");
     } else {
         info!("connection idle timeout disabled");
+    }
+    let inline_sign = config.inline_sign.unwrap_or(false);
+    if inline_sign {
+        info!("inline signing enabled");
+    } else {
+        info!("inline signing disabled");
     }
     let registry_clone = registry.clone();
     match tokio::task::spawn_blocking(move || registry_clone.list_identities()).await {
@@ -657,6 +672,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 sign_semaphore.clone(),
                 identity_cache.clone(),
                 idle_timeout,
+                inline_sign,
             )
             .await
         {
@@ -673,6 +689,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
             sign_semaphore.clone(),
             identity_cache.clone(),
             idle_timeout,
+            inline_sign,
         )
         .await
         {
@@ -729,6 +746,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         pid_file: None,
         identity_cache_ms: None,
         idle_timeout_ms: None,
+        inline_sign: None,
     }
 }
 
@@ -753,6 +771,7 @@ struct Args {
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
+    inline_sign: Option<bool>,
     help: bool,
     version: bool,
 }
@@ -773,6 +792,7 @@ fn parse_args() -> Args {
         pid_file: None,
         identity_cache_ms: None,
         idle_timeout_ms: None,
+        inline_sign: None,
         help: false,
         version: false,
     };
@@ -826,6 +846,8 @@ fn parse_args() -> Args {
                     parsed.idle_timeout_ms = value.parse().ok();
                 }
             }
+            "--inline-sign" => parsed.inline_sign = Some(true),
+            "--no-inline-sign" => parsed.inline_sign = Some(false),
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -866,6 +888,7 @@ fn print_help() {
     println!("  --metrics-every <n>");
     println!("  --watch | --no-watch --pid-file <path>");
     println!("  --identity-cache-ms <n>");
+    println!("  --inline-sign | --no-inline-sign");
     println!("  --idle-timeout-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
@@ -945,6 +968,7 @@ async fn run_unix(
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
+    inline_sign: bool,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     use tokio::sync::oneshot;
@@ -1006,6 +1030,7 @@ async fn run_unix(
                         let sign_semaphore = sign_semaphore.clone();
                         let identity_cache = identity_cache.clone();
                         let idle_timeout = idle_timeout;
+                        let inline_sign = inline_sign;
                         tokio::spawn(async move {
                             if let Err(err) =
                                 handle_connection(
@@ -1014,6 +1039,7 @@ async fn run_unix(
                                     sign_semaphore,
                                     identity_cache,
                                     idle_timeout,
+                                    inline_sign,
                                 )
                                     .await
                             {
@@ -1053,6 +1079,7 @@ async fn run_windows(
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
+    inline_sign: bool,
 ) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -1072,6 +1099,7 @@ async fn run_windows(
                 let sign_semaphore = sign_semaphore.clone();
                 let identity_cache = identity_cache.clone();
                 let idle_timeout = idle_timeout;
+                let inline_sign = inline_sign;
                 CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     if let Err(err) =
@@ -1081,6 +1109,7 @@ async fn run_windows(
                             sign_semaphore,
                             identity_cache,
                             idle_timeout,
+                            inline_sign,
                         )
                         .await
                     {
@@ -1104,6 +1133,7 @@ async fn handle_connection<S>(
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
+    inline_sign: bool,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -1156,7 +1186,14 @@ where
             }
             ParsedRequest::SignRequest { key_blob, data, flags } => {
                 let response =
-                    handle_sign_request(&registry, key_blob, data, flags, sign_semaphore.as_ref())
+                    handle_sign_request(
+                        &registry,
+                        key_blob,
+                        data,
+                        flags,
+                        sign_semaphore.as_ref(),
+                        inline_sign,
+                    )
                         .await;
                 match response {
                     AgentResponse::Failure => {
@@ -1322,6 +1359,7 @@ async fn handle_sign_request(
     data: Bytes,
     flags: u32,
     sign_semaphore: &Semaphore,
+    inline_sign: bool,
 ) -> AgentResponse {
     let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
     let start = if metrics_every > 0 {
@@ -1338,10 +1376,12 @@ async fn handle_sign_request(
         }
     };
     let registry = Arc::clone(registry);
-    let result = tokio::task::spawn_blocking(move || {
-        registry.sign(key_blob.as_ref(), data.as_ref(), flags)
-    })
-    .await;
+    let result = if inline_sign {
+        Ok(registry.sign(key_blob.as_ref(), data.as_ref(), flags))
+    } else {
+        tokio::task::spawn_blocking(move || registry.sign(key_blob.as_ref(), data.as_ref(), flags))
+            .await
+    };
     drop(permit);
     match result {
         Ok(Ok(signature_blob)) => {
