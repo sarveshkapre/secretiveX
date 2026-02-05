@@ -143,8 +143,10 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() {
-            continue;
+        if let Ok(file_type) = entry.file_type() {
+            if !file_type.is_file() {
+                continue;
+            }
         }
         let filename = match path.file_name().and_then(|name| name.to_str()) {
             Some(name) => name,
