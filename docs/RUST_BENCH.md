@@ -150,6 +150,16 @@ Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
 
 Default SLO gate uses staggered worker start (`SLO_WORKER_START_SPREAD_MS=1500`) to model fan-out ramp while keeping load high.
 
+## Dedicated 1000-session gate
+
+Run the dedicated high-fanout gate:
+
+```bash
+./scripts/fanout_1000_gate.sh
+```
+
+This script wraps `bench_slo_gate.sh` with defaults for the 1000-session reconnect target.
+
 ## Soak test
 
 Run a long-duration soak test (default 30 minutes):

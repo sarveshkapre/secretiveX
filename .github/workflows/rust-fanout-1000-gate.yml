@@ -1,0 +1,30 @@
+name: Rust Fanout 1000 Gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 3"
+
+jobs:
+  fanout-1000:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run 1000-session fanout gate
+        env:
+          SLO_CONCURRENCY: "1000"
+          SLO_DURATION_SECS: "15"
+          SLO_PAYLOAD_SIZE: "64"
+          SLO_WORKER_START_SPREAD_MS: "2000"
+          SLO_MIN_RPS: "20"
+          SLO_MAX_P95_US: "350000"
+          SLO_MAX_FAILURE_RATE: "0.02"
+        run: ./scripts/fanout_1000_gate.sh
