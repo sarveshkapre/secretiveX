@@ -79,7 +79,7 @@ impl FileStore {
     }
 
     pub fn watch_paths(&self) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
+        let mut paths = Vec::with_capacity(self.config.paths.len().saturating_add(1));
         paths.extend(self.config.paths.iter().cloned());
 
         if self.config.scan_default_dir {

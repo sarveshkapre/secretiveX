@@ -129,7 +129,7 @@ where
     }
 
     if json_output {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(identities.len());
         for identity in identities {
             let mut alg = None;
             let mut fp = None;
