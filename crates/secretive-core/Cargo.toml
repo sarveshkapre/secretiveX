@@ -11,6 +11,7 @@ serde.workspace = true
 bytes.workspace = true
 tracing.workspace = true
 dashmap = "6.1"
+arc-swap = "1.7"
 directories = "5.0"
 ssh-key = { version = "0.6", features = ["ed25519", "p256", "p384", "p521", "rsa"] }
 signature = "2.2"
