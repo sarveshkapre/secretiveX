@@ -71,17 +71,24 @@ impl KeyStoreRegistry {
 
     pub fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
         let index = self.index.load();
+        let mut failed_store: Option<Arc<dyn KeyStore>> = None;
         if let Some(store) = index.get(key_blob).map(|entry| entry.value().clone()) {
             match store.sign(key_blob, data, flags) {
                 Ok(sig) => return Ok(sig),
                 Err(CoreError::KeyNotFound) => {
                     index.remove(key_blob);
+                    failed_store = Some(store);
                 }
                 Err(err) => return Err(err),
             }
         }
 
         for store in &self.stores {
+            if let Some(failed_store) = failed_store.as_ref() {
+                if Arc::ptr_eq(store, failed_store) {
+                    continue;
+                }
+            }
             match store.sign(key_blob, data, flags) {
                 Ok(sig) => {
                     self.index.load().insert(key_blob.to_vec(), store.clone());
