@@ -174,6 +174,7 @@ async fn main() {
         }
         watch_paths.sort();
         watch_paths.dedup();
+        info!(count = watch_paths.len(), "watching key paths");
 
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
         if let Ok(mut watcher) = notify::recommended_watcher(move |res| {
