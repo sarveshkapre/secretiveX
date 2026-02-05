@@ -844,6 +844,8 @@ async fn run_unix(
             let _ = shutdown_tx.send(());
         });
     }
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
     loop {
         tokio::select! {
             accept = listener.accept() => {
@@ -867,7 +869,7 @@ async fn run_unix(
                     }
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut ctrl_c => {
                 info!("shutdown requested");
                 break;
             }
@@ -898,6 +900,8 @@ async fn run_windows(
 
     info!(pipe = %pipe_name, "secretive agent listening");
 
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
     loop {
         let server = ServerOptions::new().create(&pipe_name)?;
         tokio::select! {
@@ -918,7 +922,7 @@ async fn run_windows(
                     }
                 });
             }
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut ctrl_c => {
                 info!("shutdown requested");
                 break;
             }
