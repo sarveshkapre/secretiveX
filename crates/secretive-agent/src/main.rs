@@ -43,6 +43,8 @@ static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
+static CONNECTION_COUNT: AtomicU64 = AtomicU64::new(0);
+static ACTIVE_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static LIST_COUNT: AtomicU64 = AtomicU64::new(0);
 static LIST_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 static LIST_CACHE_STALE: AtomicU64 = AtomicU64::new(0);
@@ -478,12 +480,16 @@ async fn main() {
                     let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
                     let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
                     let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
+                    let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
+                    let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
                     info!(
                         count,
                         errors,
                         avg_ns = avg,
                         in_flight,
                         max_signers,
+                        connections,
+                        active_connections,
                         list_count,
                         list_hit,
                         list_stale,
@@ -744,6 +750,7 @@ async fn run_unix(
             accept = listener.accept() => {
                 match accept {
                     Ok((stream, _addr)) => {
+                        CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                         let registry = registry.clone();
                         let sign_semaphore = sign_semaphore.clone();
                         let identity_cache = identity_cache.clone();
@@ -798,6 +805,7 @@ async fn run_windows(
         let registry = registry.clone();
         let sign_semaphore = sign_semaphore.clone();
         let identity_cache = identity_cache.clone();
+        CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(async move {
             if let Err(err) = handle_connection(server, registry, sign_semaphore, identity_cache).await
             {
@@ -816,6 +824,7 @@ async fn handle_connection<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    let _guard = ConnectionGuard::acquire();
     let (mut reader, mut writer) = tokio::io::split(stream);
 
     let mut buffer = BytesMut::with_capacity(4096);
@@ -875,6 +884,21 @@ where
     }
 
     Ok(())
+}
+
+struct ConnectionGuard;
+
+impl ConnectionGuard {
+    fn acquire() -> Self {
+        ACTIVE_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+        ConnectionGuard
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 async fn handle_request(
