@@ -37,6 +37,14 @@ impl KeyStoreRegistry {
             }
             out.extend(identities);
         }
+        out.sort_by(|a, b| {
+            let comment = a.comment.cmp(&b.comment);
+            if comment == std::cmp::Ordering::Equal {
+                a.key_blob.cmp(&b.key_blob)
+            } else {
+                comment
+            }
+        });
         Ok(out)
     }
 
