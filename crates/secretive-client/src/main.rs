@@ -33,8 +33,17 @@ async fn main() -> Result<()> {
         };
         let signature_blob = sign_data(&mut stream, key_blob, data, args.flags).await?;
         let signature = decode_signature_blob(&signature_blob)?;
-        println!("algorithm: {}", signature.algorithm().as_str());
-        println!("signature: {}", hex::encode(signature.as_bytes()));
+        if args.json {
+            let payload = serde_json::json!({
+                "algorithm": signature.algorithm().as_str(),
+                "signature_hex": hex::encode(signature.as_bytes()),
+                "signature_blob_hex": hex::encode(signature_blob),
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            println!("algorithm: {}", signature.algorithm().as_str());
+            println!("signature: {}", hex::encode(signature.as_bytes()));
+        }
         return Ok(());
     }
 
