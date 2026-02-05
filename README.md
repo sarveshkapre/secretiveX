@@ -39,6 +39,7 @@ Current Rust milestones:
 - `idle_timeout_ms` closes idle connections to free resources
 - `inline_sign` keeps signing on async threads for lower latency on local keys
 - `--check-config` validates config and exits before starting the daemon
+- Linux `systemd --user` service template and install/uninstall scripts
 - Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out
@@ -49,6 +50,7 @@ Current Rust milestones:
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
 Tuning guidance: see `docs/RUST_TUNING.md`.
+Linux service setup: see `docs/LINUX_SYSTEMD.md`.
 Product roadmap: see `docs/PRODUCT_FEATURES.md`.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
