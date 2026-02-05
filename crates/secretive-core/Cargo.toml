@@ -16,3 +16,8 @@ signature = "2.2"
 rsa = "0.9"
 sha2 = "0.10"
 zeroize = "1.8"
+cryptoki = { version = "0.7", optional = true }
+
+[features]
+default = []
+pkcs11 = ["cryptoki"]

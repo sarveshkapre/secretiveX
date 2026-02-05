@@ -33,3 +33,5 @@ Legacy fields (used only when `stores` is not provided):
   "pin_env": "PKCS11_PIN"
 }
 ```
+
+Note: PKCS#11 support is behind the `pkcs11` feature in `secretive-core`.

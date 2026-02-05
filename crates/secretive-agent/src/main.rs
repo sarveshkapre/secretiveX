@@ -5,7 +5,9 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info, warn};
 
-use secretive_core::{EmptyStore, FileStore, FileStoreConfig, KeyStore, KeyStoreRegistry};
+use secretive_core::{
+    EmptyStore, FileStore, FileStoreConfig, KeyStore, KeyStoreRegistry, Pkcs11Config, Pkcs11Store,
+};
 use bytes::BytesMut;
 use secretive_proto::{read_request_with_buffer, write_response, AgentRequest, AgentResponse, Identity};
 
@@ -88,12 +90,20 @@ async fn main() {
                 }
             }
             StoreConfig::Pkcs11 { module_path, slot, pin_env } => {
-                warn!(
-                    module_path = %module_path,
-                    slot = ?slot,
-                    pin_env = ?pin_env,
-                    "pkcs11 store requested but not yet implemented"
-                );
+                let config = Pkcs11Config {
+                    module_path: PathBuf::from(module_path),
+                    slot,
+                    pin_env,
+                };
+                match Pkcs11Store::load(config) {
+                    Ok(store) => {
+                        let store = Arc::new(store);
+                        registry.register(store);
+                    }
+                    Err(err) => {
+                        warn!(?err, "failed to load pkcs11 store");
+                    }
+                }
             }
         }
     }
