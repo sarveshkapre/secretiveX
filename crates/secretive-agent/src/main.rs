@@ -59,6 +59,10 @@ async fn main() {
         .init();
 
     let args = parse_args();
+    if args.help {
+        print_help();
+        return;
+    }
     let mut config = load_config(args.config_path.as_deref());
     if let Some(socket_path) = args.socket_path {
         config.socket_path = Some(socket_path);
@@ -323,6 +327,7 @@ struct Args {
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
+    help: bool,
 }
 
 fn parse_args() -> Args {
@@ -336,6 +341,7 @@ fn parse_args() -> Args {
         watch_files: None,
         metrics_every: None,
         pid_file: None,
+        help: false,
     };
 
     while let Some(arg) = args.next() {
@@ -362,11 +368,22 @@ fn parse_args() -> Args {
                 }
             }
             "--pid-file" => parsed.pid_file = args.next(),
+            "-h" | "--help" => parsed.help = true,
             _ => {}
         }
     }
 
     parsed
+}
+
+fn print_help() {
+    println!("secretive-agent usage:\n");
+    println!("  --config <path> --socket <path> --key <path>");
+    println!("  --default-scan | --no-default-scan");
+    println!("  --max-signers <n> --metrics-every <n>");
+    println!("  --watch | --no-watch --pid-file <path>\n");
+    println!("Notes:");
+    println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");
 }
 
 #[cfg(unix)]
