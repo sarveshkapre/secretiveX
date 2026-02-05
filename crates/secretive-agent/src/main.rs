@@ -139,6 +139,7 @@ impl IdentityCache {
             Err(err) => {
                 LIST_ERRORS.fetch_add(1, Ordering::Relaxed);
                 warn!(?err, "failed to encode identities");
+                self.refreshing.store(false, Ordering::Release);
             }
         }
     }
