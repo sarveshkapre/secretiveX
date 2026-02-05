@@ -108,10 +108,8 @@ impl KeyStore for FileStore {
 
     fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
         let entries = self.entries.load();
-        let entry = entries
-            .get(key_blob)
-            .ok_or(CoreError::KeyNotFound)?
-            .clone();
+        let entry = entries.get(key_blob).ok_or(CoreError::KeyNotFound)?;
+        let entry = entry.as_ref();
 
         let key_data = entry.private_key.key_data();
 
