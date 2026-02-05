@@ -21,6 +21,8 @@ Current Rust milestones:
 - Config-driven store list (file now; pkcs11 placeholder)
 - PKCS#11 store (enable via `secretive-core` feature `pkcs11`)
 - PKCS#11 key refresh is serialized to reduce contention under concurrent load
+- PKCS#11 signing resolves private key handles per session with one-shot refresh retry
+- PKCS#11 supports `refresh_min_interval_ms` to throttle refresh scans under fan-out
 - File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
 - Secure Enclave store stub (macOS implementation next)
 - Config supports `secure_enclave` store type (stub)

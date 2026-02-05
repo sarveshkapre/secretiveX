@@ -10,6 +10,7 @@ pub struct Pkcs11Config {
     pub module_path: PathBuf,
     pub slot: Option<u64>,
     pub pin_env: Option<String>,
+    pub refresh_min_interval_ms: Option<u64>,
 }
 
 impl Pkcs11Config {
@@ -53,7 +54,9 @@ impl KeyStore for Pkcs11Store {
 mod enabled {
     use std::collections::HashMap;
     use std::convert::TryFrom;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::{CoreError, KeyIdentity, KeyStore, Result};
     use ahash::RandomState;
@@ -79,11 +82,14 @@ mod enabled {
         pin: Option<String>,
         key_map: Arc<ArcSwap<HashMap<Vec<u8>, Pkcs11Key, RandomState>>>,
         refresh_lock: Arc<std::sync::Mutex<()>>,
+        refresh_min_interval_ms: u64,
+        last_refresh_ms: Arc<AtomicU64>,
     }
 
     #[derive(Clone)]
     struct Pkcs11Key {
-        key_handle: cryptoki::object::ObjectHandle,
+        modulus: Vec<u8>,
+        exponent: Vec<u8>,
         label: String,
     }
 
@@ -92,6 +98,7 @@ mod enabled {
             let pin = config.pin();
             let slot_override = config.slot;
             let module_path = config.module_path;
+            let refresh_min_interval_ms = config.refresh_min_interval_ms.unwrap_or(250);
             let context =
                 Pkcs11::new(module_path).map_err(|_| CoreError::Internal("pkcs11 init"))?;
             context
@@ -115,9 +122,11 @@ mod enabled {
                     RandomState::new(),
                 ))),
                 refresh_lock: Arc::new(std::sync::Mutex::new(())),
+                refresh_min_interval_ms,
+                last_refresh_ms: Arc::new(AtomicU64::new(0)),
             };
 
-            store.refresh_keys_serialized()?;
+            store.refresh_keys_forced()?;
             Ok(store)
         }
 
@@ -184,11 +193,11 @@ mod enabled {
                     .and_then(|value| String::from_utf8(value).ok())
                     .unwrap_or_else(|| "pkcs11-key".to_string());
 
-                let private_key = find_private_key(&session, &modulus, &exponent)?;
                 map.insert(
                     key_blob,
                     Pkcs11Key {
-                        key_handle: private_key,
+                        modulus,
+                        exponent,
                         label,
                     },
                 );
@@ -199,42 +208,48 @@ mod enabled {
         }
 
         fn refresh_keys_serialized(&self) -> Result<()> {
+            self.refresh_keys_with_mode(false)
+        }
+
+        fn refresh_keys_forced(&self) -> Result<()> {
+            self.refresh_keys_with_mode(true)
+        }
+
+        fn refresh_keys_with_mode(&self, force: bool) -> Result<()> {
             let _guard = self
                 .refresh_lock
                 .lock()
                 .map_err(|_| CoreError::Internal("pkcs11 refresh lock"))?;
-            self.refresh_keys()
-        }
-    }
-
-    impl KeyStore for Pkcs11Store {
-        fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
-            self.refresh_keys_serialized()?;
-            let guard = self.key_map.load();
-            let mut identities = Vec::with_capacity(guard.len());
-            for (key_blob, value) in guard.iter() {
-                identities.push(KeyIdentity {
-                    key_blob: key_blob.clone(),
-                    comment: value.label.clone(),
-                    source: "pkcs11".to_string(),
-                });
+            let now = now_ms();
+            let last = self.last_refresh_ms.load(Ordering::Relaxed);
+            let should_skip = !force
+                && self.refresh_min_interval_ms > 0
+                && last != 0
+                && now.saturating_sub(last) < self.refresh_min_interval_ms
+                && !self.key_map.load().is_empty();
+            if should_skip {
+                return Ok(());
             }
-            Ok(identities)
+            self.refresh_keys()?;
+            self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+            Ok(())
         }
 
-        fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
-            let key_handle = if let Some(entry) = self.key_map.load().get(key_blob) {
-                entry.key_handle
-            } else {
-                self.refresh_keys_serialized()?;
-                self.key_map
-                    .load()
-                    .get(key_blob)
-                    .map(|entry| entry.key_handle)
-                    .ok_or(CoreError::KeyNotFound)?
-            };
+        fn resolve_key_for_blob(&self, key_blob: &[u8]) -> Result<Pkcs11Key> {
+            if let Some(entry) = self.key_map.load().get(key_blob) {
+                return Ok(entry.clone());
+            }
+            self.refresh_keys_forced()?;
+            self.key_map
+                .load()
+                .get(key_blob)
+                .cloned()
+                .ok_or(CoreError::KeyNotFound)
+        }
 
+        fn sign_once(&self, key: &Pkcs11Key, data: &[u8], flags: u32) -> Result<Vec<u8>> {
             let session = self.open_session()?;
+            let key_handle = find_private_key(&session, &key.modulus, &key.exponent)?;
 
             let selected = flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512);
             let (mechanism, algorithm) = if selected & SSH_AGENT_RSA_SHA2_512 != 0 {
@@ -254,6 +269,36 @@ mod enabled {
             Ok(secretive_proto::encode_signature_blob(
                 algorithm, &signature,
             ))
+        }
+    }
+
+    impl KeyStore for Pkcs11Store {
+        fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
+            self.refresh_keys_serialized()?;
+            let guard = self.key_map.load();
+            let mut identities = Vec::with_capacity(guard.len());
+            for (key_blob, value) in guard.iter() {
+                identities.push(KeyIdentity {
+                    key_blob: key_blob.clone(),
+                    comment: value.label.clone(),
+                    source: "pkcs11".to_string(),
+                });
+            }
+            Ok(identities)
+        }
+
+        fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
+            let key = self.resolve_key_for_blob(key_blob)?;
+            match self.sign_once(&key, data, flags) {
+                Ok(signature) => Ok(signature),
+                // Token/key handles can churn across sessions; refresh once and retry.
+                Err(CoreError::KeyNotFound) => {
+                    self.refresh_keys_forced()?;
+                    let refreshed = self.resolve_key_for_blob(key_blob)?;
+                    self.sign_once(&refreshed, data, flags)
+                }
+                Err(err) => Err(err),
+            }
         }
 
         fn store_kind(&self) -> &'static str {
@@ -291,6 +336,12 @@ mod enabled {
 
     // signature encoding delegated to secretive-proto
 
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(feature = "pkcs11")]

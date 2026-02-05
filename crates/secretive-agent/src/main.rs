@@ -218,6 +218,7 @@ enum StoreConfig {
         module_path: String,
         slot: Option<u64>,
         pin_env: Option<String>,
+        refresh_min_interval_ms: Option<u64>,
     },
 }
 
@@ -483,11 +484,13 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 module_path,
                 slot,
                 pin_env,
+                refresh_min_interval_ms,
             } => {
                 let config = Pkcs11Config {
                     module_path: PathBuf::from(module_path),
                     slot,
                     pin_env,
+                    refresh_min_interval_ms,
                 };
                 match Pkcs11Store::load(config) {
                     Ok(store) => {
@@ -1339,6 +1342,7 @@ fn validate_config(config: &Config) -> ConfigValidation {
                     module_path,
                     pin_env: _,
                     slot: _,
+                    refresh_min_interval_ms: _,
                 } => {
                     has_key_source = true;
                     has_pkcs11 = true;

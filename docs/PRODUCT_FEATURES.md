@@ -24,6 +24,8 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - List caching and low-allocation protocol paths for fan-out scenarios.
 - Bench tooling includes reconnect mode, list mode, response timeout, and latency percentiles.
 - PKCS#11 key refresh is serialized to reduce refresh storms during concurrent load.
+- PKCS#11 signing now resolves private key handles per session and retries once after refresh on churn.
+- PKCS#11 refresh scans support interval throttling to limit churn during fan-out bursts.
 
 ## Gaps to Close for V1
 

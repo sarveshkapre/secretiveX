@@ -91,11 +91,13 @@ Profiles only set fields that are still unset after CLI/config/env overrides.
   "type": "pkcs11",
   "module_path": "/usr/local/lib/your-pkcs11.so",
   "slot": 0,
-  "pin_env": "PKCS11_PIN"
+  "pin_env": "PKCS11_PIN",
+  "refresh_min_interval_ms": 250
 }
 ```
 
 Note: PKCS#11 support is behind the `pkcs11` feature in `secretive-core`.
+`refresh_min_interval_ms` throttles non-forced key refresh scans to reduce contention (default: `250`; use `0` to disable throttling).
 
 ## Policy controls
 
