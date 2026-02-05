@@ -55,7 +55,7 @@ impl KeyStoreRegistry {
         }
         self.index.store(Arc::new(new_index));
         if out.len() > 1 {
-            out.sort_by(|a, b| {
+            out.sort_unstable_by(|a, b| {
                 let comment = a.comment.cmp(&b.comment);
                 if comment == std::cmp::Ordering::Equal {
                     a.key_blob.cmp(&b.key_blob)
