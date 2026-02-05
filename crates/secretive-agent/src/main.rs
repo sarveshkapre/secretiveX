@@ -7,6 +7,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::time::Duration;
+use arc_swap::ArcSwap;
 
 use directories::BaseDirs;
 use serde::Deserialize;
@@ -55,7 +56,7 @@ static FAILURE_FRAME: OnceLock<Bytes> = OnceLock::new();
 
 #[derive(Debug)]
 struct IdentityCache {
-    payload: parking_lot::RwLock<Bytes>,
+    payload: ArcSwap<Bytes>,
     last_refresh_ms: AtomicU64,
     ttl_ms: u64,
     has_snapshot: AtomicBool,
@@ -68,7 +69,7 @@ impl IdentityCache {
         let empty_payload =
             encode_identities_frame(Vec::new()).expect("empty identity frame encoding failed");
         Self {
-            payload: parking_lot::RwLock::new(empty_payload),
+            payload: ArcSwap::from_pointee(empty_payload),
             last_refresh_ms: AtomicU64::new(0),
             ttl_ms,
             has_snapshot: AtomicBool::new(false),
@@ -90,7 +91,7 @@ impl IdentityCache {
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
             LIST_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
-            return Ok(self.payload.read().clone());
+            return Ok(self.payload.load().as_ref().clone());
         }
 
         if self.has_snapshot.load(Ordering::Relaxed) {
@@ -112,7 +113,7 @@ impl IdentityCache {
                     cache.refreshing.store(false, Ordering::Release);
                 });
             }
-            return Ok(self.payload.read().clone());
+            return Ok(self.payload.load().as_ref().clone());
         }
 
         let _guard = self.refresh_lock.lock().await;
@@ -120,7 +121,7 @@ impl IdentityCache {
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
             LIST_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
-            return Ok(self.payload.read().clone());
+            return Ok(self.payload.load().as_ref().clone());
         }
 
         self.refresh_and_update(registry).await
@@ -129,7 +130,7 @@ impl IdentityCache {
     async fn update_from_identities(&self, identities: Vec<Identity>) {
         match encode_identities_frame(identities) {
             Ok(payload) => {
-                *self.payload.write() = payload;
+                self.payload.store(Arc::new(payload));
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
                 self.refreshing.store(false, Ordering::Release);
@@ -162,7 +163,7 @@ impl IdentityCache {
                         ));
                     }
                 };
-                *self.payload.write() = payload.clone();
+                self.payload.store(Arc::new(payload.clone()));
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
                 LIST_REFRESH.fetch_add(1, Ordering::Relaxed);
