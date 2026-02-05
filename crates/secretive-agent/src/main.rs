@@ -432,22 +432,33 @@ async fn main() {
                     }
                 }
 
-                for store in &reloadable_stores {
-                    if let Err(err) = store.reload() {
-                        warn!(?err, "failed to reload keys");
+                let stores = reloadable_stores.clone();
+                let registry = registry.clone();
+                let reload = tokio::task::spawn_blocking(move || {
+                    for store in &stores {
+                        if let Err(err) = store.reload() {
+                            warn!(?err, "failed to reload keys");
+                        }
                     }
-                }
-                match registry.list_identities() {
-                    Ok(identities) => {
+                    registry.list_identities()
+                })
+                .await;
+
+                match reload {
+                    Ok(Ok(identities)) => {
                         let count = identities.len();
                         identity_cache
                             .update_from_identities(map_identities(identities))
                             .await;
                         info!(count, "reloaded identities (watch)");
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         identity_cache.invalidate();
                         warn!(?err, "failed to refresh identities after reload");
+                    }
+                    Err(err) => {
+                        identity_cache.invalidate();
+                        warn!(?err, "reload task failed");
                     }
                 }
             }
@@ -467,22 +478,33 @@ async fn main() {
             use tokio::signal::unix::{signal, SignalKind};
             if let Ok(mut stream) = signal(SignalKind::hangup()) {
                 while stream.recv().await.is_some() {
-                    for store in &reloadable_stores {
-                        if let Err(err) = store.reload() {
-                            warn!(?err, "failed to reload keys");
+                    let stores = reloadable_stores.clone();
+                    let registry = registry.clone();
+                    let reload = tokio::task::spawn_blocking(move || {
+                        for store in &stores {
+                            if let Err(err) = store.reload() {
+                                warn!(?err, "failed to reload keys");
+                            }
                         }
-                    }
-                    match registry.list_identities() {
-                        Ok(identities) => {
+                        registry.list_identities()
+                    })
+                    .await;
+
+                    match reload {
+                        Ok(Ok(identities)) => {
                             let count = identities.len();
                             identity_cache
                                 .update_from_identities(map_identities(identities))
                                 .await;
                             info!(count, "reloaded identities");
                         }
-                        Err(err) => {
+                        Ok(Err(err)) => {
                             identity_cache.invalidate();
                             warn!(?err, "failed to refresh identities after reload");
+                        }
+                        Err(err) => {
+                            identity_cache.invalidate();
+                            warn!(?err, "reload task failed");
                         }
                     }
                 }
