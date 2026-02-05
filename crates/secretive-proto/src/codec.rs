@@ -83,6 +83,9 @@ where
     use tokio::io::AsyncWriteExt;
 
     let payload = encode_response(response);
+    if payload.len() > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload.len()));
+    }
     writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
     writer.write_all(&payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
@@ -99,6 +102,9 @@ where
     use tokio::io::AsyncWriteExt;
 
     encode_response_into(response, buffer);
+    if buffer.len() > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(buffer.len()));
+    }
     writer
         .write_u32(buffer.len() as u32)
         .await
@@ -117,6 +123,9 @@ where
     use tokio::io::AsyncWriteExt;
 
     let payload = encode_request(request);
+    if payload.len() > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload.len()));
+    }
     writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
     writer.write_all(&payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
@@ -128,6 +137,9 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
+    if payload.len() > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload.len()));
+    }
     writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
     writer.write_all(payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
