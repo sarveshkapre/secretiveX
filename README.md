@@ -48,6 +48,7 @@ Current Rust milestones:
 - `idle_timeout_ms` closes idle connections to free resources
 - `inline_sign` auto mode enables async-thread signing when no PKCS#11 store is loaded
 - `--check-config` validates config and exits before starting the daemon
+- `--dump-effective-config` prints merged runtime config (profile/env/CLI resolved)
 - Linux `systemd --user` service template and install/uninstall scripts
 - Windows service install/uninstall scripts for `secretive-agent`
 - Unix default socket path prefers `XDG_RUNTIME_DIR`

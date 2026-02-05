@@ -31,6 +31,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - Inline-sign defaults now auto-enable for non-PKCS#11 setups to reduce per-request offload overhead.
 - Agent metrics now include sign queue wait average/max to expose signer contention directly.
 - CI includes a dedicated scheduled 1000-session reconnect fan-out gate.
+- Agent supports dumping effective merged runtime config for deterministic tuning/debugging.
 
 ## Gaps to Close for V1
 

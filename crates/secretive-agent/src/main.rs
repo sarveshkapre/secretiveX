@@ -11,7 +11,7 @@ use std::time::Instant;
 use tokio::time::Duration;
 
 use directories::BaseDirs;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
@@ -26,7 +26,7 @@ use secretive_proto::{
     write_response_with_buffer, AgentResponse, MessageType, ProtoError, MAX_FRAME_LEN,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct Config {
     profile: Option<String>,
     socket_path: Option<String>,
@@ -208,7 +208,7 @@ impl IdentityCache {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum StoreConfig {
     File {
@@ -224,7 +224,7 @@ enum StoreConfig {
     },
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Serialize)]
 struct AccessPolicyConfig {
     pin_fingerprints: Option<Vec<String>>,
     allow_key_blobs: Option<Vec<String>>,
@@ -392,6 +392,20 @@ fn main() {
         }
     }
     apply_profile_defaults(&mut config);
+
+    if args.dump_effective_config {
+        match serde_json::to_string_pretty(&config) {
+            Ok(json) => println!("{json}"),
+            Err(err) => {
+                eprintln!("failed to render effective config: {err}");
+                std::process::exit(2);
+            }
+        }
+        if !check_config {
+            return;
+        }
+    }
+
     if check_config {
         let validation = validate_config(&config);
         for warning in validation.warnings {
@@ -1562,6 +1576,7 @@ struct Args {
     inline_sign: Option<bool>,
     sign_timeout_ms: Option<u64>,
     check_config: bool,
+    dump_effective_config: bool,
     help: bool,
     version: bool,
 }
@@ -1590,6 +1605,7 @@ fn parse_args() -> Args {
         inline_sign: None,
         sign_timeout_ms: None,
         check_config: false,
+        dump_effective_config: false,
         help: false,
         version: false,
     };
@@ -1666,6 +1682,7 @@ fn parse_args() -> Args {
             "--inline-sign" => parsed.inline_sign = Some(true),
             "--no-inline-sign" => parsed.inline_sign = Some(false),
             "--check-config" => parsed.check_config = true,
+            "--dump-effective-config" => parsed.dump_effective_config = true,
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -1715,6 +1732,7 @@ fn print_help() {
     println!("  --inline-sign | --no-inline-sign");
     println!("  --idle-timeout-ms <n>\n");
     println!("  --check-config");
+    println!("  --dump-effective-config");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");

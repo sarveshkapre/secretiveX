@@ -5,6 +5,7 @@ The Rust agent supports a JSON configuration file. You can point to it via `SECR
 Validate config and exits:
 - `secretive-agent --check-config`
 - `secretive-agent --check-config --config /path/to/agent.json`
+- `secretive-agent --dump-effective-config` (prints merged config and exits)
 
 If no path is provided, the agent looks for:
 - `$XDG_CONFIG_HOME/secretive/agent.json`
