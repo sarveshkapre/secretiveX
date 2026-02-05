@@ -380,8 +380,9 @@ async fn main() {
                     })
                     .or_insert(RecursiveMode::Recursive);
             } else {
+                let target = path.parent().unwrap_or(&path).to_path_buf();
                 watch_targets
-                    .entry(path)
+                    .entry(target)
                     .and_modify(|mode| {
                         if matches!(mode, RecursiveMode::Recursive) {
                             return;
