@@ -116,14 +116,10 @@ impl KeyStore for FileStore {
         let entry = entries.get(key_blob).ok_or(CoreError::KeyNotFound)?;
         let entry = entry.as_ref();
 
-        let key_data = entry.private_key.key_data();
-
-        let signature_blob = if let Some(rsa) = key_data.rsa() {
-            if let Some(signers) = entry.rsa_signers.as_ref() {
-                sign_rsa_with_signers(signers, data, flags)?
-            } else {
-                sign_rsa(rsa, data, flags)?
-            }
+        let signature_blob = if let Some(signers) = entry.rsa_signers.as_ref() {
+            sign_rsa_with_signers(signers, data, flags)?
+        } else if let Some(rsa) = entry.private_key.key_data().rsa() {
+            sign_rsa(rsa, data, flags)?
         } else {
             use signature::Signer;
             let signature = entry
