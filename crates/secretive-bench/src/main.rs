@@ -155,6 +155,7 @@ async fn main() -> Result<()> {
             payload_size: args.payload_size,
             flags: args.flags,
             socket_path: socket_value,
+            response_timeout_ms: args.response_timeout_ms,
         };
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
@@ -186,6 +187,7 @@ struct BenchOutput {
     payload_size: usize,
     flags: u32,
     socket_path: String,
+    response_timeout_ms: Option<u64>,
 }
 
 async fn run_worker(
