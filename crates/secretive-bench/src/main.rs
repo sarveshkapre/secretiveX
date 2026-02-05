@@ -183,13 +183,13 @@ async fn run_worker(
     };
 
     if reconnect {
+        let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
             if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
                 rng.fill_bytes(data);
             }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
-            let mut buffer = BytesMut::with_capacity(4096);
             write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if !matches!(response, AgentResponse::SignResponse { .. }) {
@@ -244,6 +244,7 @@ async fn run_worker(
         return Ok(completed);
     }
 
+    let mut buffer = BytesMut::with_capacity(4096);
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
@@ -252,7 +253,6 @@ async fn run_worker(
             }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
-            let mut buffer = BytesMut::with_capacity(4096);
             write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
@@ -266,7 +266,6 @@ async fn run_worker(
             }
             let stream = connect(&socket_path).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
-            let mut buffer = BytesMut::with_capacity(4096);
             write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
@@ -289,8 +288,9 @@ async fn run_list_worker(
     let mut request_buffer = BytesMut::with_capacity(64);
 
     if reconnect {
+        let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            list_once(&socket_path, &mut request_buffer).await?;
+            list_once(&socket_path, &mut request_buffer, &mut buffer).await?;
         }
     } else {
         let stream = connect(&socket_path).await?;
@@ -341,15 +341,16 @@ async fn run_list_worker(
         return Ok(completed);
     }
 
+    let mut buffer = BytesMut::with_capacity(4096);
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            list_once(&socket_path, &mut request_buffer).await?;
+            list_once(&socket_path, &mut request_buffer, &mut buffer).await?;
             completed += 1;
         }
     } else {
         for _ in 0..requests {
-            list_once(&socket_path, &mut request_buffer).await?;
+            list_once(&socket_path, &mut request_buffer, &mut buffer).await?;
             completed += 1;
         }
     }
@@ -357,17 +358,20 @@ async fn run_list_worker(
     Ok(completed)
 }
 
-async fn list_once(socket_path: &PathBuf, request_buffer: &mut BytesMut) -> Result<()> {
+async fn list_once(
+    socket_path: &PathBuf,
+    request_buffer: &mut BytesMut,
+    response_buffer: &mut BytesMut,
+) -> Result<()> {
     let stream = connect(socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut buffer = BytesMut::with_capacity(4096);
     write_request_with_buffer(
         &mut writer,
         &AgentRequest::RequestIdentities,
         request_buffer,
     )
     .await?;
-    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+    let response = read_response_with_buffer(&mut reader, response_buffer).await?;
     if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
         Ok(())
     } else {
