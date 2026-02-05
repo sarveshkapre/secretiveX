@@ -309,8 +309,7 @@ pub fn encode_response_frame_into(response: &AgentResponse, buffer: &mut BytesMu
         return Err(ProtoError::FrameTooLarge(payload_cap));
     }
     buffer.reserve(4 + payload_cap);
-    buffer.put_u32(0);
-    let start = buffer.len();
+    buffer.put_u32(payload_cap as u32);
     match response {
         AgentResponse::Failure => buffer.put_u8(MessageType::Failure as u8),
         AgentResponse::Success => buffer.put_u8(MessageType::Success as u8),
@@ -327,8 +326,7 @@ pub fn encode_response_frame_into(response: &AgentResponse, buffer: &mut BytesMu
             write_string(buffer, signature_blob);
         }
     }
-    let payload_len = buffer.len().saturating_sub(start);
-    buffer[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
+    debug_assert_eq!(buffer.len(), 4 + payload_cap);
     Ok(())
 }
 
@@ -397,8 +395,7 @@ pub fn encode_request_frame_into(request: &AgentRequest, buffer: &mut BytesMut) 
         return Err(ProtoError::FrameTooLarge(payload_cap));
     }
     buffer.reserve(4 + payload_cap);
-    buffer.put_u32(0);
-    let start = buffer.len();
+    buffer.put_u32(payload_cap as u32);
     match request {
         AgentRequest::RequestIdentities => buffer.put_u8(MessageType::RequestIdentities as u8),
         AgentRequest::SignRequest { key_blob, data, flags } => {
@@ -412,8 +409,7 @@ pub fn encode_request_frame_into(request: &AgentRequest, buffer: &mut BytesMut) 
             buffer.put_slice(payload);
         }
     }
-    let payload_len = buffer.len().saturating_sub(start);
-    buffer[..4].copy_from_slice(&(payload_len as u32).to_be_bytes());
+    debug_assert_eq!(buffer.len(), 4 + payload_cap);
     Ok(())
 }
 
