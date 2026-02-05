@@ -10,7 +10,7 @@ use tokio::time::Duration;
 
 use directories::BaseDirs;
 use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
@@ -21,8 +21,8 @@ use secretive_core::{
 };
 use bytes::{Bytes, BytesMut};
 use secretive_proto::{
-    read_request_with_buffer, write_payload, write_response_with_buffer, AgentRequest, AgentResponse,
-    Identity, ProtoError,
+    read_request_with_buffer, write_response_with_buffer, AgentRequest, AgentResponse, Identity,
+    ProtoError,
 };
 
 #[derive(Debug, Deserialize)]
@@ -64,9 +64,8 @@ struct IdentityCache {
 
 impl IdentityCache {
     fn new(ttl_ms: u64) -> Self {
-        let empty_payload = secretive_proto::encode_response(&AgentResponse::IdentitiesAnswer {
-            identities: Vec::new(),
-        });
+        let empty_payload =
+            encode_identities_frame(Vec::new()).expect("empty identity frame encoding failed");
         Self {
             payload: parking_lot::RwLock::new(empty_payload),
             last_refresh_ms: AtomicU64::new(0),
@@ -127,11 +126,18 @@ impl IdentityCache {
     }
 
     async fn update_from_identities(&self, identities: Vec<Identity>) {
-        let payload = encode_identities_payload(identities);
-        *self.payload.write() = payload;
-        self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
-        self.has_snapshot.store(true, Ordering::Relaxed);
-        self.refreshing.store(false, Ordering::Release);
+        match encode_identities_frame(identities) {
+            Ok(payload) => {
+                *self.payload.write() = payload;
+                self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+                self.has_snapshot.store(true, Ordering::Relaxed);
+                self.refreshing.store(false, Ordering::Release);
+            }
+            Err(err) => {
+                LIST_ERRORS.fetch_add(1, Ordering::Relaxed);
+                warn!(?err, "failed to encode identities");
+            }
+        }
     }
 
     fn invalidate(&self) {
@@ -145,7 +151,16 @@ impl IdentityCache {
         let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
         match result {
             Ok(Ok(identities)) => {
-                let payload = encode_identities_payload(map_identities(identities));
+                let payload = match encode_identities_frame(map_identities(identities)) {
+                    Ok(payload) => payload,
+                    Err(err) => {
+                        LIST_ERRORS.fetch_add(1, Ordering::Relaxed);
+                        warn!(?err, "failed to encode identities");
+                        return Err(secretive_core::CoreError::Internal(
+                            "identity frame too large",
+                        ));
+                    }
+                };
                 *self.payload.write() = payload.clone();
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
@@ -846,7 +861,7 @@ where
                 LIST_COUNT.fetch_add(1, Ordering::Relaxed);
                 match identity_cache.get_payload_or_refresh(registry.clone()).await {
                     Ok(payload) => {
-                        if let Err(err) = write_payload(&mut writer, &payload).await {
+                        if let Err(err) = writer.write_all(&payload).await {
                             warn!(?err, "failed to write identities");
                             break;
                         }
@@ -973,8 +988,8 @@ fn map_identities(identities: Vec<KeyIdentity>) -> Vec<Identity> {
         .collect()
 }
 
-fn encode_identities_payload(identities: Vec<Identity>) -> Bytes {
-    secretive_proto::encode_response(&AgentResponse::IdentitiesAnswer { identities })
+fn encode_identities_frame(identities: Vec<Identity>) -> Result<Bytes, ProtoError> {
+    secretive_proto::encode_response_frame(&AgentResponse::IdentitiesAnswer { identities })
 }
 
 fn now_ms() -> u64 {

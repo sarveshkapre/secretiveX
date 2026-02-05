@@ -259,6 +259,21 @@ pub fn encode_response(response: &AgentResponse) -> Bytes {
     buf.freeze()
 }
 
+pub fn encode_frame(payload: &[u8]) -> Result<Bytes> {
+    if payload.len() > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload.len()));
+    }
+    let mut buf = BytesMut::with_capacity(4 + payload.len());
+    buf.put_u32(payload.len() as u32);
+    buf.put_slice(payload);
+    Ok(buf.freeze())
+}
+
+pub fn encode_response_frame(response: &AgentResponse) -> Result<Bytes> {
+    let payload = encode_response(response);
+    encode_frame(&payload)
+}
+
 pub fn encode_response_into(response: &AgentResponse, buffer: &mut BytesMut) {
     buffer.clear();
     match response {
@@ -410,6 +425,16 @@ mod tests {
         let mut buffer = BytesMut::new();
         encode_response_into(&response, &mut buffer);
         assert_eq!(buffer.freeze(), encode_response(&response));
+    }
+
+    #[test]
+    fn encode_response_frame_prefix() {
+        let response = AgentResponse::Failure;
+        let framed = encode_response_frame(&response).expect("frame");
+        let mut buf = Bytes::from(framed);
+        let len = buf.get_u32() as usize;
+        assert_eq!(len, 1);
+        assert_eq!(buf.get_u8(), MessageType::Failure as u8);
     }
 
     #[test]
