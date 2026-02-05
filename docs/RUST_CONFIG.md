@@ -27,7 +27,7 @@ Socket path overrides:
 - `watch_files` (bool): enable or disable file-store watching (default: true).
 - `watch_debounce_ms` (number): debounce interval for file watcher reloads (default: 200).
 - `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
-- `metrics_json` (bool): emit sign metrics as JSON lines in logs (default: false). Includes per-store counters (`store_sign_file`, `store_sign_pkcs11`, `store_sign_secure_enclave`, `store_sign_other`).
+- `metrics_json` (bool): emit sign metrics as JSON lines in logs (default: false). Includes per-store counters (`store_sign_file`, `store_sign_pkcs11`, `store_sign_secure_enclave`, `store_sign_other`) and queue wait telemetry (`queue_wait_avg_ns`, `queue_wait_max_ns`).
 - `audit_requests` (bool): emit privacy-safe structured audit logs for list/sign requests (default: false).
 - `sign_timeout_ms` (number): fail sign requests if a permit isn't acquired in N milliseconds (default: disabled). Use `0` to disable.
 - `pid_file` (string): write the agent PID to this file and remove on shutdown.

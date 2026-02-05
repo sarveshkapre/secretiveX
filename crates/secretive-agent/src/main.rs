@@ -53,6 +53,8 @@ struct Config {
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
+static SIGN_QUEUE_WAIT_NS: AtomicU64 = AtomicU64::new(0);
+static SIGN_QUEUE_WAIT_MAX_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
@@ -798,6 +800,13 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
                     let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                     let avg = if count > 0 { total / count as f64 } else { 0.0 };
+                    let wait_total = SIGN_QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64;
+                    let queue_wait_avg_ns = if count > 0 {
+                        wait_total / count as f64
+                    } else {
+                        0.0
+                    };
+                    let queue_wait_max_ns = SIGN_QUEUE_WAIT_MAX_NS.load(Ordering::Relaxed);
                     let available = sign_semaphore.available_permits() as u64;
                     let in_flight = max_signers.saturating_sub(available);
                     let list_count = LIST_COUNT.load(Ordering::Relaxed);
@@ -820,6 +829,8 @@ async fn run_async(mut config: Config, max_signers: usize) {
                         errors,
                         timeouts,
                         avg_ns: avg,
+                        queue_wait_avg_ns,
+                        queue_wait_max_ns,
                         in_flight,
                         max_signers,
                         connections,
@@ -901,6 +912,16 @@ fn compute_max_signers(config: &Config) -> usize {
 
 fn effective_inline_sign(explicit: Option<bool>, has_pkcs11_store: bool) -> bool {
     explicit.unwrap_or(!has_pkcs11_store)
+}
+
+fn update_atomic_max(target: &AtomicU64, value: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while value > current {
+        match target.compare_exchange(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1203,6 +1224,8 @@ struct SignMetricsSnapshot {
     errors: u64,
     timeouts: u64,
     avg_ns: f64,
+    queue_wait_avg_ns: f64,
+    queue_wait_max_ns: u64,
     in_flight: u64,
     max_signers: u64,
     connections: u64,
@@ -1228,6 +1251,8 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
         "errors": metrics.errors,
         "timeouts": metrics.timeouts,
         "avg_ns": metrics.avg_ns,
+        "queue_wait_avg_ns": metrics.queue_wait_avg_ns,
+        "queue_wait_max_ns": metrics.queue_wait_max_ns,
         "in_flight": metrics.in_flight,
         "max_signers": metrics.max_signers,
         "connections": metrics.connections,
@@ -1266,6 +1291,8 @@ fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
         errors = metrics.errors,
         timeouts = metrics.timeouts,
         avg_ns = metrics.avg_ns,
+        queue_wait_avg_ns = metrics.queue_wait_avg_ns,
+        queue_wait_max_ns = metrics.queue_wait_max_ns,
         in_flight = metrics.in_flight,
         max_signers = metrics.max_signers,
         connections = metrics.connections,
@@ -2287,6 +2314,7 @@ async fn handle_sign_request(
     } else {
         None
     };
+    let wait_started = Instant::now();
     let permit = match sign_timeout {
         Some(timeout) => match tokio::time::timeout(timeout, sign_semaphore.acquire()).await {
             Ok(Ok(permit)) => permit,
@@ -2334,6 +2362,9 @@ async fn handle_sign_request(
             }
         },
     };
+    let wait_ns = wait_started.elapsed().as_nanos() as u64;
+    SIGN_QUEUE_WAIT_NS.fetch_add(wait_ns, Ordering::Relaxed);
+    update_atomic_max(&SIGN_QUEUE_WAIT_MAX_NS, wait_ns);
     let registry = Arc::clone(registry);
     let result = if inline_sign {
         Ok(registry.sign_with_store(key_blob.as_ref(), data.as_ref(), flags))
@@ -2369,6 +2400,9 @@ async fn handle_sign_request(
                     let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
                     let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                     let avg = total / count as f64;
+                    let wait_total = SIGN_QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64;
+                    let queue_wait_avg_ns = wait_total / count as f64;
+                    let queue_wait_max_ns = SIGN_QUEUE_WAIT_MAX_NS.load(Ordering::Relaxed);
                     let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
                     let available = sign_semaphore.available_permits() as u64;
                     let in_flight = max_signers.saturating_sub(available);
@@ -2392,6 +2426,8 @@ async fn handle_sign_request(
                         errors,
                         timeouts,
                         avg_ns: avg,
+                        queue_wait_avg_ns,
+                        queue_wait_max_ns,
                         in_flight,
                         max_signers,
                         connections,
@@ -2734,12 +2770,23 @@ mod tests {
     }
 
     #[test]
+    fn update_atomic_max_tracks_largest_value() {
+        let value = AtomicU64::new(10);
+        update_atomic_max(&value, 7);
+        assert_eq!(value.load(Ordering::Relaxed), 10);
+        update_atomic_max(&value, 12);
+        assert_eq!(value.load(Ordering::Relaxed), 12);
+    }
+
+    #[test]
     fn metrics_json_contains_expected_fields() {
         let snapshot = SignMetricsSnapshot {
             count: 1,
             errors: 2,
             timeouts: 3,
             avg_ns: 4.0,
+            queue_wait_avg_ns: 5.0,
+            queue_wait_max_ns: 6,
             in_flight: 5,
             max_signers: 6,
             connections: 7,
@@ -2761,6 +2808,8 @@ mod tests {
         assert!(payload.contains("\"kind\":\"snapshot\""));
         assert!(payload.contains("\"count\":1"));
         assert!(payload.contains("\"max_signers\":6"));
+        assert!(payload.contains("\"queue_wait_avg_ns\":5.0"));
+        assert!(payload.contains("\"queue_wait_max_ns\":6"));
         assert!(payload.contains("\"list_errors\":16"));
         assert!(payload.contains("\"store_sign_file\":17"));
     }

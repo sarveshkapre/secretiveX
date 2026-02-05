@@ -29,6 +29,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - PKCS#11 refresh scans support interval throttling to limit churn during fan-out bursts.
 - CI now enforces `secretive-core` pkcs11-feature build coverage on Linux and macOS.
 - Inline-sign defaults now auto-enable for non-PKCS#11 setups to reduce per-request offload overhead.
+- Agent metrics now include sign queue wait average/max to expose signer contention directly.
 
 ## Gaps to Close for V1
 
