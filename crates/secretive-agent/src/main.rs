@@ -20,10 +20,10 @@ use secretive_core::{
     EmptyStore, FileStore, FileStoreConfig, KeyIdentity, KeyStoreRegistry, Pkcs11Config,
     Pkcs11Store,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use secretive_proto::{
-    read_request_with_buffer, write_response_with_buffer, AgentRequest, AgentResponse, Identity,
-    ProtoError,
+    read_request_with_buffer, write_response_with_buffer, AgentRequest, AgentResponse, MessageType,
+    ProtoError, MAX_FRAME_LEN,
 };
 
 #[derive(Debug, Deserialize)]
@@ -66,8 +66,8 @@ struct IdentityCache {
 
 impl IdentityCache {
     fn new(ttl_ms: u64) -> Self {
-        let empty_payload =
-            encode_identities_frame(Vec::new()).expect("empty identity frame encoding failed");
+        let empty_payload = encode_identities_frame_from_keyidentities(&[])
+            .expect("empty identity frame encoding failed");
         Self {
             payload: ArcSwap::from_pointee(empty_payload),
             last_refresh_ms: AtomicU64::new(0),
@@ -127,8 +127,8 @@ impl IdentityCache {
         self.refresh_and_update(registry).await
     }
 
-    async fn update_from_identities(&self, identities: Vec<Identity>) {
-        match encode_identities_frame(identities) {
+    async fn update_from_identities(&self, identities: Vec<KeyIdentity>) {
+        match encode_identities_frame_from_keyidentities(&identities) {
             Ok(payload) => {
                 self.payload.store(Arc::new(payload));
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
@@ -155,7 +155,7 @@ impl IdentityCache {
         let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
         match result {
             Ok(Ok(identities)) => {
-                let payload = match encode_identities_frame(map_identities(identities)) {
+                let payload = match encode_identities_frame_from_keyidentities(&identities) {
                     Ok(payload) => payload,
                     Err(err) => {
                         LIST_ERRORS.fetch_add(1, Ordering::Relaxed);
@@ -343,9 +343,7 @@ async fn main() {
     match tokio::task::spawn_blocking(move || registry_clone.list_identities()).await {
         Ok(Ok(identities)) => {
             info!(count = identities.len(), "loaded identities");
-            identity_cache
-                .update_from_identities(map_identities(identities))
-                .await;
+            identity_cache.update_from_identities(identities).await;
         }
         Ok(Err(err)) => {
             warn!(?err, "failed to load identities on startup");
@@ -460,9 +458,7 @@ async fn main() {
                 match reload {
                     Ok(Ok(identities)) => {
                         let count = identities.len();
-                        identity_cache
-                            .update_from_identities(map_identities(identities))
-                            .await;
+                        identity_cache.update_from_identities(identities).await;
                         info!(count, "reloaded identities (watch)");
                     }
                     Ok(Err(err)) => {
@@ -506,9 +502,7 @@ async fn main() {
                     match reload {
                         Ok(Ok(identities)) => {
                             let count = identities.len();
-                            identity_cache
-                                .update_from_identities(map_identities(identities))
-                                .await;
+                            identity_cache.update_from_identities(identities).await;
                             info!(count, "reloaded identities");
                         }
                         Ok(Err(err)) => {
@@ -1083,19 +1077,29 @@ async fn handle_request(
     }
 }
 
-fn map_identities(identities: Vec<KeyIdentity>) -> Vec<Identity> {
-    let mut mapped = Vec::with_capacity(identities.len());
-    for id in identities {
-        mapped.push(Identity {
-            key_blob: id.key_blob,
-            comment: id.comment,
-        });
+fn encode_identities_frame_from_keyidentities(
+    identities: &[KeyIdentity],
+) -> Result<Bytes, ProtoError> {
+    let mut payload_len: usize = 1 + 4;
+    for identity in identities {
+        payload_len = payload_len
+            .saturating_add(4 + identity.key_blob.len())
+            .saturating_add(4 + identity.comment.len());
     }
-    mapped
-}
-
-fn encode_identities_frame(identities: Vec<Identity>) -> Result<Bytes, ProtoError> {
-    secretive_proto::encode_response_frame(&AgentResponse::IdentitiesAnswer { identities })
+    if payload_len > MAX_FRAME_LEN {
+        return Err(ProtoError::FrameTooLarge(payload_len));
+    }
+    let mut buf = BytesMut::with_capacity(4 + payload_len);
+    buf.put_u32(payload_len as u32);
+    buf.put_u8(MessageType::IdentitiesAnswer as u8);
+    buf.put_u32(identities.len() as u32);
+    for identity in identities {
+        buf.put_u32(identity.key_blob.len() as u32);
+        buf.put_slice(&identity.key_blob);
+        buf.put_u32(identity.comment.len() as u32);
+        buf.put_slice(identity.comment.as_bytes());
+    }
+    Ok(buf.freeze())
 }
 
 fn failure_frame() -> &'static Bytes {
