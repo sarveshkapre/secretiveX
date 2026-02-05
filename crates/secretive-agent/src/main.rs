@@ -1467,12 +1467,16 @@ async fn handle_sign_request(
                     let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
                     let available = sign_semaphore.available_permits() as u64;
                     let in_flight = max_signers.saturating_sub(available);
+                    let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
+                    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
                     info!(
                         count,
                         errors,
                         avg_ns = avg,
                         in_flight,
                         max_signers,
+                        max_connections,
+                        connection_rejected,
                         "signing metrics"
                     );
                 }
