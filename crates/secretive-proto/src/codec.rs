@@ -418,10 +418,12 @@ pub fn encode_request_frame_into(request: &AgentRequest, buffer: &mut BytesMut) 
 }
 
 pub fn encode_signature_blob(algorithm: &str, signature: &[u8]) -> Vec<u8> {
-    let mut buf = BytesMut::with_capacity(8 + algorithm.len() + signature.len());
-    write_string(&mut buf, algorithm.as_bytes());
-    write_string(&mut buf, signature);
-    buf.to_vec()
+    let mut out = Vec::with_capacity(8 + algorithm.len() + signature.len());
+    out.extend_from_slice(&(algorithm.len() as u32).to_be_bytes());
+    out.extend_from_slice(algorithm.as_bytes());
+    out.extend_from_slice(&(signature.len() as u32).to_be_bytes());
+    out.extend_from_slice(signature);
+    out
 }
 
 fn read_string<B: Buf>(buf: &mut B) -> Result<Vec<u8>> {
