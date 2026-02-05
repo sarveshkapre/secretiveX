@@ -148,6 +148,8 @@ Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
 ./scripts/bench_slo_gate.sh
 ```
 
+Default SLO gate uses staggered worker start (`SLO_WORKER_START_SPREAD_MS=1500`) to model fan-out ramp while keeping load high.
+
 ## Soak test
 
 Run a long-duration soak test (default 30 minutes):

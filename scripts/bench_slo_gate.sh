@@ -4,6 +4,7 @@ set -eu
 SLO_CONCURRENCY="${SLO_CONCURRENCY:-1000}"
 SLO_DURATION_SECS="${SLO_DURATION_SECS:-20}"
 SLO_PAYLOAD_SIZE="${SLO_PAYLOAD_SIZE:-64}"
+SLO_WORKER_START_SPREAD_MS="${SLO_WORKER_START_SPREAD_MS:-1500}"
 SLO_MIN_RPS="${SLO_MIN_RPS:-20}"
 SLO_MAX_P95_US="${SLO_MAX_P95_US:-300000}"
 SLO_MAX_FAILURE_RATE="${SLO_MAX_FAILURE_RATE:-0.01}"
@@ -77,6 +78,7 @@ cargo run -p secretive-bench -- \
   --concurrency "$SLO_CONCURRENCY" \
   --duration "$SLO_DURATION_SECS" \
   --payload-size "$SLO_PAYLOAD_SIZE" \
+  --worker-start-spread-ms "$SLO_WORKER_START_SPREAD_MS" \
   --fixed \
   --latency \
   --latency-max-samples 200000 \
@@ -114,4 +116,4 @@ if ! awk -v rate="$failure_rate" -v max="$SLO_MAX_FAILURE_RATE" 'BEGIN { exit (r
   exit 1
 fi
 
-echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s rps=$rps p95_us=$p95_us failure_rate=$failure_rate"
+echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate"
