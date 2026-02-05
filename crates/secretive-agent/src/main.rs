@@ -83,7 +83,7 @@ impl IdentityCache {
     async fn get_payload_or_refresh(
         self: &Arc<Self>,
         registry: &Arc<KeyStoreRegistry>,
-    ) -> Result<Bytes, secretive_core::CoreError> {
+    ) -> Result<Arc<Bytes>, secretive_core::CoreError> {
         if self.ttl_ms == 0 {
             let _guard = self.refresh_lock.lock().await;
             return self.refresh_and_update(Arc::clone(registry)).await;
@@ -93,7 +93,7 @@ impl IdentityCache {
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
             LIST_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
-            return Ok(self.payload.load().as_ref().clone());
+            return Ok(self.payload.load_full());
         }
 
         if self.has_snapshot.load(Ordering::Relaxed) {
@@ -115,7 +115,7 @@ impl IdentityCache {
                     cache.refreshing.store(false, Ordering::Release);
                 });
             }
-            return Ok(self.payload.load().as_ref().clone());
+            return Ok(self.payload.load_full());
         }
 
         let _guard = self.refresh_lock.lock().await;
@@ -123,7 +123,7 @@ impl IdentityCache {
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
             LIST_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
-            return Ok(self.payload.load().as_ref().clone());
+            return Ok(self.payload.load_full());
         }
 
         self.refresh_and_update(Arc::clone(registry)).await
@@ -153,7 +153,7 @@ impl IdentityCache {
     async fn refresh_and_update(
         &self,
         registry: Arc<KeyStoreRegistry>,
-    ) -> Result<Bytes, secretive_core::CoreError> {
+    ) -> Result<Arc<Bytes>, secretive_core::CoreError> {
         let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
         match result {
             Ok(Ok(identities)) => {
@@ -167,7 +167,8 @@ impl IdentityCache {
                         ));
                     }
                 };
-                self.payload.store(Arc::new(payload.clone()));
+                let payload = Arc::new(payload);
+                self.payload.store(Arc::clone(&payload));
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
                 LIST_REFRESH.fetch_add(1, Ordering::Relaxed);
@@ -1050,7 +1051,7 @@ where
                 LIST_COUNT.fetch_add(1, Ordering::Relaxed);
                 match identity_cache.get_payload_or_refresh(&registry).await {
                     Ok(payload) => {
-                        if let Err(err) = stream.write_all(&payload).await {
+                        if let Err(err) = stream.write_all(payload.as_ref()).await {
                             warn!(?err, "failed to write identities");
                             break;
                         }
