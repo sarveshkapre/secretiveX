@@ -198,8 +198,7 @@ enum StoreConfig {
     },
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -264,6 +263,18 @@ async fn main() {
         }
     }
 
+    let max_signers = compute_max_signers(&config);
+    let max_blocking_threads = max_signers.max(1);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(max_blocking_threads)
+        .build()
+        .expect("failed to build tokio runtime");
+
+    runtime.block_on(run_async(config, max_signers));
+}
+
+async fn run_async(mut config: Config, max_signers: usize) {
     let _pid_guard = match config.pid_file.clone() {
         Some(path) => PidFileGuard::create(path).ok(),
         None => None,
@@ -521,15 +532,6 @@ async fn main() {
         });
     }
 
-    let default_max_signers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(4)
-        .saturating_mul(4);
-    let mut max_signers = config.max_signers.unwrap_or(default_max_signers);
-    if max_signers == 0 {
-        warn!("max_signers was 0; defaulting to 1");
-        max_signers = 1;
-    }
     info!(max_signers, "sign concurrency limit");
     MAX_SIGNERS.store(max_signers as u64, Ordering::Relaxed);
     let sign_semaphore = Arc::new(Semaphore::new(max_signers));
@@ -604,6 +606,19 @@ async fn main() {
             error!(?err, "agent exited with error");
         }
     }
+}
+
+fn compute_max_signers(config: &Config) -> usize {
+    let default_max_signers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .saturating_mul(4);
+    let mut max_signers = config.max_signers.unwrap_or(default_max_signers);
+    if max_signers == 0 {
+        warn!("max_signers was 0; defaulting to 1");
+        max_signers = 1;
+    }
+    max_signers
 }
 
 fn load_config(path_override: Option<&str>) -> Config {
