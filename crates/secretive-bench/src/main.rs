@@ -178,7 +178,7 @@ async fn run_worker(
     let request_capacity = 1 + 4 + key_blob.len() + 4 + payload_size + 4;
     let mut request_buffer = BytesMut::with_capacity(request_capacity);
     let mut request = AgentRequest::SignRequest {
-        key_blob: key_blob.clone(),
+        key_blob,
         data: vec![0u8; payload_size],
         flags,
     };
