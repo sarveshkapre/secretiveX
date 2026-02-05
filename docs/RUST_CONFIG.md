@@ -19,6 +19,7 @@ Socket path overrides:
 - `max_blocking_threads` (number): cap for Tokio's blocking thread pool (defaults to `max_signers`).
 - `worker_threads` (number): override Tokio worker thread count (defaults to Tokio's auto-detected value).
 - `watch_files` (bool): enable or disable file-store watching (default: true).
+- `watch_debounce_ms` (number): debounce interval for file watcher reloads (default: 200).
 - `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
 - `sign_timeout_ms` (number): fail sign requests if a permit isn't acquired in N milliseconds (default: disabled). Use `0` to disable.
 - `pid_file` (string): write the agent PID to this file and remove on shutdown.
@@ -35,6 +36,7 @@ Environment overrides (when config/CLI unset):
 - `SECRETIVE_SIGN_TIMEOUT_MS` sets `sign_timeout_ms`.
 - `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
 - `SECRETIVE_WATCH_FILES` sets `watch_files` (`true`/`false`).
+- `SECRETIVE_WATCH_DEBOUNCE_MS` sets `watch_debounce_ms`.
 - `SECRETIVE_SOCKET_BACKLOG` sets `socket_backlog`.
 - `SECRETIVE_IDLE_TIMEOUT_MS` sets `idle_timeout_ms`.
 - `SECRETIVE_INLINE_SIGN` sets `inline_sign` (`true`/`false`).

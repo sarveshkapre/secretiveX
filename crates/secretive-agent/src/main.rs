@@ -37,6 +37,7 @@ struct Config {
     max_blocking_threads: Option<usize>,
     worker_threads: Option<usize>,
     watch_files: Option<bool>,
+    watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
     sign_timeout_ms: Option<u64>,
     pid_file: Option<String>,
@@ -253,6 +254,9 @@ fn main() {
     if let Some(watch_files) = args.watch_files {
         config.watch_files = Some(watch_files);
     }
+    if let Some(watch_debounce_ms) = args.watch_debounce_ms {
+        config.watch_debounce_ms = Some(watch_debounce_ms);
+    }
     if let Some(metrics_every) = args.metrics_every {
         config.metrics_every = Some(metrics_every);
     }
@@ -297,6 +301,11 @@ fn main() {
     if config.watch_files.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_WATCH_FILES") {
             config.watch_files = parse_bool_env(&value);
+        }
+    }
+    if config.watch_debounce_ms.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_WATCH_DEBOUNCE_MS") {
+            config.watch_debounce_ms = value.parse().ok();
         }
     }
     if config.identity_cache_ms.is_none() {
@@ -534,8 +543,10 @@ async fn run_async(mut config: Config, max_signers: usize) {
         let reloadable_stores = reloadable_stores.clone();
         let identity_cache = identity_cache.clone();
         let registry = registry.clone();
+        let debounce_ms = config.watch_debounce_ms.unwrap_or(200).max(1);
+        info!(watch_debounce_ms = debounce_ms, "watch debounce");
         tokio::spawn(async move {
-            let debounce = Duration::from_millis(200);
+            let debounce = Duration::from_millis(debounce_ms);
             loop {
                 let Some(_event) = notify_rx.recv().await else { break; };
                 let mut deadline = Instant::now() + debounce;
@@ -799,6 +810,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         max_blocking_threads: None,
         worker_threads: None,
         watch_files: None,
+        watch_debounce_ms: None,
         metrics_every: None,
         sign_timeout_ms: None,
         pid_file: None,
@@ -826,6 +838,7 @@ struct Args {
     max_blocking_threads: Option<usize>,
     worker_threads: Option<usize>,
     watch_files: Option<bool>,
+    watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
@@ -849,6 +862,7 @@ fn parse_args() -> Args {
         max_blocking_threads: None,
         worker_threads: None,
         watch_files: None,
+        watch_debounce_ms: None,
         metrics_every: None,
         pid_file: None,
         identity_cache_ms: None,
@@ -897,6 +911,11 @@ fn parse_args() -> Args {
             }
             "--watch" => parsed.watch_files = Some(true),
             "--no-watch" => parsed.watch_files = Some(false),
+            "--watch-debounce-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.watch_debounce_ms = value.parse().ok();
+                }
+            }
             "--metrics-every" => {
                 if let Some(value) = args.next() {
                     parsed.metrics_every = value.parse().ok();
@@ -959,7 +978,7 @@ fn print_help() {
     println!("  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>");
     println!("  --metrics-every <n>");
     println!("  --sign-timeout-ms <n>");
-    println!("  --watch | --no-watch --pid-file <path>");
+    println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
     println!("  --identity-cache-ms <n>");
     println!("  --inline-sign | --no-inline-sign");
     println!("  --idle-timeout-ms <n>\n");

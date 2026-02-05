@@ -32,6 +32,7 @@ Current Rust milestones:
 - `socket_backlog` tunes Unix socket listen backlog for large fan-out
 - Send `SIGUSR1` on Unix to log a metrics snapshot
 - `watch_files` controls automatic reloads
+- `watch_debounce_ms` tunes reload debounce for file watchers
 - `metrics_every` controls logging frequency
 - `pid_file` writes the agent PID for monitoring
 - `identity_cache_ms` caches identity lists for fast fan-out
