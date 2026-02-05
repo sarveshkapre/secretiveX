@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::io::{Read, Write};
 use std::sync::OnceLock;
+use std::borrow::Cow;
 
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
@@ -125,10 +126,14 @@ where
 {
     let mut identities = fetch_identities(reader, writer, buffer).await?;
     if let Some(filter) = filter {
-        let filter_lower = ascii_lowercase_bytes(filter);
+        let filter_lower = if is_ascii_lowercase(filter) {
+            Cow::Borrowed(filter.as_bytes())
+        } else {
+            Cow::Owned(ascii_lowercase_bytes(filter))
+        };
         let filter_fp = parse_fingerprint_input(filter);
         identities.retain(|id| {
-            if contains_ignore_ascii_case(&id.comment, &filter_lower) {
+            if contains_ignore_ascii_case(&id.comment, filter_lower.as_ref()) {
                 return true;
             }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
@@ -137,7 +142,7 @@ where
                     return fp == target_fp;
                 }
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                return contains_ignore_ascii_case(&fp, &filter_lower);
+                return contains_ignore_ascii_case(&fp, filter_lower.as_ref());
             }
             false
         });
@@ -354,6 +359,13 @@ fn parse_fingerprint_input(input: &str) -> Option<ssh_key::Fingerprint> {
 
 fn ascii_lowercase_bytes(value: &str) -> Vec<u8> {
     value.as_bytes().iter().map(|b| ascii_lower(*b)).collect()
+}
+
+fn is_ascii_lowercase(value: &str) -> bool {
+    value
+        .as_bytes()
+        .iter()
+        .all(|b| !matches!(b, b'A'..=b'Z'))
 }
 
 fn contains_ignore_ascii_case(haystack: &str, needle_lower: &[u8]) -> bool {
