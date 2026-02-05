@@ -250,8 +250,9 @@ pub fn encode_frame(payload: &[u8]) -> Result<Bytes> {
 }
 
 pub fn encode_response_frame(response: &AgentResponse) -> Result<Bytes> {
-    let payload = encode_response(response);
-    encode_frame(&payload)
+    let mut buffer = BytesMut::new();
+    encode_response_frame_into(response, &mut buffer)?;
+    Ok(buffer.freeze())
 }
 
 pub fn encode_response_into(response: &AgentResponse, buffer: &mut BytesMut) {
