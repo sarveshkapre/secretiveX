@@ -46,9 +46,10 @@ impl KeyStore for Pkcs11Store {
 #[cfg(feature = "pkcs11")]
 mod enabled {
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use ahash::RandomState;
+    use arc_swap::ArcSwap;
     use cryptoki::context::{Pkcs11, Pkcs11Flags};
     use cryptoki::mechanism::Mechanism;
     use cryptoki::object::{Attribute, AttributeType, ObjectClass};
@@ -67,7 +68,7 @@ mod enabled {
         context: Arc<Pkcs11>,
         slot: Slot,
         pin: Option<String>,
-        key_map: Arc<Mutex<HashMap<Vec<u8>, Pkcs11Key, RandomState>>>,
+        key_map: Arc<ArcSwap<HashMap<Vec<u8>, Pkcs11Key, RandomState>>>,
     }
 
     #[derive(Clone)]
@@ -99,7 +100,7 @@ mod enabled {
                 context: Arc::new(context),
                 slot,
                 pin,
-                key_map: Arc::new(Mutex::new(HashMap::with_hasher(RandomState::new()))),
+                key_map: Arc::new(ArcSwap::from_pointee(HashMap::with_hasher(RandomState::new()))),
             };
 
             store.refresh_keys()?;
@@ -176,8 +177,7 @@ mod enabled {
                 );
             }
 
-            let mut guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
-            *guard = map;
+            self.key_map.store(Arc::new(map));
             Ok(())
         }
     }
@@ -185,7 +185,7 @@ mod enabled {
     impl KeyStore for Pkcs11Store {
         fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
             self.refresh_keys()?;
-            let guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
+            let guard = self.key_map.load();
             let identities = guard
                 .values()
                 .map(|entry| KeyIdentity {
@@ -198,16 +198,16 @@ mod enabled {
         }
 
         fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
-            let key = {
-                let guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
-                guard.get(key_blob).cloned()
-            };
+            let key = self.key_map.load().get(key_blob).cloned();
             let key = if let Some(key) = key {
                 key
             } else {
                 self.refresh_keys()?;
-                let guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
-                guard.get(key_blob).cloned().ok_or(CoreError::KeyNotFound)?
+                self.key_map
+                    .load()
+                    .get(key_blob)
+                    .cloned()
+                    .ok_or(CoreError::KeyNotFound)?
             };
 
             let session = self.open_session()?;
