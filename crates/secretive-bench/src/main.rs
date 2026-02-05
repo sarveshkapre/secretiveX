@@ -11,6 +11,7 @@ use secretive_proto::{
     encode_request_frame, read_response_type_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, MessageType, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
+use serde::Serialize;
 use tracing::{debug, error, info};
 use tokio::io::AsyncWriteExt;
 
@@ -128,21 +129,21 @@ async fn main() -> Result<()> {
 
     if args.json {
         let socket_value = socket_path.display().to_string();
-        let payload = serde_json::json!({
-            "ok": ok,
-            "failures": failures,
-            "elapsed_ms": elapsed.as_millis(),
-            "rps": rps,
-            "mode": if args.list_only { "list" } else { "sign" },
-            "reconnect": args.reconnect,
-            "concurrency": args.concurrency,
-            "requests_per_worker": args.requests_per_worker,
-            "duration_secs": args.duration_secs,
-            "randomize_payload": args.randomize_payload,
-            "payload_size": args.payload_size,
-            "flags": args.flags,
-            "socket_path": socket_value,
-        });
+        let payload = BenchOutput {
+            ok,
+            failures,
+            elapsed_ms: elapsed.as_millis() as u64,
+            rps,
+            mode: if args.list_only { "list" } else { "sign" },
+            reconnect: args.reconnect,
+            concurrency: args.concurrency,
+            requests_per_worker: args.requests_per_worker,
+            duration_secs: args.duration_secs,
+            randomize_payload: args.randomize_payload,
+            payload_size: args.payload_size,
+            flags: args.flags,
+            socket_path: socket_value,
+        };
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
         serde_json::to_writer_pretty(&mut handle, &payload)?;
@@ -152,6 +153,23 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Serialize)]
+struct BenchOutput {
+    ok: usize,
+    failures: usize,
+    elapsed_ms: u64,
+    rps: f64,
+    mode: &'static str,
+    reconnect: bool,
+    concurrency: usize,
+    requests_per_worker: usize,
+    duration_secs: Option<u64>,
+    randomize_payload: bool,
+    payload_size: usize,
+    flags: u32,
+    socket_path: String,
 }
 
 async fn run_worker(
