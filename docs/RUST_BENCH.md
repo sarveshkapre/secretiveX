@@ -55,6 +55,12 @@ cargo run -p secretive-bench -- \
 cargo run -p secretive-bench -- --concurrency 200 --duration 30
 ```
 
+## Response timeout
+
+```bash
+cargo run -p secretive-bench -- --concurrency 200 --duration 30 --response-timeout-ms 500
+```
+
 ## Identity list benchmark
 
 ```bash

@@ -37,6 +37,7 @@ struct Args {
     randomize_payload: bool,
     json: bool,
     json_compact: bool,
+    response_timeout_ms: Option<u64>,
     help: bool,
     version: bool,
     duration_secs: Option<u64>,
@@ -75,6 +76,13 @@ async fn main() -> Result<()> {
 
     let start = Instant::now();
     let deadline = args.duration_secs.map(|secs| start + Duration::from_secs(secs));
+    let response_timeout = args.response_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
 
     let mut handles = Vec::with_capacity(args.concurrency);
     for worker_id in 0..args.concurrency {
@@ -88,6 +96,7 @@ async fn main() -> Result<()> {
         let list_only = args.list_only;
         let randomize_payload = args.randomize_payload;
         let deadline = deadline.clone();
+        let response_timeout = response_timeout;
         handles.push(tokio::spawn(async move {
             run_worker(
                 worker_id,
@@ -101,6 +110,7 @@ async fn main() -> Result<()> {
                 list_only,
                 randomize_payload,
                 deadline,
+                response_timeout,
             )
             .await
         }));
@@ -190,9 +200,18 @@ async fn run_worker(
     list_only: bool,
     randomize_payload: bool,
     deadline: Option<Instant>,
+    response_timeout: Option<Duration>,
 ) -> Result<usize> {
     if list_only {
-        return run_list_worker(socket_path, requests, warmup, reconnect, deadline).await;
+        return run_list_worker(
+            socket_path,
+            requests,
+            warmup,
+            reconnect,
+            deadline,
+            response_timeout,
+        )
+        .await;
     }
 
     let key_blob = if let Some(key_blob) = shared_key {
@@ -245,7 +264,9 @@ async fn run_worker(
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+            let response_type =
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                    .await?;
             if response_type != MessageType::SignResponse as u8 {
                 return Err(anyhow::anyhow!("unexpected sign response"));
             }
@@ -269,7 +290,9 @@ async fn run_worker(
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+            let response_type =
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                    .await?;
             if response_type != MessageType::SignResponse as u8 {
                 return Err(anyhow::anyhow!("unexpected sign response"));
             }
@@ -294,7 +317,8 @@ async fn run_worker(
                     .await?;
                 }
                 let response_type =
-                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                        .await?;
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
                 }
@@ -317,7 +341,8 @@ async fn run_worker(
                     .await?;
                 }
                 let response_type =
-                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                        .await?;
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
                 }
@@ -348,7 +373,9 @@ async fn run_worker(
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+            let response_type =
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                    .await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
             }
@@ -371,7 +398,9 @@ async fn run_worker(
                 )
                 .await?;
             }
-            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+            let response_type =
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                    .await?;
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
             }
@@ -388,20 +417,29 @@ async fn run_list_worker(
     warmup: usize,
     reconnect: bool,
     deadline: Option<Instant>,
+    response_timeout: Option<Duration>,
 ) -> Result<usize> {
     let list_frame = list_request_frame();
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
+            list_once(
+                socket_path.as_ref(),
+                &list_frame,
+                &mut buffer,
+                response_timeout,
+            )
+            .await?;
         }
     } else {
         let mut stream = connect(socket_path.as_ref()).await?;
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
             stream.write_all(&list_frame).await?;
-            let response_type = read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+            let response_type =
+                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                    .await?;
             if response_type != MessageType::IdentitiesAnswer as u8 {
                 return Err(anyhow::anyhow!("unexpected identities response"));
             }
@@ -412,7 +450,8 @@ async fn run_list_worker(
             while Instant::now() < deadline {
                 stream.write_all(&list_frame).await?;
                 let response_type =
-                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                        .await?;
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
                 }
@@ -421,7 +460,8 @@ async fn run_list_worker(
             for _ in 0..requests {
                 stream.write_all(&list_frame).await?;
                 let response_type =
-                    read_response_type_with_buffer(&mut stream, &mut buffer).await?;
+                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
+                        .await?;
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
                 }
@@ -435,12 +475,24 @@ async fn run_list_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
+            list_once(
+                socket_path.as_ref(),
+                &list_frame,
+                &mut buffer,
+                response_timeout,
+            )
+            .await?;
             completed += 1;
         }
     } else {
         for _ in 0..requests {
-            list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
+            list_once(
+                socket_path.as_ref(),
+                &list_frame,
+                &mut buffer,
+                response_timeout,
+            )
+            .await?;
             completed += 1;
         }
     }
@@ -448,14 +500,38 @@ async fn run_list_worker(
     Ok(completed)
 }
 
+async fn read_response_type_with_timeout<R>(
+    reader: &mut R,
+    buffer: &mut BytesMut,
+    timeout: Option<Duration>,
+) -> Result<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    match timeout {
+        Some(timeout) => match tokio::time::timeout(
+            timeout,
+            read_response_type_with_buffer(reader, buffer),
+        )
+        .await
+        {
+            Ok(result) => Ok(result?),
+            Err(_) => Err(anyhow::anyhow!("response timeout")),
+        },
+        None => Ok(read_response_type_with_buffer(reader, buffer).await?),
+    }
+}
+
 async fn list_once(
     socket_path: &Path,
     list_frame: &Bytes,
     response_buffer: &mut BytesMut,
+    response_timeout: Option<Duration>,
 ) -> Result<()> {
     let mut stream = connect(socket_path).await?;
     stream.write_all(list_frame).await?;
-    let response_type = read_response_type_with_buffer(&mut stream, response_buffer).await?;
+    let response_type =
+        read_response_type_with_timeout(&mut stream, response_buffer, response_timeout).await?;
     if response_type == MessageType::IdentitiesAnswer as u8 {
         Ok(())
     } else {
@@ -500,6 +576,7 @@ fn parse_args() -> Args {
         randomize_payload: true,
         json: false,
         json_compact: false,
+        response_timeout_ms: None,
         help: false,
         version: false,
         duration_secs: None,
@@ -546,6 +623,11 @@ fn parse_args() -> Args {
             "--key" => parsed.key_blob_hex = args.next(),
             "--json" => parsed.json = true,
             "--json-compact" => parsed.json_compact = true,
+            "--response-timeout-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.response_timeout_ms = value.parse().ok();
+                }
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -560,7 +642,8 @@ fn print_help() {
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
-    println!("  --socket <path> --json --json-compact --reconnect --list --fixed\n");
+    println!("  --socket <path> --json --json-compact --reconnect --list --fixed");
+    println!("  --response-timeout-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
