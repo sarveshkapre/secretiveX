@@ -478,7 +478,10 @@ fn read_string<B: Buf>(buf: &mut B) -> Result<Vec<u8>> {
     if buf.remaining() < len {
         return Err(ProtoError::UnexpectedEof);
     }
-    let mut data = vec![0u8; len];
+    let mut data = Vec::with_capacity(len);
+    unsafe {
+        data.set_len(len);
+    }
     buf.copy_to_slice(&mut data);
     Ok(data)
 }
