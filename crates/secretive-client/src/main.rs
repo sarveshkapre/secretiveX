@@ -370,6 +370,21 @@ fn parse_flags(value: &str) -> Option<u32> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::parse_flags;
+
+    #[test]
+    fn parse_flags_names() {
+        assert_eq!(parse_flags("sha256"), Some(2));
+        assert_eq!(parse_flags("rsa-sha2-256"), Some(2));
+        assert_eq!(parse_flags("sha512"), Some(4));
+        assert_eq!(parse_flags("rsa-sha2-512"), Some(4));
+        assert_eq!(parse_flags("ssh-rsa"), Some(0));
+        assert_eq!(parse_flags("sha1"), Some(0));
+    }
+}
+
 #[cfg(unix)]
 async fn connect(socket_path: &Path) -> Result<AgentStream> {
     Ok(AgentStream::connect(socket_path).await?)
