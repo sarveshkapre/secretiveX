@@ -337,11 +337,16 @@ async fn main() {
     info!(identity_cache_ms, "identity cache ttl");
     let registry = Arc::new(registry);
     let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
-    if let Ok(identities) = registry.list_identities() {
-        info!(count = identities.len(), "loaded identities");
-        identity_cache
-            .update_from_identities(map_identities(identities))
-            .await;
+    match registry.list_identities() {
+        Ok(identities) => {
+            info!(count = identities.len(), "loaded identities");
+            identity_cache
+                .update_from_identities(map_identities(identities))
+                .await;
+        }
+        Err(err) => {
+            warn!(?err, "failed to load identities on startup");
+        }
     }
 
     let mut _watchers = Vec::new();
