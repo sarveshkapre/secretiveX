@@ -26,6 +26,7 @@ struct Args {
     key_blob_hex: Option<String>,
     reconnect: bool,
     list_only: bool,
+    randomize_payload: bool,
     json: bool,
     help: bool,
     version: bool,
@@ -76,6 +77,7 @@ async fn main() -> Result<()> {
         let shared_key = shared_key.clone();
         let reconnect = args.reconnect;
         let list_only = args.list_only;
+        let randomize_payload = args.randomize_payload;
         let deadline = deadline.clone();
         handles.push(tokio::spawn(async move {
             run_worker(
@@ -88,6 +90,7 @@ async fn main() -> Result<()> {
                 shared_key,
                 reconnect,
                 list_only,
+                randomize_payload,
                 deadline,
             )
             .await
@@ -147,6 +150,7 @@ async fn run_worker(
     shared_key: Option<Vec<u8>>,
     reconnect: bool,
     list_only: bool,
+    randomize_payload: bool,
     deadline: Option<Instant>,
 ) -> Result<usize> {
     if list_only {
@@ -159,7 +163,11 @@ async fn run_worker(
         fetch_first_key(&socket_path).await?
     };
 
-    let mut rng = rand::rngs::SmallRng::from_entropy();
+    let mut rng = if randomize_payload {
+        Some(rand::rngs::SmallRng::from_entropy())
+    } else {
+        None
+    };
     let mut request_buffer = BytesMut::with_capacity(128);
     let mut request = AgentRequest::SignRequest {
         key_blob: key_blob.clone(),
@@ -169,7 +177,7 @@ async fn run_worker(
 
     if reconnect {
         for _ in 0..warmup {
-            if let AgentRequest::SignRequest { data, .. } = &mut request {
+            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
                 rng.fill_bytes(data);
             }
             let stream = connect(&socket_path).await?;
@@ -186,7 +194,7 @@ async fn run_worker(
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            if let AgentRequest::SignRequest { data, .. } = &mut request {
+            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
                 rng.fill_bytes(data);
             }
             write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
@@ -199,7 +207,9 @@ async fn run_worker(
         let mut completed = 0usize;
         if let Some(deadline) = deadline {
             while Instant::now() < deadline {
-                if let AgentRequest::SignRequest { data, .. } = &mut request {
+                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                    (&mut rng, &mut request)
+                {
                     rng.fill_bytes(data);
                 }
                 write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
@@ -210,7 +220,9 @@ async fn run_worker(
             }
         } else {
             for _ in 0..requests {
-                if let AgentRequest::SignRequest { data, .. } = &mut request {
+                if let (Some(rng), AgentRequest::SignRequest { data, .. }) =
+                    (&mut rng, &mut request)
+                {
                     rng.fill_bytes(data);
                 }
                 write_request_with_buffer(&mut writer, &request, &mut request_buffer).await?;
@@ -228,7 +240,7 @@ async fn run_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            if let AgentRequest::SignRequest { data, .. } = &mut request {
+            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
                 rng.fill_bytes(data);
             }
             let stream = connect(&socket_path).await?;
@@ -242,7 +254,7 @@ async fn run_worker(
         }
     } else {
         for _ in 0..requests {
-            if let AgentRequest::SignRequest { data, .. } = &mut request {
+            if let (Some(rng), AgentRequest::SignRequest { data, .. }) = (&mut rng, &mut request) {
                 rng.fill_bytes(data);
             }
             let stream = connect(&socket_path).await?;
@@ -390,6 +402,7 @@ fn parse_args() -> Args {
         key_blob_hex: None,
         reconnect: false,
         list_only: false,
+        randomize_payload: true,
         json: false,
         help: false,
         version: false,
@@ -421,6 +434,7 @@ fn parse_args() -> Args {
             }
             "--list" => parsed.list_only = true,
             "--reconnect" => parsed.reconnect = true,
+            "--fixed" => parsed.randomize_payload = false,
             "--flags" => {
                 if let Some(value) = args.next() {
                     if let Some(parsed_value) = parse_flags(&value) {
@@ -449,12 +463,13 @@ fn print_help() {
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
-    println!("  --socket <path> --json --reconnect --list\n");
+    println!("  --socket <path> --json --reconnect --list --fixed\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
     println!("  Use --list to benchmark list-identities instead of signing.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
+    println!("  --fixed disables randomizing payload bytes per request.");
 }
 
 fn parse_flags(value: &str) -> Option<u32> {

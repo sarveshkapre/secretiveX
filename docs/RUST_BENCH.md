@@ -24,6 +24,14 @@ cargo run -p secretive-bench -- \
   --payload-size 128
 ```
 
+## Fixed payloads
+
+Disable randomizing payload bytes to focus on signing throughput:
+
+```bash
+cargo run -p secretive-bench -- --concurrency 500 --requests 20 --fixed
+```
+
 ## Reconnect per request
 
 Use `--reconnect` to open a fresh connection for every sign request (closer to pssh fan-out).
