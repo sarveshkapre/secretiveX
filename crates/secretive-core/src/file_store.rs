@@ -226,7 +226,7 @@ fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntr
         let identity = KeyIdentity {
             key_blob: key_blob.clone(),
             comment,
-            source: canonical.display().to_string(),
+            source: canonical.to_string_lossy().into_owned(),
         };
 
         let rsa_signers = match private_key.key_data().rsa() {
