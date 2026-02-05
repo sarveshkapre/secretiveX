@@ -176,7 +176,7 @@ async fn run_worker(
         None
     };
     let request_capacity = 1 + 4 + key_blob.len() + 4 + payload_size + 4;
-    let mut request_buffer = BytesMut::with_capacity(request_capacity);
+    let mut request_buffer = BytesMut::new();
     let mut request = AgentRequest::SignRequest {
         key_blob,
         data: vec![0u8; payload_size],
@@ -187,6 +187,9 @@ async fn run_worker(
     } else {
         Some(encode_request_frame(&request)?)
     };
+    if sign_frame.is_none() {
+        request_buffer = BytesMut::with_capacity(request_capacity);
+    }
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
