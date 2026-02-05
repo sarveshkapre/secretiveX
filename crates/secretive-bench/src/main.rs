@@ -8,7 +8,7 @@ use bytes::BytesMut;
 use secretive_proto::{
     read_response_with_buffer, write_request_with_buffer, AgentRequest, AgentResponse,
 };
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[cfg(unix)]
 use tokio::net::UnixStream as AgentStream;
@@ -236,7 +236,7 @@ async fn run_worker(
             }
         }
 
-        info!(worker_id, completed, "worker done");
+        debug!(worker_id, completed, "worker done");
         return Ok(completed);
     }
 
@@ -271,7 +271,7 @@ async fn run_worker(
         }
     }
 
-    info!(worker_id, completed, "worker done");
+    debug!(worker_id, completed, "worker done");
     Ok(completed)
 }
 
