@@ -84,3 +84,49 @@ impl KeyStore for EmptyStore {
         Err(CoreError::KeyNotFound)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestStore {
+        identities: Vec<KeyIdentity>,
+    }
+
+    impl KeyStore for TestStore {
+        fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
+            Ok(self.identities.clone())
+        }
+
+        fn sign(&self, _key_blob: &[u8], _data: &[u8], _flags: u32) -> Result<Vec<u8>> {
+            Err(CoreError::KeyNotFound)
+        }
+    }
+
+    #[test]
+    fn identities_are_sorted() {
+        let store_a = Arc::new(TestStore {
+            identities: vec![KeyIdentity {
+                key_blob: vec![2],
+                comment: "b".into(),
+                source: "a".into(),
+            }],
+        });
+        let store_b = Arc::new(TestStore {
+            identities: vec![KeyIdentity {
+                key_blob: vec![1],
+                comment: "a".into(),
+                source: "b".into(),
+            }],
+        });
+
+        let mut registry = KeyStoreRegistry::new();
+        registry.register(store_a);
+        registry.register(store_b);
+
+        let identities = registry.list_identities().expect("identities");
+        assert_eq!(identities.len(), 2);
+        assert_eq!(identities[0].comment, "a");
+        assert_eq!(identities[1].comment, "b");
+    }
+}
