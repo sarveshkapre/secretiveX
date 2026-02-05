@@ -40,7 +40,8 @@ pub struct FileStore {
 #[derive(Debug)]
 struct KeyEntry {
     private_key: PrivateKey,
-    identity: KeyIdentity,
+    comment: String,
+    source: String,
     rsa_signers: Option<Arc<RsaSigners>>,
 }
 
@@ -100,8 +101,12 @@ impl KeyStore for FileStore {
     fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
         let entries = self.entries.load();
         let mut identities = Vec::with_capacity(entries.len());
-        for entry in entries.values() {
-            identities.push(entry.identity.clone());
+        for (key_blob, entry) in entries.iter() {
+            identities.push(KeyIdentity {
+                key_blob: key_blob.clone(),
+                comment: entry.comment.clone(),
+                source: entry.source.clone(),
+            });
         }
         Ok(identities)
     }
@@ -227,11 +232,7 @@ fn load_entries(
             comment.to_string()
         };
 
-        let identity = KeyIdentity {
-            key_blob: key_blob.clone(),
-            comment,
-            source: canonical.to_string_lossy().into_owned(),
-        };
+        let source = canonical.to_string_lossy().into_owned();
 
         let rsa_signers = match private_key.key_data().rsa() {
             Some(rsa) => match RsaSigners::new(rsa) {
@@ -250,7 +251,8 @@ fn load_entries(
 
         let entry = Arc::new(KeyEntry {
             private_key,
-            identity,
+            comment,
+            source,
             rsa_signers,
         });
 
