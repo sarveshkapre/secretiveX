@@ -28,6 +28,7 @@ struct Config {
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
     max_signers: Option<usize>,
+    watch_files: Option<bool>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -71,6 +72,9 @@ async fn main() {
     }
     if let Some(max_signers) = args.max_signers {
         config.max_signers = Some(max_signers);
+    }
+    if let Some(watch_files) = args.watch_files {
+        config.watch_files = Some(watch_files);
     }
 
     let mut registry = KeyStoreRegistry::new();
@@ -144,7 +148,8 @@ async fn main() {
     }
 
     let mut _watchers = Vec::new();
-    if !reloadable_stores.is_empty() {
+    let watch_files = config.watch_files.unwrap_or(true);
+    if watch_files && !reloadable_stores.is_empty() {
         let mut watch_paths = Vec::new();
         for store in &reloadable_stores {
             watch_paths.extend(store.watch_paths());
@@ -278,6 +283,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         scan_default_dir: None,
         stores: None,
         max_signers: None,
+        watch_files: None,
     }
 }
 
@@ -294,6 +300,7 @@ struct Args {
     key_paths: Vec<String>,
     scan_default_dir: Option<bool>,
     max_signers: Option<usize>,
+    watch_files: Option<bool>,
 }
 
 fn parse_args() -> Args {
@@ -304,6 +311,7 @@ fn parse_args() -> Args {
         key_paths: Vec::new(),
         scan_default_dir: None,
         max_signers: None,
+        watch_files: None,
     };
 
     while let Some(arg) = args.next() {
@@ -322,6 +330,8 @@ fn parse_args() -> Args {
                     parsed.max_signers = value.parse().ok();
                 }
             }
+            "--watch" => parsed.watch_files = Some(true),
+            "--no-watch" => parsed.watch_files = Some(false),
             _ => {}
         }
     }
