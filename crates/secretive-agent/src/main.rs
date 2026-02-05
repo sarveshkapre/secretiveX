@@ -133,6 +133,7 @@ impl IdentityCache {
                 self.payload.store(Arc::new(payload));
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
+                LIST_REFRESH.fetch_add(1, Ordering::Relaxed);
                 self.refreshing.store(false, Ordering::Release);
             }
             Err(err) => {
