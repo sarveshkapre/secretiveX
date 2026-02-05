@@ -95,8 +95,9 @@ where
     if buffer.capacity() < 4096 {
         buffer.reserve(4096 - buffer.capacity());
     }
+    let capacity = buffer.capacity();
     while remaining > 0 {
-        let chunk = remaining.min(buffer.capacity());
+        let chunk = remaining.min(capacity);
         unsafe {
             buffer.set_len(chunk);
         }
