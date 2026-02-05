@@ -82,7 +82,7 @@ extension Secretive {
 }
 
 private enum Constants {
-    static let helpURL = URL(string: "https://github.com/maxgoedjen/secretive/blob/main/FAQ.md")!
+    static let helpURL = URL(string: "https://github.com/sarveshkapre/secretiveX/blob/main/FAQ.md")!
 }
 
 

@@ -5,9 +5,9 @@
 	<key>ApplicationDescription</key>
 	<string>Secretive is an app for storing and managing SSH keys in the Secure Enclave</string>
 	<key>DeveloperName</key>
-	<string>Max Goedjen</string>
+	<string>SecretiveX Contributors</string>
 	<key>Website</key>
-	<string>https://github.com/maxgoedjen/secretive</string>
+	<string>https://github.com/sarveshkapre/secretiveX</string>
 	<key>Connections</key>
 	<array/>
 	<key>Services</key>

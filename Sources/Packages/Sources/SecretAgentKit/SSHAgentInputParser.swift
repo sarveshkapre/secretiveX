@@ -11,7 +11,7 @@ public protocol SSHAgentInputParserProtocol {
 
 public struct SSHAgentInputParser: SSHAgentInputParserProtocol {
 
-    private let logger = Logger(subsystem: "com.maxgoedjen.secretive.secretagent", category: "InputParser")
+    private let logger = Logger(subsystem: "com.sarveshkapre.secretive.secretagent", category: "InputParser")
 
     public init() {
 

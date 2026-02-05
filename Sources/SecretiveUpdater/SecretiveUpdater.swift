@@ -6,7 +6,7 @@ import Brief
 final class SecretiveUpdater: NSObject, XPCProtocol {
 
     enum Constants {
-        static let updateURL = URL(string: "https://api.github.com/repos/maxgoedjen/secretive/releases")!
+        static let updateURL = URL(string: "https://api.github.com/repos/sarveshkapre/secretive/releases")!
     }
 
     func process(_: Data) async throws -> [Release] {

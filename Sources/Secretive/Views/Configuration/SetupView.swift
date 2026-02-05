@@ -198,7 +198,7 @@ struct StepView<Content: View>: View {
 extension SetupView {
 
     enum Constants {
-        static let updaterFAQURL = URL(string: "https://github.com/maxgoedjen/secretive/blob/main/FAQ.md#whats-this-network-request-to-github")!
+        static let updaterFAQURL = URL(string: "https://github.com/sarveshkapre/secretiveX/blob/main/FAQ.md#whats-this-network-request-to-github")!
     }
 
 }

@@ -13,7 +13,7 @@ public final class Agent: Sendable {
     private let publicKeyWriter = OpenSSHPublicKeyWriter()
     private let signatureWriter = OpenSSHSignatureWriter()
     private let certificateHandler = OpenSSHCertificateHandler()
-    private let logger = Logger(subsystem: "com.maxgoedjen.secretive.secretagent", category: "Agent")
+    private let logger = Logger(subsystem: "com.sarveshkapre.secretive.secretagent", category: "Agent")
 
     /// Initializes an agent with a store list and a witness.
     /// - Parameters:

@@ -6,11 +6,11 @@ The secure enclave doesn't allow import or export of private keys. For any new c
 
 ### Secretive doesn't work with my git client/app
 
-Secretive relies on the `SSH_AUTH_SOCK` environment variable being respected. The `git` and `ssh` command line tools natively respect this, but third party apps may require some configuration to work. A non-exhaustive list of setup steps is provided in the [secretive-config-instructions](https://github.com/maxgoedjen/secretive-config-instructions) repo.
+Secretive relies on the `SSH_AUTH_SOCK` environment variable being respected. The `git` and `ssh` command line tools natively respect this, but third party apps may require some configuration to work. Setup guidance is in [APP_CONFIG.md](APP_CONFIG.md).
 
 ### Secretive isn't working for me
 
-Please run `ssh -Tv git@github.com` in your terminal and paste the output in a [new GitHub issue](https://github.com/maxgoedjen/secretive/issues/new) with a description of your issue.
+Please run `ssh -Tv git@github.com` in your terminal and paste the output in a [new GitHub issue](https://github.com/sarveshkapre/secretiveX/issues/new) with a description of your issue.
 
 ### Secretive was working for me, but now it has stopped
 
@@ -50,19 +50,19 @@ Awesome! Just bear in mind that because an app only has access to the keychain i
 
 ### What's this network request to GitHub?
 
-Secretive checks in with GitHub's releases API to check if there's a new version of Secretive available. You can audit the source code for this feature [here](https://github.com/maxgoedjen/secretive/blob/main/Sources/Packages/Sources/Brief/Updater.swift).
+Secretive checks in with GitHub's releases API to check if there's a new version of Secretive available. You can audit the source code for this feature [here](https://github.com/sarveshkapre/secretiveX/blob/main/Sources/Packages/Sources/Brief/Updater.swift).
 
 ### How do I uninstall Secretive?
 
-Drag Secretive.app to the trash and remove `~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent`. `SecretAgent` may continue running until you quit it or reboot.
+Drag Secretive.app to the trash and remove `~/Library/Containers/com.sarveshkapre.Secretive.SecretAgent`. `SecretAgent` may continue running until you quit it or reboot.
 
 ### I have a security issue
 
-Please contact [max.goedjen@gmail.com](mailto:max.goedjen@gmail.com) with a subject containing "SECRETIVE SECURITY" immediately with details, and I'll address the issue and credit you ASAP.
+Please use [GitHub's private reporting feature](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability#privately-reporting-a-security-vulnerability) for security issues.
 
 ### I have a non-security related bug
 
-Please file a [GitHub issue](https://github.com/maxgoedjen/secretive/issues/new) for it. I will not provide email support with the exception of the critical security issues mentioned above.
+Please file a [GitHub issue](https://github.com/sarveshkapre/secretiveX/issues/new) for it. I will not provide email support with the exception of the critical security issues mentioned above.
 
 ### I want to contribute to Secretive
 

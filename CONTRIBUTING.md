@@ -20,7 +20,7 @@ If you'd like to contribute a translation, please see [Localizing](LOCALIZING.md
 
 ## Credits
 
-If you make a material contribution to the app, please add yourself to the end of the [credits](https://github.com/maxgoedjen/secretive/blob/main/Sources/Secretive/Credits.rtf).
+If you make a material contribution to the app, please add yourself to the end of the [credits](https://github.com/sarveshkapre/secretiveX/blob/main/Sources/Secretive/Credits.rtf).
 
 ## Collaborator Status
 
@@ -28,4 +28,4 @@ I will not grant collaborator access to any contributors for this repository. Th
 
 ## Secretive is Opinionated
 
-I'm releasing Secretive as open source so that other people can use it and audit it, feeling comfortable in knowing that the source is available so they can see what it's doing. I have a pretty strong idea of what I'd like this project to look like, and I may respectfully decline contributions that don't line up with that vision. If you'd like to propose a change before implementing, please feel free to [Open an Issue with the proposed tag](https://github.com/maxgoedjen/secretive/issues/new?labels=proposed).
+I'm releasing Secretive as open source so that other people can use it and audit it, feeling comfortable in knowing that the source is available so they can see what it's doing. I have a pretty strong idea of what I'd like this project to look like, and I may respectfully decline contributions that don't line up with that vision. If you'd like to propose a change before implementing, please feel free to [Open an Issue with the proposed tag](https://github.com/sarveshkapre/secretiveX/issues/new?labels=proposed).

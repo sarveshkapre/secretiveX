@@ -37,8 +37,8 @@ import AppKit
 extension JustUpdatedChecker {
 
     enum Constants {
-        static let previousVersionUserDefaultsKey = "com.maxgoedjen.Secretive.lastBuild"
-        static let previousOSVersionUserDefaultsKey = "com.maxgoedjen.Secretive.lastOS"
+        static let previousVersionUserDefaultsKey = "com.sarveshkapre.Secretive.lastBuild"
+        static let previousOSVersionUserDefaultsKey = "com.sarveshkapre.Secretive.lastOS"
     }
 
 }

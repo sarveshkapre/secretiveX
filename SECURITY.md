@@ -20,7 +20,7 @@ There are limited exceptions to this, particularly in the build process, but the
 
 ## Supported Versions
 
-The latest version on the [Releases page](https://github.com/maxgoedjen/secretive/releases) is the only currently supported version.
+The latest version on the [Releases page](https://github.com/sarveshkapre/secretiveX/releases) is the only currently supported version.
 
 ## Reporting a Vulnerability
 

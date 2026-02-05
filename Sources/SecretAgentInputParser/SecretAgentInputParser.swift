@@ -6,7 +6,7 @@ import SSHProtocolKit
 
 final class SecretAgentInputParser: NSObject, XPCProtocol {
 
-    private let logger = Logger(subsystem: "com.maxgoedjen.secretive.SecretAgentInputParser", category: "SecretAgentInputParser")
+    private let logger = Logger(subsystem: "com.sarveshkapre.secretive.SecretAgentInputParser", category: "SecretAgentInputParser")
 
     func process(_ data: Data) async throws -> SSHAgent.Request {
         let parser = SSHAgentInputParser()

@@ -592,7 +592,7 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastSwiftUpdateCheck = 2600;
 				LastUpgradeCheck = 2600;
-				ORGANIZATIONNAME = "Max Goedjen";
+				ORGANIZATIONNAME = "SecretiveX Contributors";
 				TargetAttributes = {
 					50617D7E23FCE48D0099B055 = {
 						CreatedOnToolsVersion = 11.3;
@@ -1044,7 +1044,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SecretiveUpdater/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SecretiveUpdater;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Max Goedjen. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 SecretiveX Contributors. All rights reserved.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -1087,7 +1087,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SecretiveUpdater/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SecretiveUpdater;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Max Goedjen. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 SecretiveX Contributors. All rights reserved.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -1132,7 +1132,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SecretiveUpdater/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SecretiveUpdater;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Max Goedjen. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 SecretiveX Contributors. All rights reserved.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -1167,7 +1167,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SecretAgentInputParser/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SecretAgentInputParser;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Max Goedjen. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 SecretiveX Contributors. All rights reserved.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -1200,7 +1200,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SecretAgentInputParser/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SecretAgentInputParser;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Max Goedjen. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 SecretiveX Contributors. All rights reserved.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -1235,7 +1235,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SecretAgentInputParser/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SecretAgentInputParser;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 Max Goedjen. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2025 SecretiveX Contributors. All rights reserved.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;

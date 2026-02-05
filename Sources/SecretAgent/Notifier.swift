@@ -114,18 +114,18 @@ extension Notifier {
     enum Constants {
 
         // Update notifications
-        static let updateCategoryIdentitifier  = "com.maxgoedjen.Secretive.SecretAgent.update"
-        static let criticalUpdateCategoryIdentitifier  = "com.maxgoedjen.Secretive.SecretAgent.update.critical"
-        static let updateActionIdentitifier  = "com.maxgoedjen.Secretive.SecretAgent.update.updateaction"
-        static let ignoreActionIdentitifier  = "com.maxgoedjen.Secretive.SecretAgent.update.ignoreaction"
+        static let updateCategoryIdentitifier  = "com.sarveshkapre.Secretive.SecretAgent.update"
+        static let criticalUpdateCategoryIdentitifier  = "com.sarveshkapre.Secretive.SecretAgent.update.critical"
+        static let updateActionIdentitifier  = "com.sarveshkapre.Secretive.SecretAgent.update.updateaction"
+        static let ignoreActionIdentitifier  = "com.sarveshkapre.Secretive.SecretAgent.update.ignoreaction"
 
         // Authorization persistence notificatoins
-        static let persistAuthenticationCategoryIdentitifier  = "com.maxgoedjen.Secretive.SecretAgent.persistauthentication"
-        static let doNotPersistActionIdentitifier  = "com.maxgoedjen.Secretive.SecretAgent.persistauthentication.donotpersist"
-        static let persistForActionIdentitifierPrefix  = "com.maxgoedjen.Secretive.SecretAgent.persistauthentication.persist."
+        static let persistAuthenticationCategoryIdentitifier  = "com.sarveshkapre.Secretive.SecretAgent.persistauthentication"
+        static let doNotPersistActionIdentitifier  = "com.sarveshkapre.Secretive.SecretAgent.persistauthentication.donotpersist"
+        static let persistForActionIdentitifierPrefix  = "com.sarveshkapre.Secretive.SecretAgent.persistauthentication.persist."
 
-        static let persistSecretIDKey  = "com.maxgoedjen.Secretive.SecretAgent.persistauthentication.secretidkey"
-        static let persistStoreIDKey  = "com.maxgoedjen.Secretive.SecretAgent.persistauthentication.storeidkey"
+        static let persistSecretIDKey  = "com.sarveshkapre.Secretive.SecretAgent.persistauthentication.secretidkey"
+        static let persistStoreIDKey  = "com.sarveshkapre.Secretive.SecretAgent.persistauthentication.storeidkey"
     }
 
 }

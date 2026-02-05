@@ -27,7 +27,7 @@ struct AboutViewContent: View {
                         .fixedSize(horizontal: true, vertical: false)
                     HStack {
                         Button(.aboutViewOnGithubButton) {
-                            openURL(URL(string: "https://github.com/maxgoedjen/secretive")!)
+                            openURL(URL(string: "https://github.com/sarveshkapre/secretiveX")!)
                         }
                             .normalButton()
                         Button(.aboutBuildLogButton) {
@@ -37,7 +37,7 @@ struct AboutViewContent: View {
                     }
                 }
             }
-            Text(.aboutThanks(contributorsLink: "https://github.com/maxgoedjen/secretive/graphs/contributors", sponsorsLink: "https://github.com/sponsors/maxgoedjen"))
+            Text(.aboutThanks(contributorsLink: "https://github.com/sarveshkapre/secretiveX/graphs/contributors", sponsorsLink: "https://github.com/sponsors/sarveshkapre"))
                 .font(.headline)
             Text(.aboutOpenSourceNotice)
                 .font(.subheadline)

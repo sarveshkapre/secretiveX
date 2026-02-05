@@ -22,7 +22,7 @@ struct UpdateDetailView: View {
                     Spacer()
                     if updater.currentVersion.isTestBuild {
                         Button(.updaterDownloadLatestNightlyButton) {
-                            openURL(URL(string: "https://github.com/maxgoedjen/secretive/actions/workflows/nightly.yml")!)
+                            openURL(URL(string: "https://github.com/sarveshkapre/secretiveX/actions/workflows/nightly.yml")!)
                         }
                         .buttonStyle(ToolbarButtonStyle(tint: .accentColor))
                     }
