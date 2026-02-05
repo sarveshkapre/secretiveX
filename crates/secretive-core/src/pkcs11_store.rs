@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+#[cfg(not(feature = "pkcs11"))]
 use std::sync::Arc;
 
+#[cfg(not(feature = "pkcs11"))]
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
 #[derive(Clone, Debug)]
@@ -50,16 +52,18 @@ impl KeyStore for Pkcs11Store {
 #[cfg(feature = "pkcs11")]
 mod enabled {
     use std::collections::HashMap;
+    use std::convert::TryFrom;
     use std::sync::Arc;
 
     use crate::{CoreError, KeyIdentity, KeyStore, Result};
     use ahash::RandomState;
     use arc_swap::ArcSwap;
-    use cryptoki::context::{Pkcs11, Pkcs11Flags};
+    use cryptoki::context::{CInitializeArgs, Pkcs11};
     use cryptoki::mechanism::Mechanism;
     use cryptoki::object::{Attribute, AttributeType, ObjectClass};
-    use cryptoki::session::{Session, SessionFlags, UserType};
-    use cryptoki::types::slot::Slot;
+    use cryptoki::session::{Session, UserType};
+    use cryptoki::slot::Slot;
+    use cryptoki::types::AuthPin;
     use ssh_key::{public::KeyData, PublicKey};
 
     const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
@@ -74,6 +78,7 @@ mod enabled {
         slot: Slot,
         pin: Option<String>,
         key_map: Arc<ArcSwap<HashMap<Vec<u8>, Pkcs11Key, RandomState>>>,
+        refresh_lock: Arc<std::sync::Mutex<()>>,
     }
 
     #[derive(Clone)]
@@ -84,22 +89,24 @@ mod enabled {
 
     impl Pkcs11Store {
         pub fn load(config: Pkcs11Config) -> Result<Self> {
+            let pin = config.pin();
+            let slot_override = config.slot;
+            let module_path = config.module_path;
             let context =
-                Pkcs11::new(config.module_path).map_err(|_| CoreError::Internal("pkcs11 init"))?;
+                Pkcs11::new(module_path).map_err(|_| CoreError::Internal("pkcs11 init"))?;
             context
-                .initialize(Pkcs11Flags::empty())
+                .initialize(CInitializeArgs::OsThreads)
                 .map_err(|_| CoreError::Internal("pkcs11 initialize"))?;
 
             let slots = context
                 .get_slots_with_token()
                 .map_err(|_| CoreError::Internal("pkcs11 slots"))?;
-            let slot = if let Some(slot_id) = config.slot {
-                Slot::from(slot_id)
+            let slot = if let Some(slot_id) = slot_override {
+                Slot::try_from(slot_id).map_err(|_| CoreError::Internal("pkcs11 slot"))?
             } else {
                 *slots.first().ok_or(CoreError::Internal("pkcs11 no slot"))?
             };
 
-            let pin = config.pin();
             let store = Self {
                 context: Arc::new(context),
                 slot,
@@ -107,21 +114,22 @@ mod enabled {
                 key_map: Arc::new(ArcSwap::from_pointee(HashMap::with_hasher(
                     RandomState::new(),
                 ))),
+                refresh_lock: Arc::new(std::sync::Mutex::new(())),
             };
 
-            store.refresh_keys()?;
+            store.refresh_keys_serialized()?;
             Ok(store)
         }
 
         fn open_session(&self) -> Result<Session> {
-            let flags = SessionFlags::SERIAL_SESSION | SessionFlags::RW_SESSION;
             let session = self
                 .context
-                .open_session_no_callback(self.slot, flags)
+                .open_rw_session(self.slot)
                 .map_err(|_| CoreError::Internal("pkcs11 open session"))?;
 
             if let Some(pin) = &self.pin {
-                let _ = session.login(UserType::User, Some(pin));
+                let pin = AuthPin::new(pin.clone().into());
+                let _ = session.login(UserType::User, Some(&pin));
             }
 
             Ok(session)
@@ -189,17 +197,25 @@ mod enabled {
             self.key_map.store(Arc::new(map));
             Ok(())
         }
+
+        fn refresh_keys_serialized(&self) -> Result<()> {
+            let _guard = self
+                .refresh_lock
+                .lock()
+                .map_err(|_| CoreError::Internal("pkcs11 refresh lock"))?;
+            self.refresh_keys()
+        }
     }
 
     impl KeyStore for Pkcs11Store {
         fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
-            self.refresh_keys()?;
+            self.refresh_keys_serialized()?;
             let guard = self.key_map.load();
             let mut identities = Vec::with_capacity(guard.len());
-            for entry in guard.iter() {
+            for (key_blob, value) in guard.iter() {
                 identities.push(KeyIdentity {
-                    key_blob: entry.key().clone(),
-                    comment: entry.value().label.clone(),
+                    key_blob: key_blob.clone(),
+                    comment: value.label.clone(),
                     source: "pkcs11".to_string(),
                 });
             }
@@ -208,13 +224,13 @@ mod enabled {
 
         fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
             let key_handle = if let Some(entry) = self.key_map.load().get(key_blob) {
-                entry.value().key_handle
+                entry.key_handle
             } else {
-                self.refresh_keys()?;
+                self.refresh_keys_serialized()?;
                 self.key_map
                     .load()
                     .get(key_blob)
-                    .map(|entry| entry.value().key_handle)
+                    .map(|entry| entry.key_handle)
                     .ok_or(CoreError::KeyNotFound)?
             };
 
@@ -275,8 +291,7 @@ mod enabled {
 
     // signature encoding delegated to secretive-proto
 
-    pub(super) use Pkcs11Store as EnabledPkcs11Store;
 }
 
 #[cfg(feature = "pkcs11")]
-pub use enabled::EnabledPkcs11Store as Pkcs11Store;
+pub use enabled::Pkcs11Store;

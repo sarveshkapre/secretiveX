@@ -23,6 +23,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - Watch/reload controls: `watch_files`, `watch_debounce_ms`, `SIGHUP` reload.
 - List caching and low-allocation protocol paths for fan-out scenarios.
 - Bench tooling includes reconnect mode, list mode, response timeout, and latency percentiles.
+- PKCS#11 key refresh is serialized to reduce refresh storms during concurrent load.
 
 ## Gaps to Close for V1
 

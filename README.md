@@ -20,6 +20,7 @@ Current Rust milestones:
 - CLI flags for config, socket path, and key overrides
 - Config-driven store list (file now; pkcs11 placeholder)
 - PKCS#11 store (enable via `secretive-core` feature `pkcs11`)
+- PKCS#11 key refresh is serialized to reduce contention under concurrent load
 - File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
 - Secure Enclave store stub (macOS implementation next)
 - Config supports `secure_enclave` store type (stub)
