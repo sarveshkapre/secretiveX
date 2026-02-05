@@ -22,7 +22,7 @@ use secretive_core::{
 use bytes::{Bytes, BytesMut};
 use secretive_proto::{
     read_request_with_buffer, write_payload, write_response_with_buffer, AgentRequest, AgentResponse,
-    Identity,
+    Identity, ProtoError,
 };
 
 #[derive(Debug, Deserialize)]
@@ -697,6 +697,9 @@ where
         let request = match read_request_with_buffer(&mut reader, &mut buffer).await {
             Ok(req) => req,
             Err(err) => {
+                if matches!(err, ProtoError::UnexpectedEof) {
+                    break;
+                }
                 warn!(?err, "failed to read request");
                 break;
             }
