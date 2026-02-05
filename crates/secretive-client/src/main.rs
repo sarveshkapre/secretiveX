@@ -3,8 +3,9 @@ use std::io::Read;
 
 use anyhow::Result;
 use bytes::BytesMut;
-use secretive_proto::{read_response_with_buffer, write_request, AgentRequest, AgentResponse};
+use secretive_proto::{read_response_with_buffer, write_request, AgentRequest, AgentResponse, Identity};
 use ssh_key::Signature;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[cfg(unix)]
 use tokio::net::UnixStream as AgentStream;
@@ -15,15 +16,29 @@ use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
 async fn main() -> Result<()> {
     let args = parse_args();
     let socket_path = resolve_socket_path(args.socket_path.clone());
-    let mut stream = connect(&socket_path).await?;
+    let stream = connect(&socket_path).await?;
+
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut buffer = BytesMut::with_capacity(4096);
 
     if args.list {
-        list_identities(&mut stream, args.show_openssh, args.json).await?;
+        list_identities(&mut reader, &mut writer, &mut buffer, args.show_openssh, args.json)
+            .await?;
         return Ok(());
     }
 
-    if let Some(key_hex) = args.sign_key_blob {
-        let key_blob = hex::decode(key_hex)?;
+    if args.sign_key_blob.is_some() || args.sign_comment.is_some() {
+        let key_blob = if let Some(key_hex) = args.sign_key_blob {
+            hex::decode(key_hex)?
+        } else {
+            select_key_by_comment(
+                &mut reader,
+                &mut writer,
+                &mut buffer,
+                args.sign_comment.as_deref().unwrap_or_default(),
+            )
+            .await?
+        };
         let data = if let Some(path) = args.sign_path {
             std::fs::read(path)?
         } else {
@@ -31,7 +46,8 @@ async fn main() -> Result<()> {
             std::io::stdin().read_to_end(&mut buf)?;
             buf
         };
-        let signature_blob = sign_data(&mut stream, key_blob, data, args.flags).await?;
+        let signature_blob = sign_data(&mut reader, &mut writer, &mut buffer, key_blob, data, args.flags)
+            .await?;
         let signature = decode_signature_blob(&signature_blob)?;
         if args.json {
             let payload = serde_json::json!({
@@ -51,89 +67,124 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn list_identities(
-    stream: &mut AgentStream,
+async fn list_identities<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
-) -> Result<()> {
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut buffer = BytesMut::with_capacity(4096);
-    write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
-    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let identities = fetch_identities(reader, writer, buffer).await?;
 
-    match response {
-        AgentResponse::IdentitiesAnswer { identities } => {
-            if json_output {
-                let mut out = Vec::new();
-                for identity in identities {
-                    let mut alg = None;
-                    let mut fp = None;
-                    let mut openssh = None;
-                    if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-                        alg = Some(public_key.algorithm().as_str().to_string());
-                        fp = Some(public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string());
-                        if show_openssh {
-                            if let Ok(ssh) = public_key.to_openssh() {
-                                openssh = Some(ssh.trim().to_string());
-                            }
-                        }
+    if json_output {
+        let mut out = Vec::new();
+        for identity in identities {
+            let mut alg = None;
+            let mut fp = None;
+            let mut openssh = None;
+            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                alg = Some(public_key.algorithm().as_str().to_string());
+                fp = Some(public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string());
+                if show_openssh {
+                    if let Ok(ssh) = public_key.to_openssh() {
+                        openssh = Some(ssh.trim().to_string());
                     }
-                    out.push(serde_json::json!({
-                        "key_blob_hex": hex::encode(&identity.key_blob),
-                        "comment": identity.comment,
-                        "algorithm": alg,
-                        "fingerprint": fp,
-                        "openssh": openssh,
-                    }));
-                }
-                println!("{}", serde_json::to_string_pretty(&out)?);
-            } else {
-                for identity in identities {
-                    let mut details = String::new();
-                    if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-                        let alg = public_key.algorithm().as_str().to_string();
-                        let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
-                        if show_openssh {
-                            if let Ok(ssh) = public_key.to_openssh() {
-                                details = format!(" {} {} {}", alg, fp, ssh.trim());
-                            } else {
-                                details = format!(" {} {}", alg, fp);
-                            }
-                        } else {
-                            details = format!(" {} {}", alg, fp);
-                        }
-                    }
-                    println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
                 }
             }
+            out.push(serde_json::json!({
+                "key_blob_hex": hex::encode(&identity.key_blob),
+                "comment": identity.comment,
+                "algorithm": alg,
+                "fingerprint": fp,
+                "openssh": openssh,
+            }));
         }
-        _ => {
-            println!("Unexpected response");
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        for identity in identities {
+            let mut details = String::new();
+            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                let alg = public_key.algorithm().as_str().to_string();
+                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
+                if show_openssh {
+                    if let Ok(ssh) = public_key.to_openssh() {
+                        details = format!(" {} {} {}", alg, fp, ssh.trim());
+                    } else {
+                        details = format!(" {} {}", alg, fp);
+                    }
+                } else {
+                    details = format!(" {} {}", alg, fp);
+                }
+            }
+            println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
         }
     }
 
     Ok(())
 }
 
-async fn sign_data(
-    stream: &mut AgentStream,
+async fn sign_data<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    buffer: &mut BytesMut,
     key_blob: Vec<u8>,
     data: Vec<u8>,
     flags: u32,
-) -> Result<Vec<u8>> {
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut buffer = BytesMut::with_capacity(4096);
+) -> Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let request = AgentRequest::SignRequest {
         key_blob,
         data,
         flags,
     };
-    write_request(&mut writer, &request).await?;
-    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+    write_request(writer, &request).await?;
+    let response = read_response_with_buffer(reader, buffer).await?;
     match response {
         AgentResponse::SignResponse { signature_blob } => Ok(signature_blob),
         _ => Err(anyhow::anyhow!("unexpected response")),
     }
+}
+
+async fn fetch_identities<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    buffer: &mut BytesMut,
+) -> Result<Vec<Identity>>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_request(writer, &AgentRequest::RequestIdentities).await?;
+    let response = read_response_with_buffer(reader, buffer).await?;
+    match response {
+        AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
+        _ => Err(anyhow::anyhow!("unexpected response")),
+    }
+}
+
+async fn select_key_by_comment<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    buffer: &mut BytesMut,
+    comment: &str,
+) -> Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let identities = fetch_identities(reader, writer, buffer).await?;
+    identities
+        .into_iter()
+        .find(|id| id.comment == comment)
+        .map(|id| id.key_blob)
+        .ok_or_else(|| anyhow::anyhow!("no identity with comment: {comment}"))
 }
 
 fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
@@ -166,6 +217,7 @@ struct Args {
     show_openssh: bool,
     json: bool,
     sign_key_blob: Option<String>,
+    sign_comment: Option<String>,
     sign_path: Option<String>,
     flags: u32,
 }
@@ -178,6 +230,7 @@ fn parse_args() -> Args {
         show_openssh: false,
         json: false,
         sign_key_blob: None,
+        sign_comment: None,
         sign_path: None,
         flags: 0,
     };
@@ -189,6 +242,7 @@ fn parse_args() -> Args {
             "--openssh" => parsed.show_openssh = true,
             "--json" => parsed.json = true,
             "--sign" => parsed.sign_key_blob = args.next(),
+            "--comment" => parsed.sign_comment = args.next(),
             "--data" => parsed.sign_path = args.next(),
             "--flags" => {
                 if let Some(value) = args.next() {
