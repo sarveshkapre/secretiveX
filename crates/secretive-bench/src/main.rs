@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use rand::RngCore;
@@ -16,6 +17,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream as AgentStream;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
+
+static LIST_FRAME: OnceLock<Bytes> = OnceLock::new();
 
 #[derive(Debug)]
 struct Args {
@@ -326,7 +329,7 @@ async fn run_list_worker(
     reconnect: bool,
     deadline: Option<Instant>,
 ) -> Result<usize> {
-    let list_frame = encode_request_frame(&AgentRequest::RequestIdentities)?;
+    let list_frame = list_request_frame();
 
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
@@ -404,8 +407,7 @@ async fn fetch_first_key(socket_path: &Path) -> Result<Vec<u8>> {
     let stream = connect(socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
     let mut buffer = BytesMut::with_capacity(4096);
-    let frame = encode_request_frame(&AgentRequest::RequestIdentities)?;
-    writer.write_all(&frame).await?;
+    writer.write_all(list_request_frame()).await?;
     let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => identities
@@ -415,6 +417,13 @@ async fn fetch_first_key(socket_path: &Path) -> Result<Vec<u8>> {
             .ok_or_else(|| anyhow::anyhow!("no identities")),
         _ => Err(anyhow::anyhow!("unexpected response")),
     }
+}
+
+fn list_request_frame() -> &'static Bytes {
+    LIST_FRAME.get_or_init(|| {
+        encode_request_frame(&AgentRequest::RequestIdentities)
+            .expect("list request frame encoding failed")
+    })
 }
 
 fn parse_args() -> Args {
