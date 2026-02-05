@@ -11,6 +11,7 @@ Use these knobs to keep the Rust agent responsive under large fan-out workloads 
 - Enable `inline_sign` only for fast local keys (file store) to cut spawn overhead.
 - Raise `identity_cache_ms` to reduce list churn under heavy fan-out.
 - Set `idle_timeout_ms` to close idle client connections faster.
+- Set `sign_timeout_ms` to fail fast when the signing queue backs up.
 
 ## Sample configuration
 
@@ -23,7 +24,8 @@ Use these knobs to keep the Rust agent responsive under large fan-out workloads 
   "worker_threads": 16,
   "inline_sign": true,
   "identity_cache_ms": 5000,
-  "idle_timeout_ms": 10000
+  "idle_timeout_ms": 10000,
+  "sign_timeout_ms": 250
 }
 ```
 
