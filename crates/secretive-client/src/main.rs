@@ -369,12 +369,20 @@ fn print_help() {
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
-    match value.trim().to_lowercase().as_str() {
-        "sha256" | "rsa-sha2-256" => Some(SSH_AGENT_RSA_SHA2_256),
-        "sha512" | "rsa-sha2-512" => Some(SSH_AGENT_RSA_SHA2_512),
-        "ssh-rsa" | "sha1" => Some(0),
-        _ => value.parse().ok(),
+    let trimmed = value.trim();
+    if let Ok(parsed) = trimmed.parse() {
+        return Some(parsed);
     }
+    if trimmed.eq_ignore_ascii_case("sha256") || trimmed.eq_ignore_ascii_case("rsa-sha2-256") {
+        return Some(SSH_AGENT_RSA_SHA2_256);
+    }
+    if trimmed.eq_ignore_ascii_case("sha512") || trimmed.eq_ignore_ascii_case("rsa-sha2-512") {
+        return Some(SSH_AGENT_RSA_SHA2_512);
+    }
+    if trimmed.eq_ignore_ascii_case("ssh-rsa") || trimmed.eq_ignore_ascii_case("sha1") {
+        return Some(0);
+    }
+    None
 }
 
 #[cfg(test)]
