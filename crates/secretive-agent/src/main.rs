@@ -29,6 +29,7 @@ use secretive_proto::{
 #[derive(Debug, Deserialize)]
 struct Config {
     socket_path: Option<String>,
+    socket_backlog: Option<u32>,
     key_paths: Option<Vec<String>>,
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
@@ -246,6 +247,9 @@ fn main() {
     if let Some(identity_cache_ms) = args.identity_cache_ms {
         config.identity_cache_ms = Some(identity_cache_ms);
     }
+    if let Some(socket_backlog) = args.socket_backlog {
+        config.socket_backlog = Some(socket_backlog);
+    }
     if config.max_signers.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_MAX_SIGNERS") {
             config.max_signers = value.parse().ok();
@@ -269,6 +273,11 @@ fn main() {
     if config.max_blocking_threads.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_MAX_BLOCKING_THREADS") {
             config.max_blocking_threads = value.parse().ok();
+        }
+    }
+    if config.socket_backlog.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_SOCKET_BACKLOG") {
+            config.socket_backlog = value.parse().ok();
         }
     }
 
@@ -600,9 +609,16 @@ async fn run_async(mut config: Config, max_signers: usize) {
     #[cfg(unix)]
     {
         let socket_path = resolve_socket_path(config.socket_path);
+        let socket_backlog = config.socket_backlog;
         if let Err(err) =
-            run_unix(socket_path, registry.clone(), sign_semaphore.clone(), identity_cache.clone())
-                .await
+            run_unix(
+                socket_path,
+                socket_backlog,
+                registry.clone(),
+                sign_semaphore.clone(),
+                identity_cache.clone(),
+            )
+            .await
         {
             error!(?err, "agent exited with error");
         }
@@ -656,6 +672,7 @@ fn load_config(path_override: Option<&str>) -> Config {
     }
     Config {
         socket_path: None,
+        socket_backlog: None,
         key_paths: None,
         scan_default_dir: None,
         stores: None,
@@ -678,6 +695,7 @@ fn default_config_path() -> Option<PathBuf> {
 struct Args {
     config_path: Option<String>,
     socket_path: Option<String>,
+    socket_backlog: Option<u32>,
     key_paths: Vec<String>,
     scan_default_dir: Option<bool>,
     max_signers: Option<usize>,
@@ -695,6 +713,7 @@ fn parse_args() -> Args {
     let mut parsed = Args {
         config_path: None,
         socket_path: None,
+        socket_backlog: None,
         key_paths: Vec::new(),
         scan_default_dir: None,
         max_signers: None,
@@ -711,6 +730,11 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--config" => parsed.config_path = args.next(),
             "--socket" => parsed.socket_path = args.next(),
+            "--socket-backlog" => {
+                if let Some(value) = args.next() {
+                    parsed.socket_backlog = value.parse().ok();
+                }
+            }
             "--key" => {
                 if let Some(path) = args.next() {
                     parsed.key_paths.push(path);
@@ -775,6 +799,7 @@ fn parse_bool_env(value: &str) -> Option<bool> {
 fn print_help() {
     println!("secretive-agent usage:\n");
     println!("  --config <path> --socket <path> --key <path>");
+    println!("  --socket-backlog <n>");
     println!("  --default-scan | --no-default-scan");
     println!("  --max-signers <n> --max-blocking-threads <n>");
     println!("  --metrics-every <n>");
@@ -853,12 +878,15 @@ impl Drop for PidFileGuard {
 #[cfg(unix)]
 async fn run_unix(
     socket_path: PathBuf,
+    socket_backlog: Option<u32>,
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     use tokio::sync::oneshot;
+    use std::os::unix::net::UnixListener as StdUnixListener;
+    use std::os::unix::io::AsRawFd;
 
     if let Some(dir) = socket_path.parent() {
         if let Err(err) = std::fs::create_dir_all(dir) {
@@ -880,7 +908,16 @@ async fn run_unix(
         warn!(path = %socket_path.display(), "socket path may be too long for some systems");
     }
 
-    let listener = UnixListener::bind(&socket_path)?;
+    let std_listener = StdUnixListener::bind(&socket_path)?;
+    if let Some(backlog) = socket_backlog.filter(|value| *value > 0) {
+        let backlog = backlog.min(i32::MAX as u32) as libc::c_int;
+        let rc = unsafe { libc::listen(std_listener.as_raw_fd(), backlog) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    std_listener.set_nonblocking(true)?;
+    let listener = UnixListener::from_std(std_listener)?;
     if let Err(err) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
         warn!(?err, "failed to set socket permissions");
     }

@@ -9,6 +9,7 @@ If no path is provided, the agent looks for:
 ## Top-level fields
 
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
+- `socket_backlog` (number): override the Unix socket listen backlog (0 or omitted uses system default).
 - `stores` (array): ordered list of key stores to load.
 - `max_signers` (number): optional cap for concurrent sign operations.
 - `watch_files` (bool): enable or disable file-store watching (default: true).
@@ -21,6 +22,7 @@ Environment overrides (when config/CLI unset):
 - `SECRETIVE_METRICS_EVERY` sets `metrics_every`.
 - `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
 - `SECRETIVE_WATCH_FILES` sets `watch_files` (`true`/`false`).
+- `SECRETIVE_SOCKET_BACKLOG` sets `socket_backlog`.
 
 Legacy fields (used only when `stores` is not provided):
 - `key_paths` (array of strings): explicit private key paths.

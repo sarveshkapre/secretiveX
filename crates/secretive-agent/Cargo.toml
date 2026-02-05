@@ -17,6 +17,7 @@ bytes.workspace = true
 notify = "6.1"
 directories = "5.0"
 arc-swap = "1.7"
+libc = "0.2"
 
 [features]
 default = []

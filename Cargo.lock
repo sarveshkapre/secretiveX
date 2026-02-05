@@ -988,6 +988,7 @@ dependencies = [
  "arc-swap",
  "bytes",
  "directories",
+ "libc",
  "notify",
  "secretive-core",
  "secretive-proto",
