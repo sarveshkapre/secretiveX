@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
             &mut buffer,
             args.show_openssh,
             args.json,
+            args.raw,
             args.filter.as_deref(),
         )
             .await?;
@@ -115,6 +116,7 @@ async fn list_identities<S>(
     buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
+    raw_output: bool,
     filter: Option<&str>,
 ) -> Result<()>
 where
@@ -150,6 +152,17 @@ where
         let mut ser = serde_json::Serializer::pretty(&mut handle);
         let mut seq = ser.serialize_seq(Some(identities.len()))?;
         for identity in &identities {
+            if raw_output {
+                let item = JsonIdentity {
+                    key_blob_hex: hex::encode(&identity.key_blob),
+                    comment: &identity.comment,
+                    algorithm: None,
+                    fingerprint: None,
+                    openssh: None,
+                };
+                seq.serialize_element(&item)?;
+                continue;
+            }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
                 let algorithm = public_key.algorithm();
                 let alg = algorithm.as_str();
@@ -184,6 +197,10 @@ where
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
         for identity in identities {
+            if raw_output {
+                writeln!(handle, "{} {}", hex::encode(identity.key_blob), identity.comment)?;
+                continue;
+            }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
                 let algorithm = public_key.algorithm();
                 let alg = algorithm.as_str();
@@ -475,6 +492,7 @@ struct Args {
     list: bool,
     show_openssh: bool,
     json: bool,
+    raw: bool,
     filter: Option<String>,
     sign_key_blob: Option<String>,
     sign_comment: Option<String>,
@@ -492,6 +510,7 @@ fn parse_args() -> Args {
         list: false,
         show_openssh: false,
         json: false,
+        raw: false,
         filter: None,
         sign_key_blob: None,
         sign_comment: None,
@@ -508,6 +527,7 @@ fn parse_args() -> Args {
             "--list" => parsed.list = true,
             "--openssh" => parsed.show_openssh = true,
             "--json" => parsed.json = true,
+            "--raw" => parsed.raw = true,
             "--filter" => parsed.filter = args.next(),
             "--sign" => parsed.sign_key_blob = args.next(),
             "--comment" => parsed.sign_comment = args.next(),
@@ -531,7 +551,7 @@ fn parse_args() -> Args {
 
 fn print_help() {
     println!("secretive-client usage:\n");
-    println!("  --list [--json] [--openssh] [--filter <substring>]");
+    println!("  --list [--json] [--openssh] [--raw] [--filter <substring>]");
     println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json]");
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json]");
     println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json]");
@@ -540,6 +560,7 @@ fn print_help() {
     println!("Notes:");
     println!("  If --data is omitted, stdin is used for signing.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
+    println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
