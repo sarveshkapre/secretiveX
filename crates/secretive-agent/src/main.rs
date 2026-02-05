@@ -33,6 +33,7 @@ struct Config {
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
     max_signers: Option<usize>,
+    max_blocking_threads: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
@@ -262,9 +263,17 @@ fn main() {
             config.identity_cache_ms = value.parse().ok();
         }
     }
+    if config.max_blocking_threads.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_MAX_BLOCKING_THREADS") {
+            config.max_blocking_threads = value.parse().ok();
+        }
+    }
 
     let max_signers = compute_max_signers(&config);
-    let max_blocking_threads = max_signers.max(1);
+    let max_blocking_threads = config
+        .max_blocking_threads
+        .unwrap_or(max_signers)
+        .max(1);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(max_blocking_threads)
@@ -648,6 +657,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         scan_default_dir: None,
         stores: None,
         max_signers: None,
+        max_blocking_threads: None,
         watch_files: None,
         metrics_every: None,
         pid_file: None,
