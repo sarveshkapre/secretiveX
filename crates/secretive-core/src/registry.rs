@@ -28,6 +28,7 @@ impl KeyStoreRegistry {
     }
 
     pub fn list_identities(&self) -> Result<Vec<KeyIdentity>> {
+        self.index.clear();
         let mut out = Vec::new();
         for store in &self.stores {
             let identities = store.list_identities()?;
@@ -41,8 +42,12 @@ impl KeyStoreRegistry {
 
     pub fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
         if let Some(store) = self.index.get(key_blob) {
-            if let Ok(sig) = store.sign(key_blob, data, flags) {
-                return Ok(sig);
+            match store.sign(key_blob, data, flags) {
+                Ok(sig) => return Ok(sig),
+                Err(CoreError::KeyNotFound) => {
+                    self.index.remove(key_blob);
+                }
+                Err(err) => return Err(err),
             }
         }
 
