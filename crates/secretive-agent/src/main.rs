@@ -1081,7 +1081,12 @@ async fn handle_request(
     match request {
         AgentRequest::RequestIdentities => AgentResponse::Failure,
         AgentRequest::SignRequest { key_blob, data, flags } => {
-            let start = Instant::now();
+            let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
+            let start = if metrics_every > 0 {
+                Some(Instant::now())
+            } else {
+                None
+            };
             let permit = match sign_semaphore.acquire().await {
                 Ok(permit) => permit,
                 Err(_) => {
@@ -1096,25 +1101,26 @@ async fn handle_request(
             drop(permit);
             match result {
                 Ok(Ok(signature_blob)) => {
-                    let elapsed = start.elapsed();
                     let count = SIGN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-                    SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-                    let every = METRICS_EVERY.load(Ordering::Relaxed);
-                    if every > 0 && count % every == 0 {
-                        let errors = SIGN_ERRORS.load(Ordering::Relaxed);
-                        let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
-                        let avg = total / count as f64;
-                        let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
-                        let available = sign_semaphore.available_permits() as u64;
-                        let in_flight = max_signers.saturating_sub(available);
-                        info!(
-                            count,
-                            errors,
-                            avg_ns = avg,
-                            in_flight,
-                            max_signers,
-                            "signing metrics"
-                        );
+                    if let Some(start) = start {
+                        let elapsed = start.elapsed();
+                        SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                        if count % metrics_every == 0 {
+                            let errors = SIGN_ERRORS.load(Ordering::Relaxed);
+                            let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
+                            let avg = total / count as f64;
+                            let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
+                            let available = sign_semaphore.available_permits() as u64;
+                            let in_flight = max_signers.saturating_sub(available);
+                            info!(
+                                count,
+                                errors,
+                                avg_ns = avg,
+                                in_flight,
+                                max_signers,
+                                "signing metrics"
+                            );
+                        }
                     }
                     AgentResponse::SignResponse { signature_blob }
                 }
