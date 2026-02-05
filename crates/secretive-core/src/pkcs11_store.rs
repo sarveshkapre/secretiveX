@@ -133,7 +133,7 @@ mod enabled {
                 .map_err(|_| CoreError::Internal("pkcs11 find objects"))?;
 
             let mut map: HashMap<Vec<u8>, Pkcs11Key, RandomState> =
-                HashMap::with_hasher(RandomState::new());
+                HashMap::with_capacity_and_hasher(objects.len(), RandomState::new());
 
             for object in objects {
                 let attributes = session
