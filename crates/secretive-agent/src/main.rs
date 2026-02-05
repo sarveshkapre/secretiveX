@@ -586,15 +586,23 @@ async fn handle_request(
 ) -> AgentResponse {
     match request {
         AgentRequest::RequestIdentities => {
-            match registry.list_identities() {
-                Ok(identities) => AgentResponse::IdentitiesAnswer {
-                    identities: identities.into_iter().map(|id| Identity {
-                        key_blob: id.key_blob,
-                        comment: id.comment,
-                    }).collect(),
+            let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
+            match result {
+                Ok(Ok(identities)) => AgentResponse::IdentitiesAnswer {
+                    identities: identities
+                        .into_iter()
+                        .map(|id| Identity {
+                            key_blob: id.key_blob,
+                            comment: id.comment,
+                        })
+                        .collect(),
                 },
-                Err(err) => {
+                Ok(Err(err)) => {
                     warn!(?err, "failed to list identities");
+                    AgentResponse::Failure
+                }
+                Err(err) => {
+                    warn!(?err, "identity worker failed");
                     AgentResponse::Failure
                 }
             }
