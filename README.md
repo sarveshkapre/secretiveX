@@ -2,6 +2,15 @@
 
 
 Secretive is an app for protecting and managing SSH keys with the Secure Enclave.
+
+## Rust Rewrite (WIP)
+
+This repository now includes an in-progress Rust rewrite focused on cross-platform support and high-concurrency SSH agent performance. The new implementation lives in `crates/` and is being built in phases:
+- `secretive-proto`: SSH agent protocol parsing/encoding
+- `secretive-core`: key store abstractions and policy plumbing
+- `secretive-agent`: cross-platform daemon skeleton (Unix socket / Windows named pipe)
+
+The existing Swift app remains the reference implementation while the Rust version reaches feature parity.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">
