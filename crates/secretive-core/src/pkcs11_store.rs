@@ -53,7 +53,7 @@ mod enabled {
     use cryptoki::object::{Attribute, AttributeType, ObjectClass};
     use cryptoki::session::{Session, SessionFlags, UserType};
     use cryptoki::types::slot::Slot;
-    use ssh_key::{public::KeyData, Algorithm, PublicKey};
+    use ssh_key::{public::KeyData, PublicKey};
     use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
     const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
@@ -223,20 +223,14 @@ mod enabled {
                 .map_err(|_| CoreError::Crypto("pkcs11 sign"))?;
 
             let algorithm = if flags & SSH_AGENT_RSA_SHA2_512 != 0 {
-                Algorithm::Rsa { hash: Some(ssh_key::HashAlg::Sha512) }
+                "rsa-sha2-512"
             } else if flags & SSH_AGENT_RSA_SHA2_256 != 0 {
-                Algorithm::Rsa { hash: Some(ssh_key::HashAlg::Sha256) }
+                "rsa-sha2-256"
             } else {
-                Algorithm::Rsa { hash: None }
+                "ssh-rsa"
             };
 
-            let signature = ssh_key::Signature::new(algorithm, signature)
-                .map_err(|_| CoreError::Crypto("pkcs11 signature"))?;
-
-            Ok(secretive_proto::encode_signature_blob(
-                signature.algorithm().as_str(),
-                signature.as_bytes(),
-            ))
+            Ok(secretive_proto::encode_signature_blob(algorithm, &signature))
         }
     }
 
