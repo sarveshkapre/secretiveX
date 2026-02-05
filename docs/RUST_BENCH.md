@@ -114,3 +114,23 @@ Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
 ```bash
 ./scripts/bench_slo_gate.sh
 ```
+
+## Soak test
+
+Run a long-duration soak test (default 30 minutes):
+
+```bash
+./scripts/soak_test.sh
+```
+
+Tune duration and load:
+
+```bash
+SOAK_DURATION_SECS=3600 SOAK_CONCURRENCY=512 SOAK_RECONNECT=1 ./scripts/soak_test.sh
+```
+
+Run soak test against an already-running agent:
+
+```bash
+SOAK_SOCKET=\"$XDG_RUNTIME_DIR/secretive/agent.sock\" ./scripts/soak_test.sh
+```

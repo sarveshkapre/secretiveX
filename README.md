@@ -47,6 +47,7 @@ Current Rust milestones:
 - CI includes reconnect fan-out benchmark smoke gating
 - CI includes OpenSSH compatibility smoke checks (list/sign/error)
 - Initial SLO gate script and scheduled CI job for reconnect workloads
+- End-to-end soak test script for multi-minute/hour reliability runs
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output

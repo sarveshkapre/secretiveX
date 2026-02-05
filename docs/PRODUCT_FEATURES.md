@@ -54,7 +54,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - [ ] Add optional structured metrics endpoint/output format for scraping.
 - [x] Add config profile presets (`balanced`, `fanout`, `low-memory`) with documented defaults.
 - [x] Add graceful startup validation (`--check-config`) with actionable errors.
-- [ ] Add end-to-end soak test script for multi-minute and multi-hour runs.
+- [x] Add end-to-end soak test script for multi-minute and multi-hour runs.
 
 ## P2 (Medium)
 
