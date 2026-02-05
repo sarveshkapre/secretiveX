@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{AgentRequest, AgentResponse, Identity, MessageType, ProtoError, Result};
 
-pub const MAX_FRAME_LEN: usize = 1024 * 1024; // 1 MiB for now
+pub const MAX_FRAME_LEN: usize = 4 * 1024 * 1024; // 4 MiB to handle large identity sets
 
 pub async fn read_request<R>(reader: &mut R) -> Result<AgentRequest>
 where
