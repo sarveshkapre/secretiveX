@@ -399,6 +399,7 @@ fn print_help() {
     println!("  --default-scan | --no-default-scan");
     println!("  --max-signers <n> --metrics-every <n>");
     println!("  --watch | --no-watch --pid-file <path>\n");
+    println!("  --version\n");
     println!("Notes:");
     println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");
 }
