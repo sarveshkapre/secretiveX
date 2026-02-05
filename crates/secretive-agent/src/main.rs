@@ -270,7 +270,6 @@ async fn main() {
     };
 
     let mut registry = KeyStoreRegistry::new();
-    let mut reloadable_stores: Vec<Arc<FileStore>> = Vec::new();
 
     let stores = if let Some(stores) = config.stores.take() {
         stores
@@ -281,6 +280,7 @@ async fn main() {
         }]
     };
 
+    let mut reloadable_stores: Vec<Arc<FileStore>> = Vec::with_capacity(stores.len());
     for store in stores {
         match store {
             StoreConfig::File { paths, scan_default_dir } => {
