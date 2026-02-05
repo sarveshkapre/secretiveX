@@ -35,6 +35,7 @@ Current Rust milestones:
 - `watch_files` controls automatic reloads
 - `watch_debounce_ms` tunes reload debounce for file watchers
 - `metrics_every` controls logging frequency
+- `metrics_json` emits machine-readable JSON metrics lines
 - `pid_file` writes the agent PID for monitoring
 - `identity_cache_ms` caches identity lists for fast fan-out
 - `idle_timeout_ms` closes idle connections to free resources

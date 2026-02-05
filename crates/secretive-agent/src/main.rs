@@ -40,6 +40,7 @@ struct Config {
     watch_files: Option<bool>,
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
+    metrics_json: Option<bool>,
     sign_timeout_ms: Option<u64>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
@@ -52,6 +53,7 @@ static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
+static METRICS_JSON: AtomicBool = AtomicBool::new(false);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static MAX_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static CONNECTION_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -262,6 +264,9 @@ fn main() {
     if let Some(metrics_every) = args.metrics_every {
         config.metrics_every = Some(metrics_every);
     }
+    if let Some(metrics_json) = args.metrics_json {
+        config.metrics_json = Some(metrics_json);
+    }
     if let Some(sign_timeout_ms) = args.sign_timeout_ms {
         config.sign_timeout_ms = Some(sign_timeout_ms);
     }
@@ -296,6 +301,11 @@ fn main() {
     if config.metrics_every.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_METRICS_EVERY") {
             config.metrics_every = value.parse().ok();
+        }
+    }
+    if config.metrics_json.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_METRICS_JSON") {
+            config.metrics_json = parse_bool_env(&value);
         }
     }
     if config.sign_timeout_ms.is_none() {
@@ -682,6 +692,13 @@ async fn run_async(mut config: Config, max_signers: usize) {
 
     let metrics_every = config.metrics_every.unwrap_or(1000);
     METRICS_EVERY.store(metrics_every, Ordering::Relaxed);
+    let metrics_json = config.metrics_json.unwrap_or(false);
+    METRICS_JSON.store(metrics_json, Ordering::Relaxed);
+    if metrics_json {
+        info!("metrics format: json");
+    } else {
+        info!("metrics format: log");
+    }
     if metrics_every == 0 {
         info!("signing metrics disabled");
     } else {
@@ -725,11 +742,11 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
                     let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
                     let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
-                    info!(
+                    let snapshot = SignMetricsSnapshot {
                         count,
                         errors,
                         timeouts,
-                        avg_ns = avg,
+                        avg_ns: avg,
                         in_flight,
                         max_signers,
                         connections,
@@ -742,8 +759,8 @@ async fn run_async(mut config: Config, max_signers: usize) {
                         list_stale,
                         list_refresh,
                         list_errors,
-                        "signing metrics snapshot"
-                    );
+                    };
+                    emit_sign_metrics("snapshot", &snapshot);
                 }
             }
         });
@@ -912,6 +929,84 @@ fn apply_profile_defaults(config: &mut Config) {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SignMetricsSnapshot {
+    count: u64,
+    errors: u64,
+    timeouts: u64,
+    avg_ns: f64,
+    in_flight: u64,
+    max_signers: u64,
+    connections: u64,
+    active_connections: u64,
+    max_active_connections: u64,
+    max_connections: u64,
+    connection_rejected: u64,
+    list_count: u64,
+    list_hit: u64,
+    list_stale: u64,
+    list_refresh: u64,
+    list_errors: u64,
+}
+
+fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
+    serde_json::json!({
+        "kind": kind,
+        "count": metrics.count,
+        "errors": metrics.errors,
+        "timeouts": metrics.timeouts,
+        "avg_ns": metrics.avg_ns,
+        "in_flight": metrics.in_flight,
+        "max_signers": metrics.max_signers,
+        "connections": metrics.connections,
+        "active_connections": metrics.active_connections,
+        "max_active_connections": metrics.max_active_connections,
+        "max_connections": metrics.max_connections,
+        "connection_rejected": metrics.connection_rejected,
+        "list_count": metrics.list_count,
+        "list_hit": metrics.list_hit,
+        "list_stale": metrics.list_stale,
+        "list_refresh": metrics.list_refresh,
+        "list_errors": metrics.list_errors
+    })
+    .to_string()
+}
+
+fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
+    if METRICS_JSON.load(Ordering::Relaxed) {
+        let payload = format_metrics_json(kind, metrics);
+        info!(kind, metrics_json = %payload, "signing metrics");
+        return;
+    }
+
+    let message = if kind == "snapshot" {
+        "signing metrics snapshot"
+    } else {
+        "signing metrics"
+    };
+
+    info!(
+        count = metrics.count,
+        errors = metrics.errors,
+        timeouts = metrics.timeouts,
+        avg_ns = metrics.avg_ns,
+        in_flight = metrics.in_flight,
+        max_signers = metrics.max_signers,
+        connections = metrics.connections,
+        active_connections = metrics.active_connections,
+        max_active_connections = metrics.max_active_connections,
+        max_connections = metrics.max_connections,
+        connection_rejected = metrics.connection_rejected,
+        list_count = metrics.list_count,
+        list_hit = metrics.list_hit,
+        list_stale = metrics.list_stale,
+        list_refresh = metrics.list_refresh,
+        list_errors = metrics.list_errors,
+        "{}",
+        message
+    );
+}
+
 #[derive(Debug, Default)]
 struct ConfigValidation {
     errors: Vec<String>,
@@ -1049,6 +1144,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         watch_files: None,
         watch_debounce_ms: None,
         metrics_every: None,
+        metrics_json: None,
         sign_timeout_ms: None,
         pid_file: None,
         identity_cache_ms: None,
@@ -1078,6 +1174,7 @@ struct Args {
     watch_files: Option<bool>,
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
+    metrics_json: Option<bool>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
@@ -1104,6 +1201,7 @@ fn parse_args() -> Args {
         watch_files: None,
         watch_debounce_ms: None,
         metrics_every: None,
+        metrics_json: None,
         pid_file: None,
         identity_cache_ms: None,
         idle_timeout_ms: None,
@@ -1163,6 +1261,8 @@ fn parse_args() -> Args {
                     parsed.metrics_every = value.parse().ok();
                 }
             }
+            "--metrics-json" => parsed.metrics_json = Some(true),
+            "--no-metrics-json" => parsed.metrics_json = Some(false),
             "--sign-timeout-ms" => {
                 if let Some(value) = args.next() {
                     parsed.sign_timeout_ms = value.parse().ok();
@@ -1221,6 +1321,7 @@ fn print_help() {
     println!("  --default-scan | --no-default-scan");
     println!("  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>");
     println!("  --metrics-every <n>");
+    println!("  --metrics-json | --no-metrics-json");
     println!("  --sign-timeout-ms <n>");
     println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
     println!("  --identity-cache-ms <n>");
@@ -1799,21 +1900,35 @@ async fn handle_sign_request(
                     let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
                     let available = sign_semaphore.available_permits() as u64;
                     let in_flight = max_signers.saturating_sub(available);
+                    let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
+                    let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
                     let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
-                    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
                     let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
-                    info!(
+                    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
+                    let list_count = LIST_COUNT.load(Ordering::Relaxed);
+                    let list_hit = LIST_CACHE_HIT.load(Ordering::Relaxed);
+                    let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
+                    let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
+                    let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
+                    let snapshot = SignMetricsSnapshot {
                         count,
                         errors,
                         timeouts,
-                        avg_ns = avg,
+                        avg_ns: avg,
                         in_flight,
                         max_signers,
-                        max_connections,
+                        connections,
+                        active_connections,
                         max_active_connections,
+                        max_connections,
                         connection_rejected,
-                        "signing metrics"
-                    );
+                        list_count,
+                        list_hit,
+                        list_stale,
+                        list_refresh,
+                        list_errors,
+                    };
+                    emit_sign_metrics("interval", &snapshot);
                 }
             }
             AgentResponse::SignResponse { signature_blob }
@@ -1888,6 +2003,7 @@ mod tests {
             watch_files: None,
             watch_debounce_ms: None,
             metrics_every: None,
+            metrics_json: None,
             sign_timeout_ms: None,
             pid_file: None,
             identity_cache_ms: None,
@@ -2020,5 +2136,32 @@ mod tests {
 
         assert_eq!(config.max_connections, Some(123));
         assert_eq!(config.sign_timeout_ms, Some(456));
+    }
+
+    #[test]
+    fn metrics_json_contains_expected_fields() {
+        let snapshot = SignMetricsSnapshot {
+            count: 1,
+            errors: 2,
+            timeouts: 3,
+            avg_ns: 4.0,
+            in_flight: 5,
+            max_signers: 6,
+            connections: 7,
+            active_connections: 8,
+            max_active_connections: 9,
+            max_connections: 10,
+            connection_rejected: 11,
+            list_count: 12,
+            list_hit: 13,
+            list_stale: 14,
+            list_refresh: 15,
+            list_errors: 16,
+        };
+        let payload = format_metrics_json("snapshot", &snapshot);
+        assert!(payload.contains("\"kind\":\"snapshot\""));
+        assert!(payload.contains("\"count\":1"));
+        assert!(payload.contains("\"max_signers\":6"));
+        assert!(payload.contains("\"list_errors\":16"));
     }
 }
