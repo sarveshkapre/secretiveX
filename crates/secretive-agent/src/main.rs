@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 use notify::{RecursiveMode, Watcher};
@@ -196,10 +197,16 @@ async fn main() {
         });
     }
 
+    let max_signers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .saturating_mul(4);
+    let sign_semaphore = Arc::new(Semaphore::new(max_signers));
+
     #[cfg(unix)]
     {
         let socket_path = resolve_socket_path(config.socket_path);
-        if let Err(err) = run_unix(socket_path, registry).await {
+        if let Err(err) = run_unix(socket_path, registry, sign_semaphore.clone()).await {
             error!(?err, "agent exited with error");
         }
     }
@@ -207,7 +214,7 @@ async fn main() {
     #[cfg(windows)]
     {
         let pipe_name = resolve_pipe_name(config.socket_path);
-        if let Err(err) = run_windows(pipe_name, registry).await {
+        if let Err(err) = run_windows(pipe_name, registry, sign_semaphore.clone()).await {
             error!(?err, "agent exited with error");
         }
     }
@@ -290,7 +297,11 @@ fn resolve_pipe_name(override_path: Option<String>) -> String {
 }
 
 #[cfg(unix)]
-async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::Result<()> {
+async fn run_unix(
+    socket_path: PathBuf,
+    registry: KeyStoreRegistry,
+    sign_semaphore: Arc<Semaphore>,
+) -> std::io::Result<()> {
     use tokio::net::UnixListener;
 
     if let Some(dir) = socket_path.parent() {
@@ -326,8 +337,9 @@ async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::
                 match accept {
                     Ok((stream, _addr)) => {
                         let registry = registry.clone();
+                        let sign_semaphore = sign_semaphore.clone();
                         tokio::spawn(async move {
-                            if let Err(err) = handle_connection(stream, registry).await {
+                            if let Err(err) = handle_connection(stream, registry, sign_semaphore).await {
                                 warn!(?err, "connection error");
                             }
                         });
@@ -354,7 +366,11 @@ async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::
 }
 
 #[cfg(windows)]
-async fn run_windows(pipe_name: String, registry: KeyStoreRegistry) -> std::io::Result<()> {
+async fn run_windows(
+    pipe_name: String,
+    registry: KeyStoreRegistry,
+    sign_semaphore: Arc<Semaphore>,
+) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
     info!(pipe = %pipe_name, "secretive agent listening");
@@ -364,15 +380,20 @@ async fn run_windows(pipe_name: String, registry: KeyStoreRegistry) -> std::io::
         let server = ServerOptions::new().create(&pipe_name)?;
         server.connect().await?;
         let registry = registry.clone();
+        let sign_semaphore = sign_semaphore.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(server, registry).await {
+            if let Err(err) = handle_connection(server, registry, sign_semaphore).await {
                 warn!(?err, "connection error");
             }
         });
     }
 }
 
-async fn handle_connection<S>(stream: S, registry: Arc<KeyStoreRegistry>) -> std::io::Result<()>
+async fn handle_connection<S>(
+    stream: S,
+    registry: Arc<KeyStoreRegistry>,
+    sign_semaphore: Arc<Semaphore>,
+) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -388,7 +409,7 @@ where
             }
         };
 
-        let response = handle_request(registry.clone(), request).await;
+        let response = handle_request(registry.clone(), request, sign_semaphore.clone()).await;
         if let Err(err) = write_response(&mut writer, &response).await {
             warn!(?err, "failed to write response");
             break;
@@ -398,7 +419,11 @@ where
     Ok(())
 }
 
-async fn handle_request(registry: Arc<KeyStoreRegistry>, request: AgentRequest) -> AgentResponse {
+async fn handle_request(
+    registry: Arc<KeyStoreRegistry>,
+    request: AgentRequest,
+    sign_semaphore: Arc<Semaphore>,
+) -> AgentResponse {
     match request {
         AgentRequest::RequestIdentities => {
             match registry.list_identities() {
@@ -416,7 +441,15 @@ async fn handle_request(registry: Arc<KeyStoreRegistry>, request: AgentRequest) 
         }
         AgentRequest::SignRequest { key_blob, data, flags } => {
             let start = Instant::now();
+            let permit = match sign_semaphore.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    warn!("signing semaphore closed");
+                    return AgentResponse::Failure;
+                }
+            };
             let result = tokio::task::spawn_blocking(move || registry.sign(&key_blob, &data, flags)).await;
+            drop(permit);
             match result {
                 Ok(Ok(signature_blob)) => {
                     let elapsed = start.elapsed();

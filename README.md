@@ -24,6 +24,7 @@ Current Rust milestones:
 - Secure Enclave store stub (macOS implementation next)
 - Config supports `secure_enclave` store type (stub)
 - Agent exposes simple sign latency metrics in logs
+- Concurrent sign requests are bounded by CPU-aware semaphore
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
