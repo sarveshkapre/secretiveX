@@ -266,6 +266,7 @@ fn print_help() {
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json\n");
+    println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
 }
