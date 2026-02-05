@@ -20,6 +20,27 @@ Compact JSON:
 cargo run -p secretive-bench -- --concurrency 100 --requests 50 --json-compact
 ```
 
+JSON now includes metadata fields for dashboards and traceability:
+- `meta.schema_version`
+- `meta.bench_version`
+- `meta.started_unix_ms` / `meta.finished_unix_ms`
+- `meta.hostname`, `meta.pid`
+- `meta.target_os`, `meta.target_arch`
+
+## CSV output
+
+Emit a single CSV row for spreadsheet or ingestion pipelines:
+
+```bash
+cargo run -p secretive-bench -- --concurrency 100 --requests 50 --csv
+```
+
+Skip CSV header row:
+
+```bash
+cargo run -p secretive-bench -- --concurrency 100 --requests 50 --csv --no-csv-header
+```
+
 ## High fan-out simulation
 
 ```bash

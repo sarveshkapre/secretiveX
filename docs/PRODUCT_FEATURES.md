@@ -62,7 +62,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - [ ] Add request auditing mode with privacy-safe structured logs.
 - [ ] Add optional key pinning and per-request key selection constraints.
 - [x] Add key source health diagnostics in `secretive-client`.
-- [ ] Improve benchmark export formats (CSV + richer JSON metadata for dashboards).
+- [x] Improve benchmark export formats (CSV + richer JSON metadata for dashboards).
 
 ## Product Cleanup and Independence
 

@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
@@ -37,6 +37,8 @@ struct Args {
     randomize_payload: bool,
     json: bool,
     json_compact: bool,
+    csv: bool,
+    csv_header: bool,
     response_timeout_ms: Option<u64>,
     latency: bool,
     latency_max_samples: usize,
@@ -92,6 +94,7 @@ async fn main() -> Result<()> {
         );
     }
 
+    let started_unix_ms = unix_now_ms();
     let start = Instant::now();
     let deadline = args
         .duration_secs
@@ -181,27 +184,63 @@ async fn main() -> Result<()> {
     };
     let latency = compute_latency_stats(latencies_us);
 
-    if args.json || args.json_compact {
-        let socket_value = socket_path.display().to_string();
-        let payload = BenchOutput {
-            ok,
-            failures,
-            elapsed_ms: elapsed.as_millis() as u64,
-            rps,
-            mode: if args.list_only { "list" } else { "sign" },
-            reconnect: args.reconnect,
-            concurrency: args.concurrency,
-            requests_per_worker: args.requests_per_worker,
-            duration_secs: args.duration_secs,
-            randomize_payload: args.randomize_payload,
-            payload_size: args.payload_size,
-            flags: args.flags,
-            socket_path: socket_value,
-            response_timeout_ms: args.response_timeout_ms,
-            latency_enabled: args.latency,
-            latency_max_samples: args.latency_max_samples,
-            latency,
-        };
+    let finished_unix_ms = unix_now_ms();
+    let attempted = ok + failures;
+    let failure_rate = if attempted > 0 {
+        failures as f64 / attempted as f64
+    } else {
+        0.0
+    };
+    let success_rate = if attempted > 0 {
+        ok as f64 / attempted as f64
+    } else {
+        0.0
+    };
+
+    let socket_value = socket_path.display().to_string();
+    let payload = BenchOutput {
+        ok,
+        failures,
+        attempted,
+        success_rate,
+        failure_rate,
+        elapsed_ms: elapsed.as_millis() as u64,
+        rps,
+        mode: if args.list_only { "list" } else { "sign" },
+        reconnect: args.reconnect,
+        concurrency: args.concurrency,
+        requests_per_worker: args.requests_per_worker,
+        requested_total: if args.duration_secs.is_none() {
+            Some(total_requests)
+        } else {
+            None
+        },
+        duration_secs: args.duration_secs,
+        randomize_payload: args.randomize_payload,
+        payload_size: args.payload_size,
+        flags: args.flags,
+        socket_path: socket_value,
+        response_timeout_ms: args.response_timeout_ms,
+        latency_enabled: args.latency,
+        latency_max_samples: args.latency_max_samples,
+        latency,
+        meta: BenchMetadata {
+            schema_version: 2,
+            bench_version: env!("CARGO_PKG_VERSION"),
+            started_unix_ms,
+            finished_unix_ms,
+            pid: std::process::id(),
+            hostname: hostname(),
+            target_os: std::env::consts::OS,
+            target_arch: std::env::consts::ARCH,
+        },
+    };
+
+    if args.csv {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        write_csv_output(&mut handle, &payload, args.csv_header)?;
+    } else if args.json || args.json_compact {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
         if args.json_compact {
@@ -212,7 +251,7 @@ async fn main() -> Result<()> {
         writeln!(handle)?;
     } else {
         println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
-        if let Some(latency) = latency {
+        if let Some(latency) = payload.latency.as_ref() {
             println!(
                 "Latency(us): p50={} p95={} p99={} max={} avg={:.2} samples={}",
                 latency.p50_us,
@@ -232,12 +271,16 @@ async fn main() -> Result<()> {
 struct BenchOutput {
     ok: usize,
     failures: usize,
+    attempted: usize,
+    success_rate: f64,
+    failure_rate: f64,
     elapsed_ms: u64,
     rps: f64,
     mode: &'static str,
     reconnect: bool,
     concurrency: usize,
     requests_per_worker: usize,
+    requested_total: Option<usize>,
     duration_secs: Option<u64>,
     randomize_payload: bool,
     payload_size: usize,
@@ -247,6 +290,7 @@ struct BenchOutput {
     latency_enabled: bool,
     latency_max_samples: usize,
     latency: Option<LatencyStats>,
+    meta: BenchMetadata,
 }
 
 #[derive(Serialize)]
@@ -257,6 +301,18 @@ struct LatencyStats {
     p99_us: u64,
     max_us: u64,
     avg_us: f64,
+}
+
+#[derive(Serialize)]
+struct BenchMetadata {
+    schema_version: u32,
+    bench_version: &'static str,
+    started_unix_ms: u64,
+    finished_unix_ms: u64,
+    pid: u32,
+    hostname: Option<String>,
+    target_os: &'static str,
+    target_arch: &'static str,
 }
 
 fn compute_latency_stats(mut latencies_us: Vec<u64>) -> Option<LatencyStats> {
@@ -292,6 +348,131 @@ fn maybe_record_latency(
             latencies_us.push(started_at.elapsed().as_micros() as u64);
         }
     }
+}
+
+fn unix_now_ms() -> u64 {
+    let now = SystemTime::now();
+    now.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn hostname() -> Option<String> {
+    if let Ok(value) = std::env::var("HOSTNAME") {
+        if !value.trim().is_empty() {
+            return Some(value);
+        }
+    }
+    if let Ok(value) = std::env::var("COMPUTERNAME") {
+        if !value.trim().is_empty() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        let escaped = value.replace('"', "\"\"");
+        format!("\"{escaped}\"")
+    } else {
+        value.to_string()
+    }
+}
+
+fn csv_header_row() -> &'static str {
+    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,ok,failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
+}
+
+fn csv_data_row(payload: &BenchOutput) -> String {
+    let latency = payload.latency.as_ref();
+    let mut fields = Vec::with_capacity(34);
+    fields.push(payload.meta.finished_unix_ms.to_string());
+    fields.push(payload.meta.started_unix_ms.to_string());
+    fields.push(payload.meta.finished_unix_ms.to_string());
+    fields.push(csv_escape(payload.meta.bench_version));
+    fields.push(csv_escape(payload.meta.target_os));
+    fields.push(csv_escape(payload.meta.target_arch));
+    fields.push(csv_escape(payload.meta.hostname.as_deref().unwrap_or("")));
+    fields.push(payload.meta.pid.to_string());
+    fields.push(csv_escape(payload.mode));
+    fields.push(payload.reconnect.to_string());
+    fields.push(payload.concurrency.to_string());
+    fields.push(payload.requests_per_worker.to_string());
+    fields.push(
+        payload
+            .requested_total
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(
+        payload
+            .duration_secs
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(payload.payload_size.to_string());
+    fields.push(payload.flags.to_string());
+    fields.push(
+        payload
+            .response_timeout_ms
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(payload.randomize_payload.to_string());
+    fields.push(payload.latency_enabled.to_string());
+    fields.push(payload.latency_max_samples.to_string());
+    fields.push(payload.ok.to_string());
+    fields.push(payload.failures.to_string());
+    fields.push(payload.attempted.to_string());
+    fields.push(format!("{:.6}", payload.success_rate));
+    fields.push(format!("{:.6}", payload.failure_rate));
+    fields.push(payload.elapsed_ms.to_string());
+    fields.push(format!("{:.6}", payload.rps));
+    fields.push(
+        latency
+            .map(|value| value.p50_us.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(
+        latency
+            .map(|value| value.p95_us.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(
+        latency
+            .map(|value| value.p99_us.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(
+        latency
+            .map(|value| value.max_us.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(
+        latency
+            .map(|value| format!("{:.6}", value.avg_us))
+            .unwrap_or_default(),
+    );
+    fields.push(
+        latency
+            .map(|value| value.samples.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(csv_escape(&payload.socket_path));
+    fields.join(",")
+}
+
+fn write_csv_output<W: Write>(
+    writer: &mut W,
+    payload: &BenchOutput,
+    include_header: bool,
+) -> Result<()> {
+    if include_header {
+        writeln!(writer, "{}", csv_header_row())?;
+    }
+    writeln!(writer, "{}", csv_data_row(payload))?;
+    Ok(())
 }
 
 async fn run_worker(
@@ -742,6 +923,8 @@ fn parse_args() -> Args {
         randomize_payload: true,
         json: false,
         json_compact: false,
+        csv: false,
+        csv_header: true,
         response_timeout_ms: None,
         latency: false,
         latency_max_samples: 100_000,
@@ -792,6 +975,8 @@ fn parse_args() -> Args {
             "--key" => parsed.key_blob_hex = args.next(),
             "--json" => parsed.json = true,
             "--json-compact" => parsed.json_compact = true,
+            "--csv" => parsed.csv = true,
+            "--no-csv-header" => parsed.csv_header = false,
             "--response-timeout-ms" => {
                 if let Some(value) = args.next() {
                     parsed.response_timeout_ms = value.parse().ok();
@@ -818,7 +1003,7 @@ fn print_help() {
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
-    println!("  --socket <path> --json --json-compact --reconnect --list --fixed");
+    println!("  --socket <path> --json --json-compact --csv [--no-csv-header] --reconnect --list --fixed");
     println!("  --response-timeout-ms <n> --latency --latency-max-samples <n>\n");
     println!("  --version\n");
     println!("Notes:");
@@ -827,6 +1012,7 @@ fn print_help() {
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --fixed disables randomizing payload bytes per request.");
     println!("  --latency records request latencies and reports p50/p95/p99/max/avg.");
+    println!("  --csv emits a single CSV row (header included by default).");
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
@@ -848,7 +1034,10 @@ fn parse_flags(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_latency_stats, parse_flags};
+    use super::{
+        compute_latency_stats, csv_data_row, csv_escape, csv_header_row, parse_flags,
+        BenchMetadata, BenchOutput, LatencyStats,
+    };
 
     #[test]
     fn parse_flags_names() {
@@ -869,6 +1058,60 @@ mod tests {
         assert_eq!(stats.p99_us, 400);
         assert_eq!(stats.max_us, 500);
         assert!((stats.avg_us - 300.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn csv_escape_quotes_commas_and_quotes() {
+        assert_eq!(csv_escape("plain"), "plain");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("a\"b"), "\"a\"\"b\"");
+    }
+
+    #[test]
+    fn csv_header_and_row_align() {
+        let payload = BenchOutput {
+            ok: 10,
+            failures: 0,
+            attempted: 10,
+            success_rate: 1.0,
+            failure_rate: 0.0,
+            elapsed_ms: 25,
+            rps: 400.0,
+            mode: "sign",
+            reconnect: true,
+            concurrency: 2,
+            requests_per_worker: 5,
+            requested_total: Some(10),
+            duration_secs: None,
+            randomize_payload: false,
+            payload_size: 64,
+            flags: 0,
+            socket_path: "/tmp/agent.sock".to_string(),
+            response_timeout_ms: Some(500),
+            latency_enabled: true,
+            latency_max_samples: 100,
+            latency: Some(LatencyStats {
+                samples: 3,
+                p50_us: 10,
+                p95_us: 20,
+                p99_us: 30,
+                max_us: 30,
+                avg_us: 20.0,
+            }),
+            meta: BenchMetadata {
+                schema_version: 2,
+                bench_version: "0.1.0",
+                started_unix_ms: 1000,
+                finished_unix_ms: 1025,
+                pid: 123,
+                hostname: Some("host".to_string()),
+                target_os: "linux",
+                target_arch: "x86_64",
+            },
+        };
+        let header = csv_header_row();
+        let row = csv_data_row(&payload);
+        assert_eq!(header.split(',').count(), row.split(',').count());
     }
 }
 
