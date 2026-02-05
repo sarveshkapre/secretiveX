@@ -945,7 +945,7 @@ where
     let (mut reader, mut writer) = tokio::io::split(stream);
 
     let mut buffer = BytesMut::with_capacity(4096);
-    let mut response_buffer = BytesMut::with_capacity(256);
+    let mut response_buffer = BytesMut::with_capacity(1024);
     loop {
         let request = match read_request_with_buffer(&mut reader, &mut buffer).await {
             Ok(req) => req,
