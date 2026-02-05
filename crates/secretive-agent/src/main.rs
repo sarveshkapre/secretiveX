@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
@@ -33,6 +34,7 @@ struct Config {
     key_paths: Option<Vec<String>>,
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
+    policy: Option<AccessPolicyConfig>,
     max_signers: Option<usize>,
     max_connections: Option<usize>,
     max_blocking_threads: Option<usize>,
@@ -213,6 +215,16 @@ enum StoreConfig {
         slot: Option<u64>,
         pin_env: Option<String>,
     },
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AccessPolicyConfig {
+    allow_key_blobs: Option<Vec<String>>,
+    deny_key_blobs: Option<Vec<String>>,
+    allow_fingerprints: Option<Vec<String>>,
+    deny_fingerprints: Option<Vec<String>>,
+    allow_comments: Option<Vec<String>>,
+    deny_comments: Option<Vec<String>>,
 }
 
 fn main() {
@@ -748,6 +760,21 @@ async fn run_async(mut config: Config, max_signers: usize) {
         info!("sign timeout disabled");
     }
 
+    let access_policy = Arc::new(AccessPolicy::from_config(config.policy.as_ref()));
+    if access_policy.is_enabled() {
+        info!(
+            allow_key_blobs = access_policy.allow_key_blobs.len(),
+            deny_key_blobs = access_policy.deny_key_blobs.len(),
+            allow_fingerprints = access_policy.allow_fingerprints.len(),
+            deny_fingerprints = access_policy.deny_fingerprints.len(),
+            allow_comments = access_policy.allow_comments.len(),
+            deny_comments = access_policy.deny_comments.len(),
+            "access policy enabled"
+        );
+    } else {
+        info!("access policy disabled");
+    }
+
     #[cfg(unix)]
     {
         let sign_semaphore = sign_semaphore.clone();
@@ -808,6 +835,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
             sign_semaphore.clone(),
             connection_semaphore.clone(),
             identity_cache.clone(),
+            access_policy.clone(),
             idle_timeout,
             inline_sign,
             sign_timeout,
@@ -827,6 +855,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
             sign_semaphore.clone(),
             connection_semaphore.clone(),
             identity_cache.clone(),
+            access_policy.clone(),
             idle_timeout,
             inline_sign,
             sign_timeout,
@@ -957,6 +986,183 @@ fn apply_profile_defaults(config: &mut Config) {
             }
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct AccessPolicy {
+    allow_key_blobs: HashSet<Vec<u8>>,
+    deny_key_blobs: HashSet<Vec<u8>>,
+    allow_fingerprints: HashSet<String>,
+    deny_fingerprints: HashSet<String>,
+    allow_comments: HashSet<String>,
+    deny_comments: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PolicyDecision {
+    Allow,
+    Deny(&'static str),
+}
+
+impl AccessPolicy {
+    fn from_config(config: Option<&AccessPolicyConfig>) -> Self {
+        let mut policy = Self::default();
+        let Some(config) = config else {
+            return policy;
+        };
+
+        if let Some(values) = &config.allow_key_blobs {
+            for value in values {
+                match hex::decode(value.trim()) {
+                    Ok(key_blob) => {
+                        policy.allow_key_blobs.insert(key_blob);
+                    }
+                    Err(err) => {
+                        warn!(?err, key_blob = value, "invalid allow_key_blobs entry");
+                    }
+                }
+            }
+        }
+        if let Some(values) = &config.deny_key_blobs {
+            for value in values {
+                match hex::decode(value.trim()) {
+                    Ok(key_blob) => {
+                        policy.deny_key_blobs.insert(key_blob);
+                    }
+                    Err(err) => {
+                        warn!(?err, key_blob = value, "invalid deny_key_blobs entry");
+                    }
+                }
+            }
+        }
+        if let Some(values) = &config.allow_fingerprints {
+            for value in values {
+                if let Some(normalized) = normalize_fingerprint(value) {
+                    policy.allow_fingerprints.insert(normalized);
+                } else {
+                    warn!(fingerprint = value, "invalid allow_fingerprints entry");
+                }
+            }
+        }
+        if let Some(values) = &config.deny_fingerprints {
+            for value in values {
+                if let Some(normalized) = normalize_fingerprint(value) {
+                    policy.deny_fingerprints.insert(normalized);
+                } else {
+                    warn!(fingerprint = value, "invalid deny_fingerprints entry");
+                }
+            }
+        }
+        if let Some(values) = &config.allow_comments {
+            for value in values {
+                let normalized = normalize_comment(value);
+                if !normalized.is_empty() {
+                    policy.allow_comments.insert(normalized);
+                }
+            }
+        }
+        if let Some(values) = &config.deny_comments {
+            for value in values {
+                let normalized = normalize_comment(value);
+                if !normalized.is_empty() {
+                    policy.deny_comments.insert(normalized);
+                }
+            }
+        }
+
+        policy
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.allow_key_blobs.is_empty()
+            || !self.deny_key_blobs.is_empty()
+            || !self.allow_fingerprints.is_empty()
+            || !self.deny_fingerprints.is_empty()
+            || !self.allow_comments.is_empty()
+            || !self.deny_comments.is_empty()
+    }
+
+    fn requires_comment_lookup(&self) -> bool {
+        !self.allow_comments.is_empty() || !self.deny_comments.is_empty()
+    }
+
+    fn evaluate(&self, key_blob: &[u8], comment: Option<&str>) -> PolicyDecision {
+        if !self.is_enabled() {
+            return PolicyDecision::Allow;
+        }
+
+        if self.deny_key_blobs.contains(key_blob) {
+            return PolicyDecision::Deny("deny_key_blob");
+        }
+
+        let fingerprint = key_blob_fingerprint(key_blob);
+        if let Some(fingerprint) = fingerprint.as_deref() {
+            if self.deny_fingerprints.contains(fingerprint) {
+                return PolicyDecision::Deny("deny_fingerprint");
+            }
+        }
+
+        let comment = comment.map(normalize_comment);
+        if let Some(comment) = comment.as_deref() {
+            if self.deny_comments.contains(comment) {
+                return PolicyDecision::Deny("deny_comment");
+            }
+        }
+
+        let has_allowlist = !self.allow_key_blobs.is_empty()
+            || !self.allow_fingerprints.is_empty()
+            || !self.allow_comments.is_empty();
+        if !has_allowlist {
+            return PolicyDecision::Allow;
+        }
+
+        if self.allow_key_blobs.contains(key_blob) {
+            return PolicyDecision::Allow;
+        }
+        if let Some(fingerprint) = fingerprint.as_deref() {
+            if self.allow_fingerprints.contains(fingerprint) {
+                return PolicyDecision::Allow;
+            }
+        }
+        if let Some(comment) = comment.as_deref() {
+            if self.allow_comments.contains(comment) {
+                return PolicyDecision::Allow;
+            }
+        }
+
+        PolicyDecision::Deny("allowlist_miss")
+    }
+}
+
+fn normalize_comment(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn normalize_fingerprint(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if let Some((prefix, suffix)) = trimmed.split_once(':') {
+        let mut normalized = String::with_capacity(prefix.len() + 1 + suffix.len());
+        normalized.push_str(&prefix.to_ascii_uppercase());
+        normalized.push(':');
+        normalized.push_str(suffix);
+        return normalized
+            .parse::<ssh_key::Fingerprint>()
+            .ok()
+            .map(|fp| fp.to_string());
+    }
+    let mut prefixed = String::with_capacity("SHA256:".len() + trimmed.len());
+    prefixed.push_str("SHA256:");
+    prefixed.push_str(trimmed);
+    prefixed
+        .parse::<ssh_key::Fingerprint>()
+        .ok()
+        .map(|fp| fp.to_string())
+}
+
+fn key_blob_fingerprint(key_blob: &[u8]) -> Option<String> {
+    ssh_key::PublicKey::from_bytes(key_blob)
+        .ok()
+        .map(|public_key| public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1128,6 +1334,61 @@ fn validate_config(config: &Config) -> ConfigValidation {
         has_key_source = has_paths || scan_default_dir;
     }
 
+    if let Some(policy) = &config.policy {
+        if let Some(values) = &policy.allow_key_blobs {
+            for (idx, value) in values.iter().enumerate() {
+                if hex::decode(value.trim()).is_err() {
+                    out.errors.push(format!(
+                        "policy.allow_key_blobs[{idx}] must be valid hex key blob"
+                    ));
+                }
+            }
+        }
+        if let Some(values) = &policy.deny_key_blobs {
+            for (idx, value) in values.iter().enumerate() {
+                if hex::decode(value.trim()).is_err() {
+                    out.errors.push(format!(
+                        "policy.deny_key_blobs[{idx}] must be valid hex key blob"
+                    ));
+                }
+            }
+        }
+        if let Some(values) = &policy.allow_fingerprints {
+            for (idx, value) in values.iter().enumerate() {
+                if normalize_fingerprint(value).is_none() {
+                    out.errors.push(format!(
+                        "policy.allow_fingerprints[{idx}] must be a valid fingerprint"
+                    ));
+                }
+            }
+        }
+        if let Some(values) = &policy.deny_fingerprints {
+            for (idx, value) in values.iter().enumerate() {
+                if normalize_fingerprint(value).is_none() {
+                    out.errors.push(format!(
+                        "policy.deny_fingerprints[{idx}] must be a valid fingerprint"
+                    ));
+                }
+            }
+        }
+        if let Some(values) = &policy.allow_comments {
+            for (idx, value) in values.iter().enumerate() {
+                if normalize_comment(value).is_empty() {
+                    out.errors
+                        .push(format!("policy.allow_comments[{idx}] must not be empty"));
+                }
+            }
+        }
+        if let Some(values) = &policy.deny_comments {
+            for (idx, value) in values.iter().enumerate() {
+                if normalize_comment(value).is_empty() {
+                    out.errors
+                        .push(format!("policy.deny_comments[{idx}] must not be empty"));
+                }
+            }
+        }
+    }
+
     if !has_key_source {
         out.warnings.push(
             "configuration defines no key source; list/sign requests will return no identities"
@@ -1173,6 +1434,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         key_paths: None,
         scan_default_dir: None,
         stores: None,
+        policy: None,
         max_signers: None,
         max_connections: None,
         max_blocking_threads: None,
@@ -1450,6 +1712,7 @@ async fn run_unix(
     sign_semaphore: Arc<Semaphore>,
     connection_semaphore: Option<Arc<Semaphore>>,
     identity_cache: Arc<IdentityCache>,
+    access_policy: Arc<AccessPolicy>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
     sign_timeout: Option<Duration>,
@@ -1533,6 +1796,7 @@ async fn run_unix(
                         let registry = registry.clone();
                         let sign_semaphore = sign_semaphore.clone();
                         let identity_cache = identity_cache.clone();
+                        let access_policy = access_policy.clone();
                         let idle_timeout = idle_timeout;
                         let inline_sign = inline_sign;
                         let sign_timeout = sign_timeout;
@@ -1544,6 +1808,7 @@ async fn run_unix(
                                     registry,
                                     sign_semaphore,
                                     identity_cache,
+                                    access_policy,
                                     idle_timeout,
                                     inline_sign,
                                     sign_timeout,
@@ -1586,6 +1851,7 @@ async fn run_windows(
     sign_semaphore: Arc<Semaphore>,
     connection_semaphore: Option<Arc<Semaphore>>,
     identity_cache: Arc<IdentityCache>,
+    access_policy: Arc<AccessPolicy>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
     sign_timeout: Option<Duration>,
@@ -1622,6 +1888,7 @@ async fn run_windows(
                 let registry = registry.clone();
                 let sign_semaphore = sign_semaphore.clone();
                 let identity_cache = identity_cache.clone();
+                let access_policy = access_policy.clone();
                 let idle_timeout = idle_timeout;
                 let inline_sign = inline_sign;
                 let sign_timeout = sign_timeout;
@@ -1634,6 +1901,7 @@ async fn run_windows(
                             registry,
                             sign_semaphore,
                             identity_cache,
+                            access_policy,
                             idle_timeout,
                             inline_sign,
                             sign_timeout,
@@ -1659,6 +1927,7 @@ async fn handle_connection<S>(
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
+    access_policy: Arc<AccessPolicy>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
     sign_timeout: Option<Duration>,
@@ -1727,6 +1996,7 @@ where
                     key_blob,
                     data,
                     flags,
+                    &access_policy,
                     sign_semaphore.as_ref(),
                     inline_sign,
                     sign_timeout,
@@ -1897,6 +2167,7 @@ async fn handle_sign_request(
     key_blob: Bytes,
     data: Bytes,
     flags: u32,
+    access_policy: &Arc<AccessPolicy>,
     sign_semaphore: &Semaphore,
     inline_sign: bool,
     sign_timeout: Option<Duration>,
@@ -1908,6 +2179,32 @@ async fn handle_sign_request(
         None
     };
     let audit_data_len = data.len();
+
+    if access_policy.is_enabled() {
+        let key_comment = if access_policy.requires_comment_lookup() {
+            find_comment_for_key(registry, key_blob.as_ref()).await
+        } else {
+            None
+        };
+        match access_policy.evaluate(key_blob.as_ref(), key_comment.as_deref()) {
+            PolicyDecision::Allow => {}
+            PolicyDecision::Deny(reason) => {
+                warn!(reason, "policy denied sign request");
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(
+                        key_id,
+                        audit_data_len,
+                        flags,
+                        "policy_denied",
+                        audit_started,
+                    );
+                }
+                return AgentResponse::Failure;
+            }
+        }
+    }
+
     let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
     let start = if metrics_every > 0 {
         Some(Instant::now())
@@ -2038,6 +2335,19 @@ async fn handle_sign_request(
     }
 }
 
+async fn find_comment_for_key(registry: &Arc<KeyStoreRegistry>, key_blob: &[u8]) -> Option<String> {
+    let registry = Arc::clone(registry);
+    let key_blob = key_blob.to_vec();
+    let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
+    match result {
+        Ok(Ok(identities)) => identities
+            .into_iter()
+            .find(|identity| identity.key_blob == key_blob)
+            .map(|identity| identity.comment),
+        _ => None,
+    }
+}
+
 fn encode_identities_frame_from_keyidentities(
     identities: &[KeyIdentity],
 ) -> Result<Bytes, ProtoError> {
@@ -2085,8 +2395,8 @@ fn audit_latency_us(started: Option<Instant>) -> u64 {
 }
 
 fn audit_key_id(key_blob: &[u8]) -> String {
-    if let Ok(public_key) = ssh_key::PublicKey::from_bytes(key_blob) {
-        return public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+    if let Some(fingerprint) = key_blob_fingerprint(key_blob) {
+        return fingerprint;
     }
     format!("blob:{}b", key_blob.len())
 }
@@ -2158,6 +2468,7 @@ mod tests {
             key_paths: None,
             scan_default_dir: None,
             stores: None,
+            policy: None,
             max_signers: None,
             max_connections: None,
             max_blocking_threads: None,
@@ -2348,5 +2659,51 @@ mod tests {
 
         let fallback = audit_key_id(&[1, 2, 3]);
         assert_eq!(fallback, "blob:3b");
+    }
+
+    #[test]
+    fn policy_deny_fingerprint_blocks_sign() {
+        let public_key = ssh_key::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICG6kjK0iJxESpkwvCTOwwcUsJcggrGhSdHyaP0JHGub",
+        )
+        .expect("public key");
+        let key_blob = public_key.to_bytes().expect("key blob");
+        let fingerprint =
+            normalize_fingerprint(&public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string())
+                .expect("fingerprint");
+
+        let mut policy = AccessPolicy::default();
+        policy.deny_fingerprints.insert(fingerprint);
+        let decision = policy.evaluate(&key_blob, None);
+        assert!(matches!(decision, PolicyDecision::Deny("deny_fingerprint")));
+    }
+
+    #[test]
+    fn policy_allow_comments_requires_match() {
+        let policy = AccessPolicy {
+            allow_comments: HashSet::from([normalize_comment("prod-key")]),
+            ..AccessPolicy::default()
+        };
+        assert!(matches!(
+            policy.evaluate(&[1, 2, 3], Some("prod-key")),
+            PolicyDecision::Allow
+        ));
+        assert!(matches!(
+            policy.evaluate(&[1, 2, 3], Some("other")),
+            PolicyDecision::Deny("allowlist_miss")
+        ));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_policy_fingerprint() {
+        let mut config = empty_config();
+        config.policy = Some(AccessPolicyConfig {
+            allow_fingerprints: Some(vec!["not-a-fingerprint".to_string()]),
+            ..AccessPolicyConfig::default()
+        });
+        let validation = validate_config(&config);
+        assert!(validation.errors.iter().any(|entry| {
+            entry.contains("policy.allow_fingerprints[0] must be a valid fingerprint")
+        }));
     }
 }

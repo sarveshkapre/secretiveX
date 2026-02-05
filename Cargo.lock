@@ -988,6 +988,7 @@ dependencies = [
  "arc-swap",
  "bytes",
  "directories",
+ "hex",
  "libc",
  "notify",
  "secretive-core",

@@ -19,6 +19,7 @@ Socket path overrides:
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
 - `socket_backlog` (number): override the Unix socket listen backlog (0 or omitted uses system default).
 - `stores` (array): ordered list of key stores to load.
+- `policy` (object): optional allow/deny controls for sign requests.
 - `max_signers` (number): optional cap for concurrent sign operations.
 - `max_connections` (number): optional cap for concurrent client connections.
 - `max_blocking_threads` (number): cap for Tokio's blocking thread pool (defaults to `max_signers`).
@@ -95,3 +96,24 @@ Profiles only set fields that are still unset after CLI/config/env overrides.
 ```
 
 Note: PKCS#11 support is behind the `pkcs11` feature in `secretive-core`.
+
+## Policy controls
+
+`policy` supports optional allow/deny lists:
+
+- `allow_key_blobs` / `deny_key_blobs`: array of hex-encoded key blobs.
+- `allow_fingerprints` / `deny_fingerprints`: array of SSH fingerprints (for example `SHA256:...`).
+- `allow_comments` / `deny_comments`: array of identity comments (case-insensitive exact match).
+
+Deny rules are applied first. If any allow list is configured, a request must match at least one allow entry.
+
+Example:
+
+```json
+{
+  "policy": {
+    "allow_fingerprints": ["SHA256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g"],
+    "deny_comments": ["deprecated-key"]
+  }
+}
+```

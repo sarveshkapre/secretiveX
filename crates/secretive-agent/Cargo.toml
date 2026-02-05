@@ -19,6 +19,7 @@ directories = "5.0"
 arc-swap = "1.7"
 libc = "0.2"
 ssh-key = { version = "0.6", features = ["alloc", "ed25519", "p256", "p384", "p521", "rsa"] }
+hex = "0.4"
 
 [features]
 default = []

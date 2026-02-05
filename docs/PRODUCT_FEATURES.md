@@ -58,7 +58,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 
 ## P2 (Medium)
 
-- [ ] Add policy controls (allowlist by key/comment/fingerprint, optional deny rules).
+- [x] Add policy controls (allowlist by key/comment/fingerprint, optional deny rules).
 - [x] Add request auditing mode with privacy-safe structured logs.
 - [ ] Add optional key pinning and per-request key selection constraints.
 - [x] Add key source health diagnostics in `secretive-client`.

@@ -37,6 +37,7 @@ Current Rust milestones:
 - `metrics_every` controls logging frequency
 - `metrics_json` emits machine-readable JSON metrics lines
 - `audit_requests` emits privacy-safe structured request audit logs
+- `policy` rules can allow/deny sign requests by key blob, fingerprint, or comment
 - `pid_file` writes the agent PID for monitoring
 - `identity_cache_ms` caches identity lists for fast fan-out
 - `idle_timeout_ms` closes idle connections to free resources
