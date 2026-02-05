@@ -112,7 +112,7 @@ where
 }
 
 pub fn decode_request(frame: &[u8]) -> Result<AgentRequest> {
-    let mut buf = Bytes::copy_from_slice(frame);
+    let mut buf = &frame[..];
     if !buf.has_remaining() {
         return Err(ProtoError::InvalidMessage("missing message type"));
     }
@@ -130,13 +130,13 @@ pub fn decode_request(frame: &[u8]) -> Result<AgentRequest> {
         }
         other => Ok(AgentRequest::Unknown {
             message_type: other,
-            payload: buf,
+            payload: buf.copy_to_bytes(buf.remaining()),
         }),
     }
 }
 
 pub fn decode_response(frame: &[u8]) -> Result<AgentResponse> {
-    let mut buf = Bytes::copy_from_slice(frame);
+    let mut buf = &frame[..];
     if !buf.has_remaining() {
         return Err(ProtoError::InvalidMessage("missing message type"));
     }
@@ -231,7 +231,7 @@ pub fn encode_signature_blob(algorithm: &str, signature: &[u8]) -> Vec<u8> {
     buf.to_vec()
 }
 
-fn read_string(buf: &mut Bytes) -> Result<Vec<u8>> {
+fn read_string<B: Buf>(buf: &mut B) -> Result<Vec<u8>> {
     if buf.remaining() < 4 {
         return Err(ProtoError::UnexpectedEof);
     }
