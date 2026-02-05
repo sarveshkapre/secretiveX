@@ -42,6 +42,7 @@ struct Args {
     response_timeout_ms: Option<u64>,
     latency: bool,
     latency_max_samples: usize,
+    worker_start_spread_ms: u64,
     help: bool,
     version: bool,
     duration_secs: Option<u64>,
@@ -129,6 +130,8 @@ async fn main() -> Result<()> {
         let deadline = deadline.clone();
         let response_timeout = response_timeout;
         let latency_samples_per_worker = latency_samples_per_worker;
+        let worker_start_delay_ms =
+            worker_start_delay_ms(worker_id, args.concurrency, args.worker_start_spread_ms);
         handles.push(tokio::spawn(async move {
             run_worker(
                 worker_id,
@@ -144,6 +147,7 @@ async fn main() -> Result<()> {
                 deadline,
                 response_timeout,
                 latency_samples_per_worker,
+                worker_start_delay_ms,
             )
             .await
         }));
@@ -223,6 +227,7 @@ async fn main() -> Result<()> {
         response_timeout_ms: args.response_timeout_ms,
         latency_enabled: args.latency,
         latency_max_samples: args.latency_max_samples,
+        worker_start_spread_ms: args.worker_start_spread_ms,
         latency,
         meta: BenchMetadata {
             schema_version: 2,
@@ -289,6 +294,7 @@ struct BenchOutput {
     response_timeout_ms: Option<u64>,
     latency_enabled: bool,
     latency_max_samples: usize,
+    worker_start_spread_ms: u64,
     latency: Option<LatencyStats>,
     meta: BenchMetadata,
 }
@@ -381,12 +387,12 @@ fn csv_escape(value: &str) -> String {
 }
 
 fn csv_header_row() -> &'static str {
-    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,ok,failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
+    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,worker_start_spread_ms,ok,failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
 }
 
 fn csv_data_row(payload: &BenchOutput) -> String {
     let latency = payload.latency.as_ref();
-    let mut fields = Vec::with_capacity(34);
+    let mut fields = Vec::with_capacity(35);
     fields.push(payload.meta.finished_unix_ms.to_string());
     fields.push(payload.meta.started_unix_ms.to_string());
     fields.push(payload.meta.finished_unix_ms.to_string());
@@ -422,6 +428,7 @@ fn csv_data_row(payload: &BenchOutput) -> String {
     fields.push(payload.randomize_payload.to_string());
     fields.push(payload.latency_enabled.to_string());
     fields.push(payload.latency_max_samples.to_string());
+    fields.push(payload.worker_start_spread_ms.to_string());
     fields.push(payload.ok.to_string());
     fields.push(payload.failures.to_string());
     fields.push(payload.attempted.to_string());
@@ -489,7 +496,11 @@ async fn run_worker(
     deadline: Option<Instant>,
     response_timeout: Option<Duration>,
     latency_max_samples: usize,
+    worker_start_delay_ms: u64,
 ) -> Result<WorkerResult> {
+    if worker_start_delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(worker_start_delay_ms)).await;
+    }
     if list_only {
         return run_list_worker(
             socket_path,
@@ -928,6 +939,7 @@ fn parse_args() -> Args {
         response_timeout_ms: None,
         latency: false,
         latency_max_samples: 100_000,
+        worker_start_spread_ms: 0,
         help: false,
         version: false,
         duration_secs: None,
@@ -989,6 +1001,12 @@ fn parse_args() -> Args {
                         value.parse().unwrap_or(parsed.latency_max_samples);
                 }
             }
+            "--worker-start-spread-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.worker_start_spread_ms =
+                        value.parse().unwrap_or(parsed.worker_start_spread_ms);
+                }
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -1002,6 +1020,7 @@ fn print_help() {
     println!("secretive-bench usage:\n");
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
+    println!("  --worker-start-spread-ms <n>");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json --json-compact --csv [--no-csv-header] --reconnect --list --fixed");
     println!("  --response-timeout-ms <n> --latency --latency-max-samples <n>\n");
@@ -1013,6 +1032,14 @@ fn print_help() {
     println!("  --fixed disables randomizing payload bytes per request.");
     println!("  --latency records request latencies and reports p50/p95/p99/max/avg.");
     println!("  --csv emits a single CSV row (header included by default).");
+    println!("  --worker-start-spread-ms staggers worker start over N milliseconds.");
+}
+
+fn worker_start_delay_ms(worker_id: usize, concurrency: usize, spread_ms: u64) -> u64 {
+    if spread_ms == 0 || concurrency <= 1 {
+        return 0;
+    }
+    ((worker_id as u128 * spread_ms as u128) / (concurrency as u128 - 1)) as u64
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
@@ -1036,6 +1063,7 @@ fn parse_flags(value: &str) -> Option<u32> {
 mod tests {
     use super::{
         compute_latency_stats, csv_data_row, csv_escape, csv_header_row, parse_flags,
+        worker_start_delay_ms,
         BenchMetadata, BenchOutput, LatencyStats,
     };
 
@@ -1090,6 +1118,7 @@ mod tests {
             response_timeout_ms: Some(500),
             latency_enabled: true,
             latency_max_samples: 100,
+            worker_start_spread_ms: 50,
             latency: Some(LatencyStats {
                 samples: 3,
                 p50_us: 10,
@@ -1112,6 +1141,16 @@ mod tests {
         let header = csv_header_row();
         let row = csv_data_row(&payload);
         assert_eq!(header.split(',').count(), row.split(',').count());
+    }
+
+    #[test]
+    fn worker_start_delay_spreads_across_concurrency() {
+        assert_eq!(worker_start_delay_ms(0, 4, 120), 0);
+        assert_eq!(worker_start_delay_ms(1, 4, 120), 40);
+        assert_eq!(worker_start_delay_ms(2, 4, 120), 80);
+        assert_eq!(worker_start_delay_ms(3, 4, 120), 120);
+        assert_eq!(worker_start_delay_ms(0, 1, 120), 0);
+        assert_eq!(worker_start_delay_ms(2, 4, 0), 0);
     }
 }
 

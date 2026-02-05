@@ -52,6 +52,7 @@ Current Rust milestones:
 - Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out
+- Bench supports worker start spreading (`--worker-start-spread-ms`) for burst modeling
 - Bench supports CSV export and enriched JSON metadata for dashboards
 - CI includes reconnect fan-out benchmark smoke gating
 - CI includes OpenSSH compatibility matrix checks (ed25519/rsa/ecdsa on Linux/macOS)

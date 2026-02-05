@@ -2,6 +2,9 @@
 
 `secretive-bench` is a lightweight load generator for the Rust agent.
 
+Load-shaping controls:
+- `--worker-start-spread-ms <n>` staggers worker start times across `n` milliseconds.
+
 ## Basic usage
 
 ```bash
@@ -48,6 +51,7 @@ cargo run -p secretive-bench -- \
   --concurrency 1000 \
   --requests 10 \
   --warmup 5 \
+  --worker-start-spread-ms 2000 \
   --payload-size 128
 ```
 
