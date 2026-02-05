@@ -22,7 +22,17 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let config = load_config();
+    let args = parse_args();
+    let mut config = load_config(args.config_path.as_deref());
+    if let Some(socket_path) = args.socket_path {
+        config.socket_path = Some(socket_path);
+    }
+    if !args.key_paths.is_empty() {
+        config.key_paths = Some(args.key_paths);
+    }
+    if let Some(scan) = args.scan_default_dir {
+        config.scan_default_dir = Some(scan);
+    }
 
     let mut registry = KeyStoreRegistry::new();
     let mut store_config = FileStoreConfig::default();
@@ -83,8 +93,10 @@ async fn main() {
     }
 }
 
-fn load_config() -> Config {
-    let path = std::env::var("SECRETIVE_CONFIG").ok();
+fn load_config(path_override: Option<&str>) -> Config {
+    let path = path_override
+        .map(|value| value.to_string())
+        .or_else(|| std::env::var("SECRETIVE_CONFIG").ok());
     if let Some(path) = path {
         if let Ok(contents) = std::fs::read_to_string(path) {
             if let Ok(config) = serde_json::from_str::<Config>(&contents) {
@@ -97,6 +109,40 @@ fn load_config() -> Config {
         key_paths: None,
         scan_default_dir: None,
     }
+}
+
+struct Args {
+    config_path: Option<String>,
+    socket_path: Option<String>,
+    key_paths: Vec<String>,
+    scan_default_dir: Option<bool>,
+}
+
+fn parse_args() -> Args {
+    let mut args = std::env::args().skip(1);
+    let mut parsed = Args {
+        config_path: None,
+        socket_path: None,
+        key_paths: Vec::new(),
+        scan_default_dir: None,
+    };
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => parsed.config_path = args.next(),
+            "--socket" => parsed.socket_path = args.next(),
+            "--key" => {
+                if let Some(path) = args.next() {
+                    parsed.key_paths.push(path);
+                }
+            }
+            "--no-default-scan" => parsed.scan_default_dir = Some(false),
+            "--default-scan" => parsed.scan_default_dir = Some(true),
+            _ => {}
+        }
+    }
+
+    parsed
 }
 
 #[cfg(unix)]

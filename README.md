@@ -17,6 +17,7 @@ Current Rust milestones:
 - High-concurrency agent skeleton with async I/O and blocking-sign offload
 - Reusable protocol buffers to reduce per-request allocations
 - Hot-reload keys on `SIGHUP` (Unix)
+- CLI flags for config, socket path, and key overrides
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">
