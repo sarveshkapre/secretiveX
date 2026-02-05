@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::time::Duration;
 
@@ -48,6 +48,7 @@ struct IdentityCache {
     payload: tokio::sync::RwLock<Bytes>,
     last_refresh_ms: AtomicU64,
     ttl_ms: u64,
+    has_snapshot: AtomicBool,
 }
 
 impl IdentityCache {
@@ -59,6 +60,7 @@ impl IdentityCache {
             payload: tokio::sync::RwLock::new(empty_payload),
             last_refresh_ms: AtomicU64::new(0),
             ttl_ms,
+            has_snapshot: AtomicBool::new(false),
         }
     }
 
@@ -80,15 +82,24 @@ impl IdentityCache {
                 let payload = encode_identities_payload(map_identities(identities));
                 *self.payload.write().await = payload.clone();
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+                self.has_snapshot.store(true, Ordering::Relaxed);
                 Ok(payload)
             }
             Ok(Err(err)) => {
-                warn!(?err, "failed to list identities; serving cached payload");
-                Ok(self.payload.read().await.clone())
+                if self.has_snapshot.load(Ordering::Relaxed) {
+                    warn!(?err, "failed to list identities; serving cached payload");
+                    Ok(self.payload.read().await.clone())
+                } else {
+                    Err(err)
+                }
             }
             Err(_) => {
-                warn!("identity worker failed; serving cached payload");
-                Ok(self.payload.read().await.clone())
+                if self.has_snapshot.load(Ordering::Relaxed) {
+                    warn!("identity worker failed; serving cached payload");
+                    Ok(self.payload.read().await.clone())
+                } else {
+                    Err(secretive_core::CoreError::Internal("identity task failed"))
+                }
             }
         }
     }
@@ -97,6 +108,7 @@ impl IdentityCache {
         let payload = encode_identities_payload(identities);
         *self.payload.write().await = payload;
         self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+        self.has_snapshot.store(true, Ordering::Relaxed);
     }
 
     fn invalidate(&self) {
