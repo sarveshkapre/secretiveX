@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::io::Write;
 use std::sync::OnceLock;
@@ -55,13 +56,13 @@ async fn main() -> Result<()> {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    let socket_path = resolve_socket_path(args.socket_path.clone());
+    let socket_path = Arc::new(resolve_socket_path(args.socket_path.clone()));
     let shared_key = if args.list_only {
         None
     } else if let Some(hex_key) = args.key_blob_hex.as_deref() {
         Some(hex::decode(hex_key)?)
     } else {
-        Some(fetch_first_key(&socket_path).await?)
+        Some(fetch_first_key(socket_path.as_ref()).await?)
     };
 
     let total_requests = args.concurrency * args.requests_per_worker;
@@ -174,7 +175,7 @@ struct BenchOutput {
 
 async fn run_worker(
     worker_id: usize,
-    socket_path: PathBuf,
+    socket_path: Arc<PathBuf>,
     requests: usize,
     warmup: usize,
     payload_size: usize,
@@ -192,7 +193,7 @@ async fn run_worker(
     let key_blob = if let Some(key_blob) = shared_key {
         key_blob
     } else {
-        fetch_first_key(&socket_path).await?
+        fetch_first_key(socket_path.as_ref()).await?
     };
 
     let mut rng = if randomize_payload && payload_size > 0 {
@@ -223,7 +224,7 @@ async fn run_worker(
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            let stream = connect(&socket_path).await?;
+            let stream = connect(socket_path.as_ref()).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
@@ -246,7 +247,7 @@ async fn run_worker(
             }
         }
     } else {
-        let stream = connect(&socket_path).await?;
+        let stream = connect(socket_path.as_ref()).await?;
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
@@ -328,7 +329,7 @@ async fn run_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            let stream = connect(&socket_path).await?;
+            let stream = connect(socket_path.as_ref()).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
@@ -352,7 +353,7 @@ async fn run_worker(
         }
     } else {
         for _ in 0..requests {
-            let stream = connect(&socket_path).await?;
+            let stream = connect(socket_path.as_ref()).await?;
             let (mut reader, mut writer) = tokio::io::split(stream);
             if let Some(frame) = &sign_frame {
                 writer.write_all(frame).await?;
@@ -381,7 +382,7 @@ async fn run_worker(
 }
 
 async fn run_list_worker(
-    socket_path: PathBuf,
+    socket_path: Arc<PathBuf>,
     requests: usize,
     warmup: usize,
     reconnect: bool,
@@ -392,10 +393,10 @@ async fn run_list_worker(
     if reconnect {
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
-            list_once(&socket_path, &list_frame, &mut buffer).await?;
+            list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
         }
     } else {
-        let stream = connect(&socket_path).await?;
+        let stream = connect(socket_path.as_ref()).await?;
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut buffer = BytesMut::with_capacity(4096);
         for _ in 0..warmup {
@@ -434,12 +435,12 @@ async fn run_list_worker(
     let mut completed = 0usize;
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
-            list_once(&socket_path, &list_frame, &mut buffer).await?;
+            list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
             completed += 1;
         }
     } else {
         for _ in 0..requests {
-            list_once(&socket_path, &list_frame, &mut buffer).await?;
+            list_once(socket_path.as_ref(), &list_frame, &mut buffer).await?;
             completed += 1;
         }
     }
@@ -448,7 +449,7 @@ async fn run_list_worker(
 }
 
 async fn list_once(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     list_frame: &Bytes,
     response_buffer: &mut BytesMut,
 ) -> Result<()> {
