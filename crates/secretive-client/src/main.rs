@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     let mut stream = connect(&socket_path).await?;
 
     if args.list {
-        list_identities(&mut stream).await?;
+        list_identities(&mut stream, args.show_openssh).await?;
         return Ok(());
     }
 
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn list_identities(stream: &mut AgentStream) -> Result<()> {
+async fn list_identities(stream: &mut AgentStream, show_openssh: bool) -> Result<()> {
     let (mut reader, mut writer) = tokio::io::split(stream);
     write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
     let response = read_response(&mut reader).await?;
@@ -53,7 +53,15 @@ async fn list_identities(stream: &mut AgentStream) -> Result<()> {
                 if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
                     let alg = public_key.algorithm().as_str().to_string();
                     let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
-                    details = format!(" {} {}", alg, fp);
+                    if show_openssh {
+                        if let Ok(ssh) = public_key.to_openssh() {
+                            details = format!(" {} {} {}", alg, fp, ssh.trim());
+                        } else {
+                            details = format!(" {} {}", alg, fp);
+                        }
+                    } else {
+                        details = format!(" {} {}", alg, fp);
+                    }
                 }
                 println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
             }
@@ -113,6 +121,7 @@ fn read_string(buf: &mut &[u8]) -> Result<Vec<u8>> {
 struct Args {
     socket_path: Option<String>,
     list: bool,
+    show_openssh: bool,
     sign_key_blob: Option<String>,
     sign_path: Option<String>,
     flags: u32,
@@ -123,6 +132,7 @@ fn parse_args() -> Args {
     let mut parsed = Args {
         socket_path: None,
         list: false,
+        show_openssh: false,
         sign_key_blob: None,
         sign_path: None,
         flags: 0,
@@ -132,6 +142,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--socket" => parsed.socket_path = args.next(),
             "--list" => parsed.list = true,
+            "--openssh" => parsed.show_openssh = true,
             "--sign" => parsed.sign_key_blob = args.next(),
             "--data" => parsed.sign_path = args.next(),
             "--flags" => {
