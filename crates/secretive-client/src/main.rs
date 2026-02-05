@@ -15,6 +15,10 @@ use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args();
+    if args.help {
+        print_help();
+        return Ok(());
+    }
     let socket_path = resolve_socket_path(args.socket_path.clone());
     let stream = connect(&socket_path).await?;
 
@@ -253,6 +257,7 @@ struct Args {
     sign_fingerprint: Option<String>,
     sign_path: Option<String>,
     flags: u32,
+    help: bool,
 }
 
 fn parse_args() -> Args {
@@ -268,6 +273,7 @@ fn parse_args() -> Args {
         sign_fingerprint: None,
         sign_path: None,
         flags: 0,
+        help: false,
     };
 
     while let Some(arg) = args.next() {
@@ -286,11 +292,23 @@ fn parse_args() -> Args {
                     parsed.flags = value.parse().unwrap_or(parsed.flags);
                 }
             }
+            "-h" | "--help" => parsed.help = true,
             _ => {}
         }
     }
 
     parsed
+}
+
+fn print_help() {
+    println!("secretive-client usage:\n");
+    println!("  --list [--json] [--openssh] [--filter <substring>]");
+    println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json]");
+    println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json]");
+    println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json]");
+    println!("  --socket <path>\n");
+    println!("Notes:");
+    println!("  If --data is omitted, stdin is used for signing.");
 }
 
 #[cfg(unix)]
