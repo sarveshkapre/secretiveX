@@ -19,6 +19,7 @@ Current Rust milestones:
 - Hot-reload keys on `SIGHUP` (Unix)
 - CLI flags for config, socket path, and key overrides
 - Config-driven store list (file now; pkcs11 placeholder)
+- Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">

@@ -3,6 +3,7 @@ members = [
   "crates/secretive-proto",
   "crates/secretive-core",
   "crates/secretive-agent",
+  "crates/secretive-bench",
 ]
 resolver = "2"
 
