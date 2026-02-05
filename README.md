@@ -38,6 +38,7 @@ Current Rust milestones:
 - `identity_cache_ms` caches identity lists for fast fan-out
 - `idle_timeout_ms` closes idle connections to free resources
 - `inline_sign` keeps signing on async threads for lower latency on local keys
+- `--check-config` validates config and exits before starting the daemon
 - Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out

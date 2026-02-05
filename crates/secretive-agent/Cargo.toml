@@ -21,3 +21,4 @@ libc = "0.2"
 
 [features]
 default = []
+pkcs11 = ["secretive-core/pkcs11"]

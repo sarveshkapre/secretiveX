@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -225,6 +225,7 @@ fn main() {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    let check_config = args.check_config;
     let mut config = load_config(args.config_path.as_deref());
     if let Some(socket_path) = args.socket_path {
         config.socket_path = Some(socket_path);
@@ -337,6 +338,21 @@ fn main() {
         if let Ok(value) = std::env::var("SECRETIVE_INLINE_SIGN") {
             config.inline_sign = parse_bool_env(&value);
         }
+    }
+    if check_config {
+        let validation = validate_config(&config);
+        for warning in validation.warnings {
+            eprintln!("warning: {warning}");
+        }
+        if validation.errors.is_empty() {
+            println!("config validation OK");
+            return;
+        }
+        eprintln!("config validation failed:");
+        for error in validation.errors {
+            eprintln!("- {error}");
+        }
+        std::process::exit(2);
     }
 
     let max_signers = compute_max_signers(&config);
@@ -778,6 +794,108 @@ fn compute_max_signers(config: &Config) -> usize {
     max_signers
 }
 
+#[derive(Debug, Default)]
+struct ConfigValidation {
+    errors: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn validate_config(config: &Config) -> ConfigValidation {
+    let mut out = ConfigValidation::default();
+
+    if matches!(config.max_signers, Some(0)) {
+        out.errors
+            .push("max_signers must be greater than 0".to_string());
+    }
+    if matches!(config.max_blocking_threads, Some(0)) {
+        out.errors
+            .push("max_blocking_threads must be greater than 0".to_string());
+    }
+    if matches!(config.worker_threads, Some(0)) {
+        out.errors
+            .push("worker_threads must be greater than 0".to_string());
+    }
+    if matches!(config.watch_debounce_ms, Some(0)) {
+        out.errors
+            .push("watch_debounce_ms must be greater than 0".to_string());
+    }
+
+    let mut has_key_source = false;
+    let mut has_pkcs11 = false;
+
+    if let Some(stores) = &config.stores {
+        if stores.is_empty() {
+            out.errors.push("stores must not be empty".to_string());
+        }
+        for (idx, store) in stores.iter().enumerate() {
+            match store {
+                StoreConfig::File {
+                    paths,
+                    scan_default_dir,
+                } => {
+                    let has_paths = paths.as_ref().map(|value| !value.is_empty()).unwrap_or(false);
+                    let scan_default_dir = scan_default_dir.unwrap_or(true);
+                    if has_paths || scan_default_dir {
+                        has_key_source = true;
+                    } else {
+                        out.warnings.push(format!(
+                            "stores[{idx}] file store has no paths and scan_default_dir=false; it will load no keys"
+                        ));
+                    }
+                }
+                StoreConfig::SecureEnclave => {
+                    out.errors.push(format!(
+                        "stores[{idx}] secure_enclave is not implemented yet"
+                    ));
+                }
+                StoreConfig::Pkcs11 {
+                    module_path,
+                    pin_env: _,
+                    slot: _,
+                } => {
+                    has_key_source = true;
+                    has_pkcs11 = true;
+                    if !cfg!(feature = "pkcs11") {
+                        out.errors.push(format!(
+                            "stores[{idx}] pkcs11 requires building secretive-core with feature \"pkcs11\""
+                        ));
+                    }
+                    if module_path.trim().is_empty() {
+                        out.errors
+                            .push(format!("stores[{idx}] pkcs11 module_path must not be empty"));
+                    } else if !Path::new(module_path).exists() {
+                        out.warnings.push(format!(
+                            "stores[{idx}] pkcs11 module_path does not exist on this machine: {module_path}"
+                        ));
+                    }
+                }
+            }
+        }
+    } else {
+        let has_paths = config
+            .key_paths
+            .as_ref()
+            .map(|value| !value.is_empty())
+            .unwrap_or(false);
+        let scan_default_dir = config.scan_default_dir.unwrap_or(true);
+        has_key_source = has_paths || scan_default_dir;
+    }
+
+    if !has_key_source {
+        out.warnings
+            .push("configuration defines no key source; list/sign requests will return no identities".to_string());
+    }
+
+    if config.inline_sign == Some(true) && has_pkcs11 {
+        out.warnings.push(
+            "inline_sign=true with pkcs11 store may increase latency due to token I/O on runtime threads"
+                .to_string(),
+        );
+    }
+
+    out
+}
+
 fn load_config(path_override: Option<&str>) -> Config {
     let path = path_override
         .map(|value| value.to_string())
@@ -845,6 +963,7 @@ struct Args {
     idle_timeout_ms: Option<u64>,
     inline_sign: Option<bool>,
     sign_timeout_ms: Option<u64>,
+    check_config: bool,
     help: bool,
     version: bool,
 }
@@ -869,6 +988,7 @@ fn parse_args() -> Args {
         idle_timeout_ms: None,
         inline_sign: None,
         sign_timeout_ms: None,
+        check_config: false,
         help: false,
         version: false,
     };
@@ -939,6 +1059,7 @@ fn parse_args() -> Args {
             }
             "--inline-sign" => parsed.inline_sign = Some(true),
             "--no-inline-sign" => parsed.inline_sign = Some(false),
+            "--check-config" => parsed.check_config = true,
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -982,6 +1103,7 @@ fn print_help() {
     println!("  --identity-cache-ms <n>");
     println!("  --inline-sign | --no-inline-sign");
     println!("  --idle-timeout-ms <n>\n");
+    println!("  --check-config");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");
@@ -1628,6 +1750,28 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
 
+    fn empty_config() -> Config {
+        Config {
+            socket_path: None,
+            socket_backlog: None,
+            key_paths: None,
+            scan_default_dir: None,
+            stores: None,
+            max_signers: None,
+            max_connections: None,
+            max_blocking_threads: None,
+            worker_threads: None,
+            watch_files: None,
+            watch_debounce_ms: None,
+            metrics_every: None,
+            sign_timeout_ms: None,
+            pid_file: None,
+            identity_cache_ms: None,
+            idle_timeout_ms: None,
+            inline_sign: None,
+        }
+    }
+
     #[test]
     fn decode_request_identities() {
         let frame = Bytes::from_static(&[MessageType::RequestIdentities as u8]);
@@ -1699,5 +1843,32 @@ mod tests {
             other => panic!("unexpected request: {other:?}"),
         }
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn validate_config_rejects_secure_enclave_store() {
+        let mut config = empty_config();
+        config.stores = Some(vec![StoreConfig::SecureEnclave]);
+        let validation = validate_config(&config);
+        assert!(!validation.errors.is_empty());
+        assert!(validation
+            .errors
+            .iter()
+            .any(|entry| entry.contains("secure_enclave is not implemented yet")));
+    }
+
+    #[test]
+    fn validate_config_warns_when_no_key_source() {
+        let mut config = empty_config();
+        config.stores = Some(vec![StoreConfig::File {
+            paths: Some(Vec::new()),
+            scan_default_dir: Some(false),
+        }]);
+        let validation = validate_config(&config);
+        assert!(validation.errors.is_empty());
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|entry| entry.contains("defines no key source")));
     }
 }

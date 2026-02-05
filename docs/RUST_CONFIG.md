@@ -2,6 +2,10 @@
 
 The Rust agent supports a JSON configuration file. You can point to it via `SECRETIVE_CONFIG` or `--config`.
 
+Validate config and exits:
+- `secretive-agent --check-config`
+- `secretive-agent --check-config --config /path/to/agent.json`
+
 If no path is provided, the agent looks for:
 - `$XDG_CONFIG_HOME/secretive/agent.json`
 - `<config_dir>/secretive/agent.json` (from `directories::BaseDirs`)
