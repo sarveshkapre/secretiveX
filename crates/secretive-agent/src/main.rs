@@ -30,6 +30,7 @@ struct Config {
     max_signers: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
+    pid_file: Option<String>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -81,6 +82,14 @@ async fn main() {
     if let Some(metrics_every) = args.metrics_every {
         config.metrics_every = Some(metrics_every);
     }
+    if let Some(pid_file) = args.pid_file {
+        config.pid_file = Some(pid_file);
+    }
+
+    let _pid_guard = match config.pid_file.clone() {
+        Some(path) => PidFileGuard::create(path).ok(),
+        None => None,
+    };
 
     let mut registry = KeyStoreRegistry::new();
     let mut reloadable_stores: Vec<Arc<FileStore>> = Vec::new();
@@ -294,6 +303,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         max_signers: None,
         watch_files: None,
         metrics_every: None,
+        pid_file: None,
     }
 }
 
@@ -312,6 +322,7 @@ struct Args {
     max_signers: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
+    pid_file: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -324,6 +335,7 @@ fn parse_args() -> Args {
         max_signers: None,
         watch_files: None,
         metrics_every: None,
+        pid_file: None,
     };
 
     while let Some(arg) = args.next() {
@@ -349,6 +361,7 @@ fn parse_args() -> Args {
                     parsed.metrics_every = value.parse().ok();
                 }
             }
+            "--pid-file" => parsed.pid_file = args.next(),
             _ => {}
         }
     }
@@ -377,6 +390,27 @@ fn resolve_pipe_name(override_path: Option<String>) -> String {
         return path;
     }
     r"\\.\pipe\secretive-agent".to_string()
+}
+
+struct PidFileGuard {
+    path: PathBuf,
+}
+
+impl PidFileGuard {
+    fn create(path: String) -> std::io::Result<Self> {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&path, std::process::id().to_string())?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 #[cfg(unix)]

@@ -29,6 +29,7 @@ Current Rust milestones:
 - Send `SIGUSR1` on Unix to log a metrics snapshot
 - `watch_files` controls automatic reloads
 - `metrics_every` controls logging frequency
+- `pid_file` writes the agent PID for monitoring
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
