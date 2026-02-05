@@ -52,6 +52,7 @@ static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static MAX_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static CONNECTION_COUNT: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
+static MAX_ACTIVE_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static CONNECTION_REJECTED: AtomicU64 = AtomicU64::new(0);
 static LIST_COUNT: AtomicU64 = AtomicU64::new(0);
 static LIST_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
@@ -661,6 +662,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
                     let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
                     let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
+                    let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
                     let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
                     let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
                     info!(
@@ -671,6 +673,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                         max_signers,
                         connections,
                         active_connections,
+                        max_active_connections,
                         max_connections,
                         connection_rejected,
                         list_count,
@@ -1307,7 +1310,8 @@ struct ConnectionGuard;
 
 impl ConnectionGuard {
     fn acquire() -> Self {
-        ACTIVE_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+        let active = ACTIVE_CONNECTIONS.fetch_add(1, Ordering::Relaxed) + 1;
+        MAX_ACTIVE_CONNECTIONS.fetch_max(active, Ordering::Relaxed);
         ConnectionGuard
     }
 }
@@ -1469,6 +1473,7 @@ async fn handle_sign_request(
                     let in_flight = max_signers.saturating_sub(available);
                     let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
                     let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
+                    let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
                     info!(
                         count,
                         errors,
@@ -1476,6 +1481,7 @@ async fn handle_sign_request(
                         in_flight,
                         max_signers,
                         max_connections,
+                        max_active_connections,
                         connection_rejected,
                         "signing metrics"
                     );
