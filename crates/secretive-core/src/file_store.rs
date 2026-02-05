@@ -5,6 +5,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use directories::BaseDirs;
 use ssh_key::{Algorithm, HashAlg, PrivateKey};
+use sha1::Sha1;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
@@ -36,6 +37,26 @@ pub struct FileStore {
 struct KeyEntry {
     private_key: PrivateKey,
     identity: KeyIdentity,
+    rsa_signers: Option<Arc<RsaSigners>>,
+}
+
+#[derive(Clone, Debug)]
+struct RsaSigners {
+    sha1: rsa::pkcs1v15::SigningKey<Sha1>,
+    sha256: rsa::pkcs1v15::SigningKey<sha2::Sha256>,
+    sha512: rsa::pkcs1v15::SigningKey<sha2::Sha512>,
+}
+
+impl RsaSigners {
+    fn new(keypair: &ssh_key::private::RsaKeypair) -> Result<Self> {
+        let sha1 = rsa::pkcs1v15::SigningKey::<Sha1>::try_from(keypair)
+            .map_err(|_| CoreError::Crypto("rsa sha1 signing key"))?;
+        let sha256 = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::try_from(keypair)
+            .map_err(|_| CoreError::Crypto("rsa sha256 signing key"))?;
+        let sha512 = rsa::pkcs1v15::SigningKey::<sha2::Sha512>::try_from(keypair)
+            .map_err(|_| CoreError::Crypto("rsa sha512 signing key"))?;
+        Ok(Self { sha1, sha256, sha512 })
+    }
 }
 
 impl FileStore {
@@ -94,7 +115,11 @@ impl KeyStore for FileStore {
         let key_data = entry.private_key.key_data();
 
         let signature = if let Some(rsa) = key_data.rsa() {
-            sign_rsa(rsa, data, flags)?
+            if let Some(signers) = entry.rsa_signers.as_ref() {
+                sign_rsa_with_signers(signers, data, flags)?
+            } else {
+                sign_rsa(rsa, data, flags)?
+            }
         } else {
             use signature::Signer;
             entry
@@ -205,9 +230,16 @@ fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntr
             source: canonical.display().to_string(),
         };
 
+        let rsa_signers = private_key
+            .key_data()
+            .rsa()
+            .and_then(|rsa| RsaSigners::new(rsa).ok())
+            .map(Arc::new);
+
         let entry = Arc::new(KeyEntry {
             private_key,
             identity,
+            rsa_signers,
         });
 
         entries.insert(key_blob, entry);
@@ -269,6 +301,54 @@ fn sign_rsa(
         .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
         .to_vec();
 
+    Ok(ssh_key::Signature::new(
+        Algorithm::Rsa { hash: None },
+        signature,
+    )
+    .map_err(|_| CoreError::Crypto("rsa sha1 signature"))?)
+}
+
+fn sign_rsa_with_signers(
+    signers: &RsaSigners,
+    data: &[u8],
+    flags: u32,
+) -> Result<ssh_key::Signature> {
+    use signature::{SignatureEncoding, Signer};
+
+    let use_sha512 = flags & SSH_AGENT_RSA_SHA2_512 != 0;
+    let use_sha256 = flags & SSH_AGENT_RSA_SHA2_256 != 0;
+
+    if use_sha512 {
+        let signature = signers
+            .sha512
+            .try_sign(data)
+            .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
+            .to_vec();
+        return Ok(ssh_key::Signature::new(
+            Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
+            signature,
+        )
+        .map_err(|_| CoreError::Crypto("rsa sha512 signature"))?);
+    }
+
+    if use_sha256 {
+        let signature = signers
+            .sha256
+            .try_sign(data)
+            .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
+            .to_vec();
+        return Ok(ssh_key::Signature::new(
+            Algorithm::Rsa { hash: Some(HashAlg::Sha256) },
+            signature,
+        )
+        .map_err(|_| CoreError::Crypto("rsa sha256 signature"))?);
+    }
+
+    let signature = signers
+        .sha1
+        .try_sign(data)
+        .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
+        .to_vec();
     Ok(ssh_key::Signature::new(
         Algorithm::Rsa { hash: None },
         signature,
