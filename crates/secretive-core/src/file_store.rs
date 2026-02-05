@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -144,7 +144,7 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
 }
 
 fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntry>>> {
-    let mut candidates = Vec::new();
+    let mut candidates = VecDeque::new();
     candidates.extend(config.paths.iter().cloned());
 
     if config.scan_default_dir {
@@ -156,12 +156,19 @@ fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntr
     let entries = DashMap::new();
     let mut seen = BTreeSet::new();
 
-    for path in candidates {
+    while let Some(path) = candidates.pop_front() {
         let canonical = match path.canonicalize() {
             Ok(path) => path,
             Err(_) => continue,
         };
         if !seen.insert(canonical.clone()) {
+            continue;
+        }
+
+        if canonical.is_dir() {
+            for child in discover_private_keys(&canonical) {
+                candidates.push_back(child);
+            }
             continue;
         }
 
