@@ -335,6 +335,11 @@ fn strip_sha256_prefix(value: &str) -> &str {
 fn parse_fingerprint_input(input: &str) -> Option<ssh_key::Fingerprint> {
     let trimmed = input.trim();
     if let Some((prefix, rest)) = trimmed.split_once(':') {
+        if prefix == "SHA256" || prefix == "SHA512" {
+            if let Ok(parsed) = trimmed.parse() {
+                return Some(parsed);
+            }
+        }
         let mut normalized = String::with_capacity(prefix.len() + 1 + rest.len());
         normalized.push_str(&prefix.to_ascii_uppercase());
         normalized.push(':');
