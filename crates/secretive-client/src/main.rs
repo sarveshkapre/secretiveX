@@ -207,9 +207,10 @@ where
     W: AsyncWrite + Unpin,
 {
     let identities = fetch_identities(reader, writer, buffer).await?;
+    let target = comment.to_lowercase();
     identities
         .into_iter()
-        .find(|id| id.comment == comment)
+        .find(|id| id.comment.to_lowercase() == target)
         .map(|id| id.key_blob)
         .ok_or_else(|| anyhow::anyhow!("no identity with comment: {comment}"))
 }
