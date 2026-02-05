@@ -65,6 +65,8 @@ Linux service setup: see `docs/LINUX_SYSTEMD.md`.
 OpenSSH compatibility smoke: see `docs/OPENSSH_COMPAT.md`.
 SLO definitions and gate: see `docs/SLO.md`.
 Product roadmap: see `docs/PRODUCT_FEATURES.md`.
+Release policy: see `docs/RELEASE_POLICY.md`.
+Architecture and ownership: see `docs/ARCHITECTURE.md`.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">
