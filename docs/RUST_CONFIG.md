@@ -20,6 +20,7 @@ Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_SIGNERS` sets `max_signers`.
 - `SECRETIVE_METRICS_EVERY` sets `metrics_every`.
 - `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
+- `SECRETIVE_WATCH_FILES` sets `watch_files` (`true`/`false`).
 
 Legacy fields (used only when `stores` is not provided):
 - `key_paths` (array of strings): explicit private key paths.

@@ -216,6 +216,11 @@ async fn main() {
             config.metrics_every = value.parse().ok();
         }
     }
+    if config.watch_files.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_WATCH_FILES") {
+            config.watch_files = parse_bool_env(&value);
+        }
+    }
     if config.identity_cache_ms.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_IDENTITY_CACHE_MS") {
             config.identity_cache_ms = value.parse().ok();
@@ -575,6 +580,14 @@ fn parse_args() -> Args {
     }
 
     parsed
+}
+
+fn parse_bool_env(value: &str) -> Option<bool> {
+    match value.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn print_help() {
