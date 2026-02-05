@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use rand::RngCore;
@@ -25,6 +25,7 @@ struct Args {
     json: bool,
     help: bool,
     version: bool,
+    duration_secs: Option<u64>,
 }
 
 #[tokio::main]
@@ -45,9 +46,14 @@ async fn main() -> Result<()> {
     let socket_path = resolve_socket_path(args.socket_path.clone());
 
     let total_requests = args.concurrency * args.requests_per_worker;
-    info!(?socket_path, concurrency = args.concurrency, total_requests, "starting benchmark");
+    if let Some(duration) = args.duration_secs {
+        info!(?socket_path, concurrency = args.concurrency, duration, "starting benchmark");
+    } else {
+        info!(?socket_path, concurrency = args.concurrency, total_requests, "starting benchmark");
+    }
 
     let start = Instant::now();
+    let deadline = args.duration_secs.map(|secs| start + Duration::from_secs(secs));
 
     let mut handles = Vec::with_capacity(args.concurrency);
     for worker_id in 0..args.concurrency {
@@ -57,8 +63,19 @@ async fn main() -> Result<()> {
         let payload_size = args.payload_size;
         let flags = args.flags;
         let key_blob_hex = args.key_blob_hex.clone();
+        let deadline = deadline.clone();
         handles.push(tokio::spawn(async move {
-            run_worker(worker_id, socket_path, requests, warmup, payload_size, flags, key_blob_hex).await
+            run_worker(
+                worker_id,
+                socket_path,
+                requests,
+                warmup,
+                payload_size,
+                flags,
+                key_blob_hex,
+                deadline,
+            )
+            .await
         }));
     }
 
@@ -108,6 +125,7 @@ async fn run_worker(
     payload_size: usize,
     flags: u32,
     key_blob_hex: Option<String>,
+    deadline: Option<Instant>,
 ) -> Result<usize> {
     let stream = connect(&socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
@@ -148,17 +166,33 @@ async fn run_worker(
     }
 
     let mut completed = 0usize;
-    for _ in 0..requests {
-        rng.fill_bytes(&mut data);
-        let request = AgentRequest::SignRequest {
-            key_blob: key_blob.clone(),
-            data: data.clone(),
-            flags,
-        };
-        write_request(&mut writer, &request).await?;
-        let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
-        if matches!(response, AgentResponse::SignResponse { .. }) {
-            completed += 1;
+    if let Some(deadline) = deadline {
+        while Instant::now() < deadline {
+            rng.fill_bytes(&mut data);
+            let request = AgentRequest::SignRequest {
+                key_blob: key_blob.clone(),
+                data: data.clone(),
+                flags,
+            };
+            write_request(&mut writer, &request).await?;
+            let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+            if matches!(response, AgentResponse::SignResponse { .. }) {
+                completed += 1;
+            }
+        }
+    } else {
+        for _ in 0..requests {
+            rng.fill_bytes(&mut data);
+            let request = AgentRequest::SignRequest {
+                key_blob: key_blob.clone(),
+                data: data.clone(),
+                flags,
+            };
+            write_request(&mut writer, &request).await?;
+            let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+            if matches!(response, AgentResponse::SignResponse { .. }) {
+                completed += 1;
+            }
         }
     }
 
@@ -179,6 +213,7 @@ fn parse_args() -> Args {
         json: false,
         help: false,
         version: false,
+        duration_secs: None,
     };
 
     while let Some(arg) = args.next() {
@@ -209,6 +244,11 @@ fn parse_args() -> Args {
                     parsed.flags = value.parse().unwrap_or(parsed.flags);
                 }
             }
+            "--duration" => {
+                if let Some(value) = args.next() {
+                    parsed.duration_secs = value.parse().ok();
+                }
+            }
             "--key" => parsed.key_blob_hex = args.next(),
             "--json" => parsed.json = true,
             "-h" | "--help" => parsed.help = true,
@@ -223,6 +263,7 @@ fn parse_args() -> Args {
 fn print_help() {
     println!("secretive-bench usage:\n");
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
+    println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json\n");
     println!("Notes:");

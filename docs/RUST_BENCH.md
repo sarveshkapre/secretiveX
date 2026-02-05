@@ -24,6 +24,12 @@ cargo run -p secretive-bench -- \
   --payload-size 128
 ```
 
+## Duration-based run
+
+```bash
+cargo run -p secretive-bench -- --concurrency 200 --duration 30
+```
+
 ## Reuse a key blob
 
 Fetch a key once via `secretive-client --list --json` and pass the hex blob:
