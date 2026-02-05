@@ -991,12 +991,12 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let _guard = ConnectionGuard::acquire();
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut stream = stream;
 
     let mut buffer = BytesMut::new();
     let mut response_buffer: Option<BytesMut> = None;
     loop {
-        let request = match read_request_with_buffer(&mut reader, &mut buffer).await {
+        let request = match read_request_with_buffer(&mut stream, &mut buffer).await {
             Ok(req) => req,
             Err(err) => {
                 if matches!(err, ProtoError::UnexpectedEof) {
@@ -1012,14 +1012,14 @@ where
                 LIST_COUNT.fetch_add(1, Ordering::Relaxed);
                 match identity_cache.get_payload_or_refresh(&registry).await {
                     Ok(payload) => {
-                        if let Err(err) = writer.write_all(&payload).await {
+                        if let Err(err) = stream.write_all(&payload).await {
                             warn!(?err, "failed to write identities");
                             break;
                         }
                     }
                     Err(err) => {
                         warn!(?err, "failed to list identities");
-                        if let Err(err) = writer.write_all(failure_frame()).await {
+                        if let Err(err) = stream.write_all(failure_frame()).await {
                             warn!(?err, "failed to write failure response");
                             break;
                         }
@@ -1030,7 +1030,7 @@ where
                 let response = handle_request(&registry, request, sign_semaphore.as_ref()).await;
                 match response {
                     AgentResponse::Failure => {
-                        if let Err(err) = writer.write_all(failure_frame()).await {
+                        if let Err(err) = stream.write_all(failure_frame()).await {
                             warn!(?err, "failed to write failure response");
                             break;
                         }
@@ -1040,7 +1040,7 @@ where
                             response_buffer = Some(BytesMut::with_capacity(1024));
                         }
                         if let Err(err) = write_response_with_buffer(
-                            &mut writer,
+                            &mut stream,
                             &response,
                             response_buffer.as_mut().expect("response buffer"),
                         )
