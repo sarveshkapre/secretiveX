@@ -33,6 +33,7 @@ Current Rust milestones:
 - `identity_cache_ms` caches identity lists for fast fan-out
 - Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
+- Bench supports reconnect and list-only modes for pssh-like fan-out
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
 Rust config format: see `docs/RUST_CONFIG.md`.
