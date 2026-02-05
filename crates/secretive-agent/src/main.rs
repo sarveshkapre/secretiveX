@@ -337,6 +337,12 @@ async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::
         }
     }
 
+    if socket_path.exists() {
+        if let Err(err) = std::fs::remove_file(&socket_path) {
+            warn!(?err, "failed to remove socket file on shutdown");
+        }
+    }
+
     Ok(())
 }
 
