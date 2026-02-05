@@ -128,6 +128,14 @@ Tune thresholds:
 MIN_RPS=50 BENCH_CONCURRENCY=256 BENCH_REQUESTS=8 ./scripts/bench_smoke_gate.sh
 ```
 
+## Regression gate
+
+Run consolidated regression checks (OpenSSH matrix smoke + reconnect smoke + SLO gate):
+
+```bash
+./scripts/regression_gate.sh
+```
+
 ## SLO gate
 
 Run initial reconnect SLO checks (throughput, p95 latency, failure rate):

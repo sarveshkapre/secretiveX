@@ -28,10 +28,8 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 
 - Secure Enclave backend is still a stub (no production implementation yet).
 - PKCS#11 needs production hardening coverage and wider integration tests.
-- Platform packaging/service model is incomplete for Windows.
-- Initial OpenSSH compatibility smoke tests are present; full client matrix is not yet formalized.
-- CI now includes an initial reconnect fan-out smoke gate; full regression gates are still missing.
-- README and external-facing docs still contain legacy upstream references.
+- Windows packaging is in place; pipe ACL hardening still needs real-host validation coverage.
+- CI regression gate exists; stress coverage and flake resistance need expansion.
 
 ## Prioritized Feature List
 

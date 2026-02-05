@@ -15,6 +15,14 @@ type PathSet = HashSet<PathBuf, RandomState>;
 
 const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
 const SSH_AGENT_RSA_SHA2_512: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_512;
+const SSH_AGENT_OLD_SIGNATURE: u32 = 1;
+
+#[derive(Clone, Copy)]
+enum RsaSignAlgorithm {
+    Sha1,
+    Sha256,
+    Sha512,
+}
 
 #[derive(Clone, Debug)]
 pub struct FileStoreConfig {
@@ -47,15 +55,14 @@ struct KeyEntry {
 
 #[derive(Clone, Debug)]
 struct RsaSigners {
-    sha1: rsa::pkcs1v15::SigningKey<Sha1>,
+    sha1: Option<rsa::pkcs1v15::SigningKey<Sha1>>,
     sha256: rsa::pkcs1v15::SigningKey<sha2::Sha256>,
     sha512: rsa::pkcs1v15::SigningKey<sha2::Sha512>,
 }
 
 impl RsaSigners {
     fn new(keypair: &ssh_key::private::RsaKeypair) -> Result<Self> {
-        let sha1 = rsa::pkcs1v15::SigningKey::<Sha1>::try_from(keypair)
-            .map_err(|_| CoreError::Crypto("rsa sha1 signing key"))?;
+        let sha1 = rsa::pkcs1v15::SigningKey::<Sha1>::try_from(keypair).ok();
         let sha256 = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::try_from(keypair)
             .map_err(|_| CoreError::Crypto("rsa sha256 signing key"))?;
         let sha512 = rsa::pkcs1v15::SigningKey::<sha2::Sha512>::try_from(keypair)
@@ -266,14 +273,28 @@ fn default_ssh_dir() -> Option<PathBuf> {
     BaseDirs::new().map(|base_dirs| base_dirs.home_dir().join(".ssh"))
 }
 
+fn rsa_sign_algorithm(flags: u32) -> RsaSignAlgorithm {
+    let selected = flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512);
+    if selected & SSH_AGENT_RSA_SHA2_512 != 0 {
+        RsaSignAlgorithm::Sha512
+    } else if selected & SSH_AGENT_RSA_SHA2_256 != 0 {
+        RsaSignAlgorithm::Sha256
+    } else if flags & SSH_AGENT_OLD_SIGNATURE != 0 {
+        RsaSignAlgorithm::Sha1
+    } else {
+        // Prefer SHA-256 by default for modern OpenSSH compatibility.
+        RsaSignAlgorithm::Sha256
+    }
+}
+
 fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> Result<Vec<u8>> {
     use rsa::pkcs1v15::SigningKey;
     use sha1::Sha1;
     use sha2::{Sha256, Sha512};
     use signature::{SignatureEncoding, Signer};
 
-    let (algorithm, signature) = match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
-        SSH_AGENT_RSA_SHA2_512 => {
+    let (algorithm, signature) = match rsa_sign_algorithm(flags) {
+        RsaSignAlgorithm::Sha512 => {
             let signing_key = SigningKey::<Sha512>::try_from(keypair)
                 .map_err(|_| CoreError::Crypto("rsa signing key"))?;
             let signature = signing_key
@@ -282,7 +303,7 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
                 .to_bytes();
             ("rsa-sha2-512", signature)
         }
-        SSH_AGENT_RSA_SHA2_256 => {
+        RsaSignAlgorithm::Sha256 => {
             let signing_key = SigningKey::<Sha256>::try_from(keypair)
                 .map_err(|_| CoreError::Crypto("rsa signing key"))?;
             let signature = signing_key
@@ -291,15 +312,24 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
                 .to_bytes();
             ("rsa-sha2-256", signature)
         }
-        _ => {
-            let signing_key = SigningKey::<Sha1>::try_from(keypair)
-                .map_err(|_| CoreError::Crypto("rsa signing key"))?;
-            let signature = signing_key
-                .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
-                .to_bytes();
-            ("ssh-rsa", signature)
-        }
+        RsaSignAlgorithm::Sha1 => match SigningKey::<Sha1>::try_from(keypair) {
+            Ok(signing_key) => {
+                let signature = signing_key
+                    .try_sign(data)
+                    .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
+                    .to_bytes();
+                ("ssh-rsa", signature)
+            }
+            Err(_) => {
+                let signing_key = SigningKey::<Sha256>::try_from(keypair)
+                    .map_err(|_| CoreError::Crypto("rsa signing key"))?;
+                let signature = signing_key
+                    .try_sign(data)
+                    .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
+                    .to_bytes();
+                ("rsa-sha2-256", signature)
+            }
+        },
     };
 
     Ok(secretive_proto::encode_signature_blob(
@@ -311,8 +341,8 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
 fn sign_rsa_with_signers(signers: &RsaSigners, data: &[u8], flags: u32) -> Result<Vec<u8>> {
     use signature::{SignatureEncoding, Signer};
 
-    let (algorithm, signature) = match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
-        SSH_AGENT_RSA_SHA2_512 => (
+    let (algorithm, signature) = match rsa_sign_algorithm(flags) {
+        RsaSignAlgorithm::Sha512 => (
             "rsa-sha2-512",
             signers
                 .sha512
@@ -320,7 +350,7 @@ fn sign_rsa_with_signers(signers: &RsaSigners, data: &[u8], flags: u32) -> Resul
                 .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
                 .to_bytes(),
         ),
-        SSH_AGENT_RSA_SHA2_256 => (
+        RsaSignAlgorithm::Sha256 => (
             "rsa-sha2-256",
             signers
                 .sha256
@@ -328,14 +358,25 @@ fn sign_rsa_with_signers(signers: &RsaSigners, data: &[u8], flags: u32) -> Resul
                 .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
                 .to_bytes(),
         ),
-        _ => (
-            "ssh-rsa",
-            signers
-                .sha1
-                .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
-                .to_bytes(),
-        ),
+        RsaSignAlgorithm::Sha1 => {
+            if let Some(sha1) = signers.sha1.as_ref() {
+                (
+                    "ssh-rsa",
+                    sha1.try_sign(data)
+                        .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
+                        .to_bytes(),
+                )
+            } else {
+                (
+                    "rsa-sha2-256",
+                    signers
+                        .sha256
+                        .try_sign(data)
+                        .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
+                        .to_bytes(),
+                )
+            }
+        }
     };
 
     Ok(secretive_proto::encode_signature_blob(
@@ -368,5 +409,26 @@ mod tests {
 
         let identities = store.list_identities().expect("identities");
         assert_eq!(identities.len(), 1);
+    }
+
+    #[test]
+    fn rsa_flags_prefer_sha512_when_both_set() {
+        assert!(matches!(rsa_sign_algorithm(0), RsaSignAlgorithm::Sha256));
+        assert!(matches!(
+            rsa_sign_algorithm(SSH_AGENT_OLD_SIGNATURE),
+            RsaSignAlgorithm::Sha1
+        ));
+        assert!(matches!(
+            rsa_sign_algorithm(SSH_AGENT_RSA_SHA2_256),
+            RsaSignAlgorithm::Sha256
+        ));
+        assert!(matches!(
+            rsa_sign_algorithm(SSH_AGENT_RSA_SHA2_512),
+            RsaSignAlgorithm::Sha512
+        ));
+        assert!(matches!(
+            rsa_sign_algorithm(SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512),
+            RsaSignAlgorithm::Sha512
+        ));
     }
 }

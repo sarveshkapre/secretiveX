@@ -6,7 +6,12 @@ on:
 
 jobs:
   openssh-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        key_type: [ed25519, rsa, ecdsa]
     timeout-minutes: 20
     permissions:
       contents: read
@@ -18,4 +23,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run OpenSSH compatibility smoke test
+        env:
+          OPENSSH_KEY_TYPES: ${{ matrix.key_type }}
         run: ./scripts/openssh_compat_smoke.sh

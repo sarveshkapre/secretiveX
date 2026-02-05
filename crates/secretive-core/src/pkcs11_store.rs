@@ -64,6 +64,7 @@ mod enabled {
 
     const SSH_AGENT_RSA_SHA2_256: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_256;
     const SSH_AGENT_RSA_SHA2_512: u32 = secretive_proto::SSH_AGENT_RSA_SHA2_512;
+    const SSH_AGENT_OLD_SIGNATURE: u32 = 1;
 
     use super::Pkcs11Config;
 
@@ -219,12 +220,16 @@ mod enabled {
 
             let session = self.open_session()?;
 
-            let (mechanism, algorithm) =
-                match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
-                    SSH_AGENT_RSA_SHA2_512 => (Mechanism::Sha512RsaPkcs, "rsa-sha2-512"),
-                    SSH_AGENT_RSA_SHA2_256 => (Mechanism::Sha256RsaPkcs, "rsa-sha2-256"),
-                    _ => (Mechanism::Sha1RsaPkcs, "ssh-rsa"),
-                };
+            let selected = flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512);
+            let (mechanism, algorithm) = if selected & SSH_AGENT_RSA_SHA2_512 != 0 {
+                (Mechanism::Sha512RsaPkcs, "rsa-sha2-512")
+            } else if selected & SSH_AGENT_RSA_SHA2_256 != 0 {
+                (Mechanism::Sha256RsaPkcs, "rsa-sha2-256")
+            } else if flags & SSH_AGENT_OLD_SIGNATURE != 0 {
+                (Mechanism::Sha1RsaPkcs, "ssh-rsa")
+            } else {
+                (Mechanism::Sha256RsaPkcs, "rsa-sha2-256")
+            };
 
             let signature = session
                 .sign(&mechanism, key_handle, data)
