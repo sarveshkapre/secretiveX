@@ -196,15 +196,14 @@ mod enabled {
         }
 
         fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
-            let key = self.key_map.load().get(key_blob).cloned();
-            let key = if let Some(key) = key {
-                key
+            let key_handle = if let Some(entry) = self.key_map.load().get(key_blob) {
+                entry.value().key_handle
             } else {
                 self.refresh_keys()?;
                 self.key_map
                     .load()
                     .get(key_blob)
-                    .cloned()
+                    .map(|entry| entry.value().key_handle)
                     .ok_or(CoreError::KeyNotFound)?
             };
 
@@ -217,7 +216,7 @@ mod enabled {
             };
 
             let signature = session
-                .sign(&mechanism, key.key_handle, data)
+                .sign(&mechanism, key_handle, data)
                 .map_err(|_| CoreError::Crypto("pkcs11 sign"))?;
 
             Ok(secretive_proto::encode_signature_blob(algorithm, &signature))
