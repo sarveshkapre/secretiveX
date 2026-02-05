@@ -14,6 +14,21 @@ struct Config {
     socket_path: Option<String>,
     key_paths: Option<Vec<String>>,
     scan_default_dir: Option<bool>,
+    stores: Option<Vec<StoreConfig>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum StoreConfig {
+    File {
+        paths: Option<Vec<String>>,
+        scan_default_dir: Option<bool>,
+    },
+    Pkcs11 {
+        module_path: String,
+        slot: Option<u64>,
+        pin_env: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -27,50 +42,88 @@ async fn main() {
     if let Some(socket_path) = args.socket_path {
         config.socket_path = Some(socket_path);
     }
-    if !args.key_paths.is_empty() {
-        config.key_paths = Some(args.key_paths);
-    }
-    if let Some(scan) = args.scan_default_dir {
-        config.scan_default_dir = Some(scan);
+    if config.stores.is_none() {
+        if !args.key_paths.is_empty() {
+            config.key_paths = Some(args.key_paths);
+        }
+        if let Some(scan) = args.scan_default_dir {
+            config.scan_default_dir = Some(scan);
+        }
+    } else if !args.key_paths.is_empty() || args.scan_default_dir.is_some() {
+        warn!("config includes store definitions; ignoring CLI file-store overrides");
     }
 
     let mut registry = KeyStoreRegistry::new();
-    let mut store_config = FileStoreConfig::default();
-    if let Some(paths) = config.key_paths.clone() {
-        store_config.paths = paths.into_iter().map(PathBuf::from).collect();
-    }
-    if let Some(scan) = config.scan_default_dir {
-        store_config.scan_default_dir = scan;
+    let mut reloadable_stores: Vec<Arc<FileStore>> = Vec::new();
+
+    let stores = if let Some(stores) = config.stores.take() {
+        stores
+    } else {
+        vec![StoreConfig::File {
+            paths: config.key_paths.clone(),
+            scan_default_dir: config.scan_default_dir,
+        }]
+    };
+
+    for store in stores {
+        match store {
+            StoreConfig::File { paths, scan_default_dir } => {
+                let mut store_config = FileStoreConfig::default();
+                if let Some(paths) = paths {
+                    store_config.paths = paths.into_iter().map(PathBuf::from).collect();
+                }
+                if let Some(scan) = scan_default_dir {
+                    store_config.scan_default_dir = scan;
+                }
+
+                match FileStore::load(store_config) {
+                    Ok(store) => {
+                        let store = Arc::new(store);
+                        registry.register(store.clone());
+                        reloadable_stores.push(store);
+                    }
+                    Err(err) => {
+                        warn!(?err, "failed to load file-based keys");
+                    }
+                }
+            }
+            StoreConfig::Pkcs11 { module_path, slot, pin_env } => {
+                warn!(
+                    module_path = %module_path,
+                    slot = ?slot,
+                    pin_env = ?pin_env,
+                    "pkcs11 store requested but not yet implemented"
+                );
+            }
+        }
     }
 
-    let file_store = match FileStore::load(store_config) {
-        Ok(store) => {
-            let store = Arc::new(store);
-            registry.register(store.clone());
-            Some(store)
-        }
-        Err(err) => {
-            warn!(?err, "failed to load file-based keys");
-            registry.register(Arc::new(EmptyStore));
-            None
-        }
-    };
+    if reloadable_stores.is_empty() {
+        registry.register(Arc::new(EmptyStore));
+    }
 
     if let Ok(identities) = registry.list_identities() {
         info!(count = identities.len(), "loaded identities");
     }
 
     #[cfg(unix)]
-    if let Some(store) = file_store.clone() {
+    if !reloadable_stores.is_empty() {
+        let reloadable_stores = reloadable_stores.clone();
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             if let Ok(mut stream) = signal(SignalKind::hangup()) {
                 while stream.recv().await.is_some() {
-                    if let Err(err) = store.reload() {
-                        warn!(?err, "failed to reload keys");
-                    } else if let Ok(identities) = store.list_identities() {
-                        info!(count = identities.len(), "reloaded identities");
+                    for store in &reloadable_stores {
+                        if let Err(err) = store.reload() {
+                            warn!(?err, "failed to reload keys");
+                        }
                     }
+                    let count = reloadable_stores
+                        .iter()
+                        .filter_map(|store| store.list_identities().ok())
+                        .map(|ids| ids.len())
+                        .sum::<usize>();
+                    info!(count, "reloaded identities");
                 }
             }
         });
@@ -108,6 +161,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         socket_path: None,
         key_paths: None,
         scan_default_dir: None,
+        stores: None,
     }
 }
 

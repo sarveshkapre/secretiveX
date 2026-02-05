@@ -18,6 +18,7 @@ Current Rust milestones:
 - Reusable protocol buffers to reduce per-request allocations
 - Hot-reload keys on `SIGHUP` (Unix)
 - CLI flags for config, socket path, and key overrides
+- Config-driven store list (file now; pkcs11 placeholder)
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">
