@@ -38,6 +38,7 @@ Current Rust milestones:
 - Bench supports reconnect and list-only modes for pssh-like fan-out
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 - Client `--raw` list mode skips key parsing for faster output
+- Client `--json-compact` for compact JSON output
 
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
