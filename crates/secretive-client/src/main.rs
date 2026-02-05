@@ -94,7 +94,16 @@ where
 {
     let mut identities = fetch_identities(reader, writer, buffer).await?;
     if let Some(filter) = filter {
-        identities.retain(|id| id.comment.contains(filter));
+        identities.retain(|id| {
+            if id.comment.contains(filter) {
+                return true;
+            }
+            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
+                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+                return fp.contains(filter);
+            }
+            false
+        });
     }
 
     if json_output {
