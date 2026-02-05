@@ -276,7 +276,8 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
                 .map_err(|_| CoreError::Crypto("rsa signing key"))?;
             let signature = signing_key
                 .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?;
+                .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
+                .to_bytes();
             ("rsa-sha2-512", signature)
         }
         SSH_AGENT_RSA_SHA2_256 => {
@@ -284,7 +285,8 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
                 .map_err(|_| CoreError::Crypto("rsa signing key"))?;
             let signature = signing_key
                 .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?;
+                .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
+                .to_bytes();
             ("rsa-sha2-256", signature)
         }
         _ => {
@@ -292,14 +294,15 @@ fn sign_rsa(keypair: &ssh_key::private::RsaKeypair, data: &[u8], flags: u32) -> 
                 .map_err(|_| CoreError::Crypto("rsa signing key"))?;
             let signature = signing_key
                 .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?;
+                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
+                .to_bytes();
             ("ssh-rsa", signature)
         }
     };
 
     Ok(secretive_proto::encode_signature_blob(
         algorithm,
-        &signature.to_vec(),
+        signature.as_ref(),
     ))
 }
 
@@ -316,27 +319,30 @@ fn sign_rsa_with_signers(
             signers
                 .sha512
                 .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?,
+                .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
+                .to_bytes(),
         ),
         SSH_AGENT_RSA_SHA2_256 => (
             "rsa-sha2-256",
             signers
                 .sha256
                 .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?,
+                .map_err(|_| CoreError::Crypto("rsa sha256 sign"))?
+                .to_bytes(),
         ),
         _ => (
             "ssh-rsa",
             signers
                 .sha1
                 .try_sign(data)
-                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?,
+                .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
+                .to_bytes(),
         ),
     };
 
     Ok(secretive_proto::encode_signature_blob(
         algorithm,
-        &signature.to_vec(),
+        signature.as_ref(),
     ))
 }
 
