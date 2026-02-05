@@ -92,8 +92,8 @@ where
     }
 
     buffer.clear();
-    if buffer.capacity() == 0 {
-        buffer.reserve(1024);
+    if buffer.capacity() < 4096 {
+        buffer.reserve(4096 - buffer.capacity());
     }
     while remaining > 0 {
         let chunk = remaining.min(buffer.capacity());
