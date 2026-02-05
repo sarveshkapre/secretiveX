@@ -1141,7 +1141,7 @@ where
     let _guard = ConnectionGuard::acquire();
     let mut stream = stream;
 
-    let mut buffer = BytesMut::new();
+    let mut buffer = BytesMut::with_capacity(4096);
     let mut response_buffer: Option<BytesMut> = None;
     loop {
         let read_result = if let Some(timeout) = idle_timeout {
