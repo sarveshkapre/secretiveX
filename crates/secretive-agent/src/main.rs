@@ -324,7 +324,12 @@ async fn main() {
             let _ = notify_tx.send(res);
         }) {
             for path in &watch_paths {
-                let _ = watcher.watch(path, RecursiveMode::Recursive);
+                let mode = if path.is_dir() {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                };
+                let _ = watcher.watch(path, mode);
             }
             _watchers.push(watcher);
         }
