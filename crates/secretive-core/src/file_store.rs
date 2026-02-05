@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -177,8 +177,8 @@ fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntr
         }
     }
 
-    let mut entries = HashMap::new();
-    let mut seen = BTreeSet::new();
+    let mut entries = HashMap::with_capacity(candidates.len());
+    let mut seen = HashSet::with_capacity(candidates.len());
 
     while let Some(path) = candidates.pop_front() {
         let canonical = match path.canonicalize() {
