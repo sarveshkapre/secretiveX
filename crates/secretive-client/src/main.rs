@@ -297,15 +297,23 @@ where
     let identities = fetch_identities(reader, writer, buffer).await?;
     let target = fingerprint.trim();
     let target_stripped = strip_sha256_prefix(target);
+    let target_fp = parse_fingerprint_input(target);
     for identity in identities {
         if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-            let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-            let fp_stripped = strip_sha256_prefix(&fp);
-            if fp.eq_ignore_ascii_case(target)
-                || fp_stripped.eq_ignore_ascii_case(target)
-                || fp.eq_ignore_ascii_case(target_stripped)
-            {
-                return Ok(identity.key_blob);
+            if let Some(target_fp) = target_fp {
+                let fp = public_key.fingerprint(target_fp.algorithm());
+                if fp == target_fp {
+                    return Ok(identity.key_blob);
+                }
+            } else {
+                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+                let fp_stripped = strip_sha256_prefix(&fp);
+                if fp.eq_ignore_ascii_case(target)
+                    || fp_stripped.eq_ignore_ascii_case(target)
+                    || fp.eq_ignore_ascii_case(target_stripped)
+                {
+                    return Ok(identity.key_blob);
+                }
             }
         }
     }
@@ -317,6 +325,21 @@ fn strip_sha256_prefix(value: &str) -> &str {
         Some(prefix) if prefix.eq_ignore_ascii_case("sha256:") => &value[7..],
         _ => value,
     }
+}
+
+fn parse_fingerprint_input(input: &str) -> Option<ssh_key::Fingerprint> {
+    let trimmed = input.trim();
+    if let Some((prefix, rest)) = trimmed.split_once(':') {
+        let mut normalized = String::with_capacity(prefix.len() + 1 + rest.len());
+        normalized.push_str(&prefix.to_ascii_uppercase());
+        normalized.push(':');
+        normalized.push_str(rest);
+        return normalized.parse().ok();
+    }
+    let mut normalized = String::with_capacity("SHA256:".len() + trimmed.len());
+    normalized.push_str("SHA256:");
+    normalized.push_str(trimmed);
+    normalized.parse().ok()
 }
 
 fn ascii_lowercase_bytes(value: &str) -> Vec<u8> {
