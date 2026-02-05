@@ -16,6 +16,10 @@ If no path is provided, the agent looks for:
 - `pid_file` (string): write the agent PID to this file and remove on shutdown.
 - `identity_cache_ms` (number): cache list-identities responses for N milliseconds (default: 1000). Use `0` to disable.
 
+Environment overrides (when config/CLI unset):
+- `SECRETIVE_MAX_SIGNERS` sets `max_signers`.
+- `SECRETIVE_IDENTITY_CACHE_MS` sets `identity_cache_ms`.
+
 Legacy fields (used only when `stores` is not provided):
 - `key_paths` (array of strings): explicit private key paths.
 - `scan_default_dir` (bool): whether to scan `~/.ssh` for private keys.

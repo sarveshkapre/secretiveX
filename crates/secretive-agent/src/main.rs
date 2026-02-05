@@ -177,6 +177,16 @@ async fn main() {
     if let Some(identity_cache_ms) = args.identity_cache_ms {
         config.identity_cache_ms = Some(identity_cache_ms);
     }
+    if config.max_signers.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_MAX_SIGNERS") {
+            config.max_signers = value.parse().ok();
+        }
+    }
+    if config.identity_cache_ms.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_IDENTITY_CACHE_MS") {
+            config.identity_cache_ms = value.parse().ok();
+        }
+    }
 
     let _pid_guard = match config.pid_file.clone() {
         Some(path) => PidFileGuard::create(path).ok(),
