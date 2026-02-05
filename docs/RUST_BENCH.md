@@ -14,6 +14,12 @@ cargo run -p secretive-bench -- --concurrency 64 --requests 200
 cargo run -p secretive-bench -- --concurrency 100 --requests 50 --json
 ```
 
+Compact JSON:
+
+```bash
+cargo run -p secretive-bench -- --concurrency 100 --requests 50 --json-compact
+```
+
 ## High fan-out simulation
 
 ```bash

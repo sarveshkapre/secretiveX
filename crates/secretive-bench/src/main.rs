@@ -36,6 +36,7 @@ struct Args {
     list_only: bool,
     randomize_payload: bool,
     json: bool,
+    json_compact: bool,
     help: bool,
     version: bool,
     duration_secs: Option<u64>,
@@ -128,7 +129,7 @@ async fn main() -> Result<()> {
         0.0
     };
 
-    if args.json {
+    if args.json || args.json_compact {
         let socket_value = socket_path.display().to_string();
         let payload = BenchOutput {
             ok,
@@ -147,7 +148,11 @@ async fn main() -> Result<()> {
         };
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
-        serde_json::to_writer_pretty(&mut handle, &payload)?;
+        if args.json_compact {
+            serde_json::to_writer(&mut handle, &payload)?;
+        } else {
+            serde_json::to_writer_pretty(&mut handle, &payload)?;
+        }
         writeln!(handle)?;
     } else {
         println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
@@ -494,6 +499,7 @@ fn parse_args() -> Args {
         list_only: false,
         randomize_payload: true,
         json: false,
+        json_compact: false,
         help: false,
         version: false,
         duration_secs: None,
@@ -539,6 +545,7 @@ fn parse_args() -> Args {
             }
             "--key" => parsed.key_blob_hex = args.next(),
             "--json" => parsed.json = true,
+            "--json-compact" => parsed.json_compact = true,
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -553,7 +560,7 @@ fn print_help() {
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
-    println!("  --socket <path> --json --reconnect --list --fixed\n");
+    println!("  --socket <path> --json --json-compact --reconnect --list --fixed\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
