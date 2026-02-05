@@ -168,7 +168,7 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
 }
 
 fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntry>>> {
-    let mut candidates = VecDeque::new();
+    let mut candidates = VecDeque::with_capacity(config.paths.len().saturating_add(1));
     candidates.extend(config.paths.iter().cloned());
 
     if config.scan_default_dir {
