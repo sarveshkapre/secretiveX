@@ -66,7 +66,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 
 ## Product Cleanup and Independence
 
-- [ ] Replace remaining upstream branding and links in `README.md`.
+- [x] Replace remaining upstream branding and links in `README.md`.
 - [ ] Define SecretiveX release/versioning policy and changelog format.
 - [ ] Add a project-specific architecture doc and long-term ownership model.
 

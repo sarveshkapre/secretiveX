@@ -1,7 +1,7 @@
-# Secretive [![Test](https://github.com/maxgoedjen/secretive/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/maxgoedjen/secretive/actions/workflows/test.yml) ![Release](https://github.com/maxgoedjen/secretive/workflows/Release/badge.svg)
+# SecretiveX
 
 
-Secretive is an app for protecting and managing SSH keys with the Secure Enclave.
+SecretiveX is an app and toolkit for protecting and managing SSH keys with secure backends.
 
 ## Rust Rewrite (WIP)
 
@@ -10,7 +10,7 @@ This repository now includes an in-progress Rust rewrite focused on cross-platfo
 - `secretive-core`: key store abstractions and policy plumbing
 - `secretive-agent`: cross-platform daemon skeleton (Unix socket / Windows named pipe)
 
-The existing Swift app remains the reference implementation while the Rust version reaches feature parity.
+The legacy Swift app in this repository remains a reference while the Rust version reaches feature parity.
 
 Current Rust milestones:
 - File-based SSH key discovery (`~/.ssh`) with RSA/Ed25519/ECDSA signing
@@ -85,11 +85,11 @@ For Macs without Secure Enclaves, you can configure a Smart Card (such as a Yubi
 
 #### Direct Download
 
-You can download the latest release over on the [Releases Page](https://github.com/maxgoedjen/secretive/releases)
+You can download the latest release on the [SecretiveX Releases Page](https://github.com/sarveshkapre/secretiveX/releases).
 
 #### Using Homebrew
 
-    brew install secretive
+    Homebrew formula for SecretiveX is not published yet.
 
 ### FAQ
 
@@ -97,11 +97,11 @@ There's a [FAQ here](FAQ.md).
 
 ### Auditable Build Process
 
-Builds are produced by GitHub Actions with an auditable build and release generation process. Starting with Secretive 3.0, builds are attested using [GitHub Artifact Attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations). Attestations are viewable in the build log for a build, and also on the [main attestation page](https://github.com/maxgoedjen/secretive/attestations).
+Builds are produced by GitHub Actions with an auditable build and release generation process. Builds can be attested using [GitHub Artifact Attestation](https://docs.github.com/en/actions/concepts/security/artifact-attestations). Attestations are viewable in workflow logs and on the [SecretiveX attestation page](https://github.com/sarveshkapre/secretiveX/attestations).
 
 ### A Note Around Code Signing and Keychains
 
-While Secretive uses the Secure Enclave to protect keys, it still relies on Keychain APIs to store and access them. Keychain restricts reads of keys to the app (and specifically, the bundle ID) that created them. If you build Secretive from source, make sure you are consistent in which bundle ID you use so that the Keychain is able to locate your keys.
+While SecretiveX uses the Secure Enclave to protect keys, it still relies on Keychain APIs to store and access them. Keychain restricts reads of keys to the app (and specifically, the bundle ID) that created them. If you build SecretiveX from source, make sure you are consistent in which bundle ID you use so that the Keychain is able to locate your keys.
 
 ### Backups and Transfers to New Machines
 
@@ -109,7 +109,7 @@ Because secrets in the Secure Enclave are not exportable, they are not able to b
 
 ## Security
 
-Secretive's security policy is detailed in [SECURITY.md](SECURITY.md). To report security issues, please use [GitHub's private reporting feature.](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability#privately-reporting-a-security-vulnerability)
+SecretiveX's security policy is detailed in [SECURITY.md](SECURITY.md). To report security issues, please use [GitHub's private reporting feature.](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability#privately-reporting-a-security-vulnerability)
 
 ## Acknowledgements
 
