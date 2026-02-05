@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -21,6 +23,9 @@ struct Config {
     scan_default_dir: Option<bool>,
     stores: Option<Vec<StoreConfig>>,
 }
+
+static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
+static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -397,9 +402,20 @@ async fn handle_request(registry: Arc<KeyStoreRegistry>, request: AgentRequest) 
             }
         }
         AgentRequest::SignRequest { key_blob, data, flags } => {
+            let start = Instant::now();
             let result = tokio::task::spawn_blocking(move || registry.sign(&key_blob, &data, flags)).await;
             match result {
-                Ok(Ok(signature_blob)) => AgentResponse::SignResponse { signature_blob },
+                Ok(Ok(signature_blob)) => {
+                    let elapsed = start.elapsed();
+                    let count = SIGN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                    SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                    if count % 1000 == 0 {
+                        let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
+                        let avg = total / count as f64;
+                        info!(count, avg_ns = avg, "signing metrics");
+                    }
+                    AgentResponse::SignResponse { signature_blob }
+                }
                 Ok(Err(err)) => {
                     warn!(?err, "sign request failed");
                     AgentResponse::Failure

@@ -23,6 +23,7 @@ Current Rust milestones:
 - File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
 - Secure Enclave store stub (macOS implementation next)
 - Config supports `secure_enclave` store type (stub)
+- Agent exposes simple sign latency metrics in logs
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
