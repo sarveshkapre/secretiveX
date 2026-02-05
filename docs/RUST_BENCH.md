@@ -41,6 +41,12 @@ cargo run -p secretive-bench -- \
 cargo run -p secretive-bench -- --concurrency 200 --duration 30
 ```
 
+## Identity list benchmark
+
+```bash
+cargo run -p secretive-bench -- --concurrency 200 --requests 50 --list
+```
+
 ## Reuse a key blob
 
 Fetch a key once via `secretive-client --list --json` and pass the hex blob:

@@ -25,6 +25,7 @@ struct Args {
     flags: u32,
     key_blob_hex: Option<String>,
     reconnect: bool,
+    list_only: bool,
     json: bool,
     help: bool,
     version: bool,
@@ -67,6 +68,7 @@ async fn main() -> Result<()> {
         let flags = args.flags;
         let key_blob_hex = args.key_blob_hex.clone();
         let reconnect = args.reconnect;
+        let list_only = args.list_only;
         let deadline = deadline.clone();
         handles.push(tokio::spawn(async move {
             run_worker(
@@ -78,6 +80,7 @@ async fn main() -> Result<()> {
                 flags,
                 key_blob_hex,
                 reconnect,
+                list_only,
                 deadline,
             )
             .await
@@ -131,8 +134,13 @@ async fn run_worker(
     flags: u32,
     key_blob_hex: Option<String>,
     reconnect: bool,
+    list_only: bool,
     deadline: Option<Instant>,
 ) -> Result<usize> {
+    if list_only {
+        return run_list_worker(socket_path, requests, warmup, reconnect, deadline).await;
+    }
+
     let key_blob = if let Some(hex_key) = key_blob_hex {
         hex::decode(hex_key)?
     } else {
@@ -260,6 +268,102 @@ async fn run_worker(
     Ok(completed)
 }
 
+async fn run_list_worker(
+    socket_path: PathBuf,
+    requests: usize,
+    warmup: usize,
+    reconnect: bool,
+    deadline: Option<Instant>,
+) -> Result<usize> {
+    let mut request_buffer = BytesMut::with_capacity(64);
+
+    if reconnect {
+        for _ in 0..warmup {
+            list_once(&socket_path, &mut request_buffer).await?;
+        }
+    } else {
+        let stream = connect(&socket_path).await?;
+        let (mut reader, mut writer) = tokio::io::split(stream);
+        let mut buffer = BytesMut::with_capacity(4096);
+        for _ in 0..warmup {
+            write_request_with_buffer(
+                &mut writer,
+                &AgentRequest::RequestIdentities,
+                &mut request_buffer,
+            )
+            .await?;
+            let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+            if !matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
+                return Err(anyhow::anyhow!("unexpected identities response"));
+            }
+        }
+
+        let mut completed = 0usize;
+        if let Some(deadline) = deadline {
+            while Instant::now() < deadline {
+                write_request_with_buffer(
+                    &mut writer,
+                    &AgentRequest::RequestIdentities,
+                    &mut request_buffer,
+                )
+                .await?;
+                let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+                if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
+                    completed += 1;
+                }
+            }
+        } else {
+            for _ in 0..requests {
+                write_request_with_buffer(
+                    &mut writer,
+                    &AgentRequest::RequestIdentities,
+                    &mut request_buffer,
+                )
+                .await?;
+                let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+                if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
+                    completed += 1;
+                }
+            }
+        }
+
+        return Ok(completed);
+    }
+
+    let mut completed = 0usize;
+    if let Some(deadline) = deadline {
+        while Instant::now() < deadline {
+            list_once(&socket_path, &mut request_buffer).await?;
+            completed += 1;
+        }
+    } else {
+        for _ in 0..requests {
+            list_once(&socket_path, &mut request_buffer).await?;
+            completed += 1;
+        }
+    }
+
+    Ok(completed)
+}
+
+async fn list_once(socket_path: &PathBuf, request_buffer: &mut BytesMut) -> Result<()> {
+    let stream = connect(socket_path).await?;
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut buffer = BytesMut::with_capacity(4096);
+    write_request_with_buffer(
+        &mut writer,
+        &AgentRequest::RequestIdentities,
+        request_buffer,
+    )
+    .await?;
+    let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+    if matches!(response, AgentResponse::IdentitiesAnswer { .. }) {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("unexpected identities response"))
+    }
+}
+
 fn parse_args() -> Args {
     let mut args = std::env::args().skip(1);
     let mut parsed = Args {
@@ -271,6 +375,7 @@ fn parse_args() -> Args {
         flags: 0,
         key_blob_hex: None,
         reconnect: false,
+        list_only: false,
         json: false,
         help: false,
         version: false,
@@ -300,6 +405,7 @@ fn parse_args() -> Args {
                     parsed.payload_size = value.parse().unwrap_or(parsed.payload_size);
                 }
             }
+            "--list" => parsed.list_only = true,
             "--reconnect" => parsed.reconnect = true,
             "--flags" => {
                 if let Some(value) = args.next() {
@@ -327,10 +433,11 @@ fn print_help() {
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
-    println!("  --socket <path> --json --reconnect\n");
+    println!("  --socket <path> --json --reconnect --list\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
+    println!("  Use --list to benchmark list-identities instead of signing.");
 }
 
 #[cfg(unix)]
