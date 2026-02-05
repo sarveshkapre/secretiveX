@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
@@ -16,7 +16,8 @@ use tracing::{error, info, warn};
 
 use notify::{RecursiveMode, Watcher};
 use secretive_core::{
-    EmptyStore, FileStore, FileStoreConfig, KeyStore, KeyStoreRegistry, Pkcs11Config, Pkcs11Store,
+    EmptyStore, FileStore, FileStoreConfig, KeyIdentity, KeyStore, KeyStoreRegistry, Pkcs11Config,
+    Pkcs11Store,
 };
 use bytes::BytesMut;
 use secretive_proto::{read_request_with_buffer, write_response, AgentRequest, AgentResponse, Identity};
@@ -31,11 +32,76 @@ struct Config {
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
+    identity_cache_ms: Option<u64>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
+static START_INSTANT: OnceLock<Instant> = OnceLock::new();
+
+#[derive(Debug)]
+struct IdentityCache {
+    identities: tokio::sync::RwLock<Vec<Identity>>,
+    last_refresh_ms: AtomicU64,
+    ttl_ms: u64,
+}
+
+impl IdentityCache {
+    fn new(ttl_ms: u64) -> Self {
+        Self {
+            identities: tokio::sync::RwLock::new(Vec::new()),
+            last_refresh_ms: AtomicU64::new(0),
+            ttl_ms,
+        }
+    }
+
+    async fn get_or_refresh(
+        &self,
+        registry: Arc<KeyStoreRegistry>,
+    ) -> Result<Vec<Identity>, secretive_core::CoreError> {
+        if self.ttl_ms > 0 {
+            let now = now_ms();
+            let last = self.last_refresh_ms.load(Ordering::Relaxed);
+            if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
+                return Ok(self.identities.read().await.clone());
+            }
+        }
+
+        let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
+        match result {
+            Ok(Ok(identities)) => {
+                let mapped = map_identities(identities);
+                *self.identities.write().await = mapped.clone();
+                self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+                Ok(mapped)
+            }
+            Ok(Err(err)) => {
+                let cached = self.identities.read().await.clone();
+                if !cached.is_empty() {
+                    return Ok(cached);
+                }
+                Err(err)
+            }
+            Err(_) => {
+                let cached = self.identities.read().await.clone();
+                if !cached.is_empty() {
+                    return Ok(cached);
+                }
+                Err(secretive_core::CoreError::Internal("identity task failed"))
+            }
+        }
+    }
+
+    async fn update(&self, identities: Vec<Identity>) {
+        *self.identities.write().await = identities;
+        self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+    }
+
+    fn invalidate(&self) {
+        self.last_refresh_ms.store(0, Ordering::Relaxed);
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -93,6 +159,9 @@ async fn main() {
     }
     if let Some(pid_file) = args.pid_file {
         config.pid_file = Some(pid_file);
+    }
+    if let Some(identity_cache_ms) = args.identity_cache_ms {
+        config.identity_cache_ms = Some(identity_cache_ms);
     }
 
     let _pid_guard = match config.pid_file.clone() {
@@ -166,8 +235,11 @@ async fn main() {
         registry.register(Arc::new(EmptyStore));
     }
 
+    let identity_cache_ms = config.identity_cache_ms.unwrap_or(1000);
+    let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
     if let Ok(identities) = registry.list_identities() {
         info!(count = identities.len(), "loaded identities");
+        identity_cache.update(map_identities(identities)).await;
     }
 
     let mut _watchers = Vec::new();
@@ -192,6 +264,7 @@ async fn main() {
         }
 
         let reloadable_stores = reloadable_stores.clone();
+        let identity_cache = identity_cache.clone();
         tokio::spawn(async move {
             let debounce = Duration::from_millis(200);
             loop {
@@ -216,6 +289,7 @@ async fn main() {
                         warn!(?err, "failed to reload keys");
                     }
                 }
+                identity_cache.invalidate();
                 let count = reloadable_stores
                     .iter()
                     .filter_map(|store| store.list_identities().ok())
@@ -233,6 +307,7 @@ async fn main() {
     #[cfg(unix)]
     if !reloadable_stores.is_empty() {
         let reloadable_stores = reloadable_stores.clone();
+        let identity_cache = identity_cache.clone();
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             if let Ok(mut stream) = signal(SignalKind::hangup()) {
@@ -242,6 +317,7 @@ async fn main() {
                             warn!(?err, "failed to reload keys");
                         }
                     }
+                    identity_cache.invalidate();
                     let count = reloadable_stores
                         .iter()
                         .filter_map(|store| store.list_identities().ok())
@@ -286,7 +362,9 @@ async fn main() {
     #[cfg(unix)]
     {
         let socket_path = resolve_socket_path(config.socket_path);
-        if let Err(err) = run_unix(socket_path, registry, sign_semaphore.clone()).await {
+        if let Err(err) =
+            run_unix(socket_path, registry, sign_semaphore.clone(), identity_cache.clone()).await
+        {
             error!(?err, "agent exited with error");
         }
     }
@@ -294,7 +372,9 @@ async fn main() {
     #[cfg(windows)]
     {
         let pipe_name = resolve_pipe_name(config.socket_path);
-        if let Err(err) = run_windows(pipe_name, registry, sign_semaphore.clone()).await {
+        if let Err(err) =
+            run_windows(pipe_name, registry, sign_semaphore.clone(), identity_cache.clone()).await
+        {
             error!(?err, "agent exited with error");
         }
     }
@@ -330,6 +410,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         watch_files: None,
         metrics_every: None,
         pid_file: None,
+        identity_cache_ms: None,
     }
 }
 
@@ -349,6 +430,7 @@ struct Args {
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
+    identity_cache_ms: Option<u64>,
     help: bool,
     version: bool,
 }
@@ -364,6 +446,7 @@ fn parse_args() -> Args {
         watch_files: None,
         metrics_every: None,
         pid_file: None,
+        identity_cache_ms: None,
         help: false,
         version: false,
     };
@@ -392,6 +475,11 @@ fn parse_args() -> Args {
                 }
             }
             "--pid-file" => parsed.pid_file = args.next(),
+            "--identity-cache-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.identity_cache_ms = value.parse().ok();
+                }
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -406,10 +494,12 @@ fn print_help() {
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --default-scan | --no-default-scan");
     println!("  --max-signers <n> --metrics-every <n>");
-    println!("  --watch | --no-watch --pid-file <path>\n");
+    println!("  --watch | --no-watch --pid-file <path>");
+    println!("  --identity-cache-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");
+    println!("  identity_cache_ms controls caching of list-identity responses.");
 }
 
 #[cfg(unix)]
@@ -464,6 +554,7 @@ async fn run_unix(
     socket_path: PathBuf,
     registry: KeyStoreRegistry,
     sign_semaphore: Arc<Semaphore>,
+    identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     use tokio::sync::oneshot;
@@ -509,8 +600,12 @@ async fn run_unix(
                     Ok((stream, _addr)) => {
                         let registry = registry.clone();
                         let sign_semaphore = sign_semaphore.clone();
+                        let identity_cache = identity_cache.clone();
                         tokio::spawn(async move {
-                            if let Err(err) = handle_connection(stream, registry, sign_semaphore).await {
+                            if let Err(err) =
+                                handle_connection(stream, registry, sign_semaphore, identity_cache)
+                                    .await
+                            {
                                 warn!(?err, "connection error");
                             }
                         });
@@ -545,6 +640,7 @@ async fn run_windows(
     pipe_name: String,
     registry: KeyStoreRegistry,
     sign_semaphore: Arc<Semaphore>,
+    identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
@@ -556,8 +652,10 @@ async fn run_windows(
         server.connect().await?;
         let registry = registry.clone();
         let sign_semaphore = sign_semaphore.clone();
+        let identity_cache = identity_cache.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(server, registry, sign_semaphore).await {
+            if let Err(err) = handle_connection(server, registry, sign_semaphore, identity_cache).await
+            {
                 warn!(?err, "connection error");
             }
         });
@@ -568,6 +666,7 @@ async fn handle_connection<S>(
     stream: S,
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
+    identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -584,7 +683,13 @@ where
             }
         };
 
-        let response = handle_request(registry.clone(), request, sign_semaphore.clone()).await;
+        let response = handle_request(
+            registry.clone(),
+            request,
+            sign_semaphore.clone(),
+            identity_cache.clone(),
+        )
+        .await;
         if let Err(err) = write_response(&mut writer, &response).await {
             warn!(?err, "failed to write response");
             break;
@@ -598,26 +703,14 @@ async fn handle_request(
     registry: Arc<KeyStoreRegistry>,
     request: AgentRequest,
     sign_semaphore: Arc<Semaphore>,
+    identity_cache: Arc<IdentityCache>,
 ) -> AgentResponse {
     match request {
         AgentRequest::RequestIdentities => {
-            let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
-            match result {
-                Ok(Ok(identities)) => AgentResponse::IdentitiesAnswer {
-                    identities: identities
-                        .into_iter()
-                        .map(|id| Identity {
-                            key_blob: id.key_blob,
-                            comment: id.comment,
-                        })
-                        .collect(),
-                },
-                Ok(Err(err)) => {
-                    warn!(?err, "failed to list identities");
-                    AgentResponse::Failure
-                }
+            match identity_cache.get_or_refresh(registry).await {
+                Ok(identities) => AgentResponse::IdentitiesAnswer { identities },
                 Err(err) => {
-                    warn!(?err, "identity worker failed");
+                    warn!(?err, "failed to list identities");
                     AgentResponse::Failure
                 }
             }
@@ -661,4 +754,19 @@ async fn handle_request(
             AgentResponse::Failure
         }
     }
+}
+
+fn map_identities(identities: Vec<KeyIdentity>) -> Vec<Identity> {
+    identities
+        .into_iter()
+        .map(|id| Identity {
+            key_blob: id.key_blob,
+            comment: id.comment,
+        })
+        .collect()
+}
+
+fn now_ms() -> u64 {
+    let start = START_INSTANT.get_or_init(Instant::now);
+    start.elapsed().as_millis() as u64
 }
