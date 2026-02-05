@@ -212,7 +212,7 @@ fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntr
             .to_bytes()
             .map_err(|_| CoreError::InvalidKey)?;
 
-        let comment = public_key.comment().to_string();
+        let comment = public_key.comment();
         let comment = if comment.is_empty() {
             canonical
                 .file_name()
@@ -220,7 +220,7 @@ fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntr
                 .unwrap_or("unknown")
                 .to_string()
         } else {
-            comment
+            comment.to_string()
         };
 
         let identity = KeyIdentity {
