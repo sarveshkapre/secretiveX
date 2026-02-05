@@ -61,7 +61,7 @@ impl KeyStoreRegistry {
     }
 
     pub fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
-        if let Some(store) = self.index.get(key_blob) {
+        if let Some(store) = self.index.get(key_blob).map(|entry| entry.value().clone()) {
             match store.sign(key_blob, data, flags) {
                 Ok(sig) => return Ok(sig),
                 Err(CoreError::KeyNotFound) => {
