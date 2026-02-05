@@ -212,25 +212,15 @@ mod enabled {
 
             let session = self.open_session()?;
 
-            let mechanism = if flags & SSH_AGENT_RSA_SHA2_512 != 0 {
-                Mechanism::Sha512RsaPkcs
-            } else if flags & SSH_AGENT_RSA_SHA2_256 != 0 {
-                Mechanism::Sha256RsaPkcs
-            } else {
-                Mechanism::Sha1RsaPkcs
+            let (mechanism, algorithm) = match flags & (SSH_AGENT_RSA_SHA2_256 | SSH_AGENT_RSA_SHA2_512) {
+                SSH_AGENT_RSA_SHA2_512 => (Mechanism::Sha512RsaPkcs, "rsa-sha2-512"),
+                SSH_AGENT_RSA_SHA2_256 => (Mechanism::Sha256RsaPkcs, "rsa-sha2-256"),
+                _ => (Mechanism::Sha1RsaPkcs, "ssh-rsa"),
             };
 
             let signature = session
                 .sign(&mechanism, key.key_handle, data)
                 .map_err(|_| CoreError::Crypto("pkcs11 sign"))?;
-
-            let algorithm = if flags & SSH_AGENT_RSA_SHA2_512 != 0 {
-                "rsa-sha2-512"
-            } else if flags & SSH_AGENT_RSA_SHA2_256 != 0 {
-                "rsa-sha2-256"
-            } else {
-                "ssh-rsa"
-            };
 
             Ok(secretive_proto::encode_signature_blob(algorithm, &signature))
         }
