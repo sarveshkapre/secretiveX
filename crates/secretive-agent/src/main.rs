@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -304,6 +306,11 @@ async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::
         if let Err(err) = std::fs::remove_file(&socket_path) {
             warn!(?err, "failed to remove existing socket file");
         }
+    }
+
+    #[cfg(unix)]
+    if socket_path.as_os_str().as_bytes().len() > 100 {
+        warn!(path = %socket_path.display(), "socket path may be too long for some systems");
     }
 
     let listener = UnixListener::bind(&socket_path)?;
