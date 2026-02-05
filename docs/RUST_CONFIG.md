@@ -12,6 +12,7 @@ If no path is provided, the agent looks for:
 - `stores` (array): ordered list of key stores to load.
 - `max_signers` (number): optional cap for concurrent sign operations.
 - `watch_files` (bool): enable or disable file-store watching (default: true).
+- `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
 
 Legacy fields (used only when `stores` is not provided):
 - `key_paths` (array of strings): explicit private key paths.

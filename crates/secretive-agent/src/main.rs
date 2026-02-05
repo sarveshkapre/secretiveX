@@ -29,10 +29,12 @@ struct Config {
     stores: Option<Vec<StoreConfig>>,
     max_signers: Option<usize>,
     watch_files: Option<bool>,
+    metrics_every: Option<u64>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
+static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -75,6 +77,9 @@ async fn main() {
     }
     if let Some(watch_files) = args.watch_files {
         config.watch_files = Some(watch_files);
+    }
+    if let Some(metrics_every) = args.metrics_every {
+        config.metrics_every = Some(metrics_every);
     }
 
     let mut registry = KeyStoreRegistry::new();
@@ -248,6 +253,9 @@ async fn main() {
     info!(max_signers, "sign concurrency limit");
     let sign_semaphore = Arc::new(Semaphore::new(max_signers));
 
+    let metrics_every = config.metrics_every.unwrap_or(1000);
+    METRICS_EVERY.store(metrics_every, Ordering::Relaxed);
+
     #[cfg(unix)]
     {
         let socket_path = resolve_socket_path(config.socket_path);
@@ -285,6 +293,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         stores: None,
         max_signers: None,
         watch_files: None,
+        metrics_every: None,
     }
 }
 
@@ -302,6 +311,7 @@ struct Args {
     scan_default_dir: Option<bool>,
     max_signers: Option<usize>,
     watch_files: Option<bool>,
+    metrics_every: Option<u64>,
 }
 
 fn parse_args() -> Args {
@@ -313,6 +323,7 @@ fn parse_args() -> Args {
         scan_default_dir: None,
         max_signers: None,
         watch_files: None,
+        metrics_every: None,
     };
 
     while let Some(arg) = args.next() {
@@ -333,6 +344,11 @@ fn parse_args() -> Args {
             }
             "--watch" => parsed.watch_files = Some(true),
             "--no-watch" => parsed.watch_files = Some(false),
+            "--metrics-every" => {
+                if let Some(value) = args.next() {
+                    parsed.metrics_every = value.parse().ok();
+                }
+            }
             _ => {}
         }
     }
@@ -534,7 +550,8 @@ async fn handle_request(
                     let elapsed = start.elapsed();
                     let count = SIGN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
                     SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-                    if count % 1000 == 0 {
+                    let every = METRICS_EVERY.load(Ordering::Relaxed);
+                    if every > 0 && count % every == 0 {
                         let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                         let avg = total / count as f64;
                         info!(count, avg_ns = avg, "signing metrics");
