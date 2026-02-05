@@ -45,6 +45,7 @@ Current Rust milestones:
 
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
+Tuning guidance: see `docs/RUST_TUNING.md`.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/readme/app-light.png">
