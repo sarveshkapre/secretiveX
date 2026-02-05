@@ -289,11 +289,11 @@ where
 {
     let identities = fetch_identities(reader, writer, buffer).await?;
     let target = fingerprint.trim();
+    let target_stripped = strip_sha256_prefix(target);
     for identity in identities {
         if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
             let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
             let fp_stripped = strip_sha256_prefix(&fp);
-            let target_stripped = strip_sha256_prefix(target);
             if fp.eq_ignore_ascii_case(target)
                 || fp_stripped.eq_ignore_ascii_case(target)
                 || fp.eq_ignore_ascii_case(target_stripped)
