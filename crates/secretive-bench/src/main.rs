@@ -18,6 +18,8 @@ struct Args {
     concurrency: usize,
     requests_per_worker: usize,
     warmup: usize,
+    payload_size: usize,
+    flags: u32,
 }
 
 #[tokio::main]
@@ -39,8 +41,10 @@ async fn main() {
         let socket_path = socket_path.clone();
         let requests = args.requests_per_worker;
         let warmup = args.warmup;
+        let payload_size = args.payload_size;
+        let flags = args.flags;
         handles.push(tokio::spawn(async move {
-            run_worker(worker_id, socket_path, requests, warmup).await
+            run_worker(worker_id, socket_path, requests, warmup, payload_size, flags).await
         }));
     }
 
@@ -75,6 +79,8 @@ async fn run_worker(
     socket_path: PathBuf,
     requests: usize,
     warmup: usize,
+    payload_size: usize,
+    flags: u32,
 ) -> Result<usize> {
     let stream = connect(&socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
@@ -93,14 +99,14 @@ async fn run_worker(
     };
 
     let mut rng = rand::rngs::StdRng::from_entropy();
-    let mut data = vec![0u8; 32];
+    let mut data = vec![0u8; payload_size];
 
     for _ in 0..warmup {
         rng.fill_bytes(&mut data);
         let request = AgentRequest::SignRequest {
             key_blob: key_blob.clone(),
             data: data.clone(),
-            flags: 0,
+            flags,
         };
         write_request(&mut writer, &request).await?;
         let response = read_response(&mut reader).await?;
@@ -115,7 +121,7 @@ async fn run_worker(
         let request = AgentRequest::SignRequest {
             key_blob: key_blob.clone(),
             data: data.clone(),
-            flags: 0,
+            flags,
         };
         write_request(&mut writer, &request).await?;
         let response = read_response(&mut reader).await?;
@@ -135,6 +141,8 @@ fn parse_args() -> Args {
         concurrency: 32,
         requests_per_worker: 100,
         warmup: 10,
+        payload_size: 32,
+        flags: 0,
     };
 
     while let Some(arg) = args.next() {
@@ -153,6 +161,16 @@ fn parse_args() -> Args {
             "--warmup" => {
                 if let Some(value) = args.next() {
                     parsed.warmup = value.parse().unwrap_or(parsed.warmup);
+                }
+            }
+            "--payload-size" => {
+                if let Some(value) = args.next() {
+                    parsed.payload_size = value.parse().unwrap_or(parsed.payload_size);
+                }
+            }
+            "--flags" => {
+                if let Some(value) = args.next() {
+                    parsed.flags = value.parse().unwrap_or(parsed.flags);
                 }
             }
             _ => {}
