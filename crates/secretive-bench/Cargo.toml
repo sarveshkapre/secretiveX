@@ -12,3 +12,4 @@ rand = "0.8"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow = "1.0"
+hex = "0.4"

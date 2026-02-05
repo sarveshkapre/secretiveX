@@ -20,6 +20,7 @@ struct Args {
     warmup: usize,
     payload_size: usize,
     flags: u32,
+    key_blob_hex: Option<String>,
 }
 
 #[tokio::main]
@@ -43,8 +44,9 @@ async fn main() {
         let warmup = args.warmup;
         let payload_size = args.payload_size;
         let flags = args.flags;
+        let key_blob_hex = args.key_blob_hex.clone();
         handles.push(tokio::spawn(async move {
-            run_worker(worker_id, socket_path, requests, warmup, payload_size, flags).await
+            run_worker(worker_id, socket_path, requests, warmup, payload_size, flags, key_blob_hex).await
         }));
     }
 
@@ -81,20 +83,25 @@ async fn run_worker(
     warmup: usize,
     payload_size: usize,
     flags: u32,
+    key_blob_hex: Option<String>,
 ) -> Result<usize> {
     let stream = connect(&socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
 
-    write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
-    let response = read_response(&mut reader).await?;
-    let key_blob = match response {
-        AgentResponse::IdentitiesAnswer { identities } => identities
-            .into_iter()
-            .next()
-            .map(|id| id.key_blob)
-            .ok_or_else(|| anyhow::anyhow!("no identities"))?,
-        _ => {
-            return Err(anyhow::anyhow!("unexpected response"))
+    let key_blob = if let Some(hex_key) = key_blob_hex {
+        hex::decode(hex_key)?
+    } else {
+        write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
+        let response = read_response(&mut reader).await?;
+        match response {
+            AgentResponse::IdentitiesAnswer { identities } => identities
+                .into_iter()
+                .next()
+                .map(|id| id.key_blob)
+                .ok_or_else(|| anyhow::anyhow!("no identities"))?,
+            _ => {
+                return Err(anyhow::anyhow!("unexpected response"))
+            }
         }
     };
 
@@ -143,6 +150,7 @@ fn parse_args() -> Args {
         warmup: 10,
         payload_size: 32,
         flags: 0,
+        key_blob_hex: None,
     };
 
     while let Some(arg) = args.next() {
@@ -173,6 +181,7 @@ fn parse_args() -> Args {
                     parsed.flags = value.parse().unwrap_or(parsed.flags);
                 }
             }
+            "--key" => parsed.key_blob_hex = args.next(),
             _ => {}
         }
     }
