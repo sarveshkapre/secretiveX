@@ -337,18 +337,25 @@ async fn main() {
         info!(count = watch_paths.len(), "watching key paths");
 
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
-        if let Ok(mut watcher) = notify::recommended_watcher(move |res| {
+        match notify::recommended_watcher(move |res| {
             let _ = notify_tx.send(res);
         }) {
-            for path in &watch_paths {
-                let mode = if path.is_dir() {
-                    RecursiveMode::Recursive
-                } else {
-                    RecursiveMode::NonRecursive
-                };
-                let _ = watcher.watch(path, mode);
+            Ok(mut watcher) => {
+                for path in &watch_paths {
+                    let mode = if path.is_dir() {
+                        RecursiveMode::Recursive
+                    } else {
+                        RecursiveMode::NonRecursive
+                    };
+                    if let Err(err) = watcher.watch(path, mode) {
+                        warn!(?err, path = %path.display(), "failed to watch key path");
+                    }
+                }
+                _watchers.push(watcher);
             }
-            _watchers.push(watcher);
+            Err(err) => {
+                warn!(?err, "failed to initialize file watcher");
+            }
         }
 
         let reloadable_stores = reloadable_stores.clone();
