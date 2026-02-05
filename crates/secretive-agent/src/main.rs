@@ -272,7 +272,11 @@ async fn main() {
         .map(|count| count.get())
         .unwrap_or(4)
         .saturating_mul(4);
-    let max_signers = config.max_signers.unwrap_or(default_max_signers);
+    let mut max_signers = config.max_signers.unwrap_or(default_max_signers);
+    if max_signers == 0 {
+        warn!("max_signers was 0; defaulting to 1");
+        max_signers = 1;
+    }
     info!(max_signers, "sign concurrency limit");
     let sign_semaphore = Arc::new(Semaphore::new(max_signers));
 
