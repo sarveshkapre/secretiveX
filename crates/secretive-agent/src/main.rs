@@ -350,6 +350,7 @@ async fn run_unix(
     sign_semaphore: Arc<Semaphore>,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
+    use tokio::sync::oneshot;
 
     if let Some(dir) = socket_path.parent() {
         if let Err(err) = std::fs::create_dir_all(dir) {
@@ -378,6 +379,13 @@ async fn run_unix(
     info!(path = %socket_path.display(), "secretive agent listening");
 
     let registry = Arc::new(registry);
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+    if let Ok(mut sigterm) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        tokio::spawn(async move {
+            let _ = sigterm.recv().await;
+            let _ = shutdown_tx.send(());
+        });
+    }
     loop {
         tokio::select! {
             accept = listener.accept() => {
@@ -398,6 +406,10 @@ async fn run_unix(
             }
             _ = tokio::signal::ctrl_c() => {
                 info!("shutdown requested");
+                break;
+            }
+            _ = &mut shutdown_rx => {
+                info!("shutdown requested (SIGTERM)");
                 break;
             }
         }
