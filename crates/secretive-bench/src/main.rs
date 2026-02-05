@@ -7,6 +7,7 @@ use rand::SeedableRng;
 use bytes::BytesMut;
 use secretive_proto::{
     read_response_with_buffer, write_request_with_buffer, AgentRequest, AgentResponse,
+    SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
 use tracing::{debug, error, info};
 
@@ -480,8 +481,8 @@ fn print_help() {
 
 fn parse_flags(value: &str) -> Option<u32> {
     match value.trim().to_lowercase().as_str() {
-        "sha256" | "rsa-sha2-256" => Some(2),
-        "sha512" | "rsa-sha2-512" => Some(4),
+        "sha256" | "rsa-sha2-256" => Some(SSH_AGENT_RSA_SHA2_256),
+        "sha512" | "rsa-sha2-512" => Some(SSH_AGENT_RSA_SHA2_512),
         "ssh-rsa" | "sha1" => Some(0),
         _ => value.parse().ok(),
     }
