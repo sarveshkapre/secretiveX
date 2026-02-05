@@ -1204,6 +1204,7 @@ fn decode_request_frame(frame: &Bytes) -> Result<ParsedRequest, ProtoError> {
     }
 }
 
+#[derive(Debug)]
 enum ParsedRequest {
     RequestIdentities,
     SignRequest {
@@ -1316,4 +1317,40 @@ fn failure_frame() -> &'static Bytes {
 fn now_ms() -> u64 {
     let start = START_INSTANT.get_or_init(Instant::now);
     start.elapsed().as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_request_identities() {
+        let frame = Bytes::from_static(&[MessageType::RequestIdentities as u8]);
+        let parsed = decode_request_frame(&frame).expect("decode");
+        match parsed {
+            ParsedRequest::RequestIdentities => {}
+            other => panic!("unexpected request: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_request_sign() {
+        let expected_key_blob = vec![1u8, 2, 3];
+        let expected_data = vec![9u8, 8, 7, 6];
+        let request = secretive_proto::AgentRequest::SignRequest {
+            key_blob: expected_key_blob.clone(),
+            data: expected_data.clone(),
+            flags: 42,
+        };
+        let frame = secretive_proto::encode_request(&request);
+        let parsed = decode_request_frame(&frame).expect("decode");
+        match parsed {
+            ParsedRequest::SignRequest { key_blob, data, flags } => {
+                assert_eq!(key_blob.as_ref(), expected_key_blob.as_slice());
+                assert_eq!(data.as_ref(), expected_data.as_slice());
+                assert_eq!(flags, 42);
+            }
+            other => panic!("unexpected request: {other:?}"),
+        }
+    }
 }
