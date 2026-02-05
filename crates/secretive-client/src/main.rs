@@ -328,6 +328,7 @@ fn print_help() {
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json]");
     println!("  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json]");
     println!("  --socket <path>\n");
+    println!("  --version\n");
     println!("Notes:");
     println!("  If --data is omitted, stdin is used for signing.");
 }
