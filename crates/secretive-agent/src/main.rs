@@ -360,7 +360,9 @@ async fn main() {
 
         let mut raw_paths = Vec::new();
         for store in &reloadable_stores {
-            raw_paths.extend(store.watch_paths());
+            let paths = store.watch_paths();
+            raw_paths.reserve(paths.len());
+            raw_paths.extend(paths);
         }
         raw_paths.sort();
         raw_paths.dedup();
