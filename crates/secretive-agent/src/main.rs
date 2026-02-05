@@ -611,8 +611,8 @@ fn load_config(path_override: Option<&str>) -> Config {
         .or_else(|| std::env::var("SECRETIVE_CONFIG").ok())
         .or_else(|| default_config_path().map(|path| path.display().to_string()));
     if let Some(path) = path {
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => match serde_json::from_str::<Config>(&contents) {
+        match std::fs::read(&path) {
+            Ok(contents) => match serde_json::from_slice::<Config>(&contents) {
                 Ok(config) => {
                     info!(path = %path, "loaded config");
                     return config;
