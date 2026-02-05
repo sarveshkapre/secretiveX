@@ -231,6 +231,9 @@ fn main() {
     if let Some(max_signers) = args.max_signers {
         config.max_signers = Some(max_signers);
     }
+    if let Some(max_blocking_threads) = args.max_blocking_threads {
+        config.max_blocking_threads = Some(max_blocking_threads);
+    }
     if let Some(watch_files) = args.watch_files {
         config.watch_files = Some(watch_files);
     }
@@ -678,6 +681,7 @@ struct Args {
     key_paths: Vec<String>,
     scan_default_dir: Option<bool>,
     max_signers: Option<usize>,
+    max_blocking_threads: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
     pid_file: Option<String>,
@@ -694,6 +698,7 @@ fn parse_args() -> Args {
         key_paths: Vec::new(),
         scan_default_dir: None,
         max_signers: None,
+        max_blocking_threads: None,
         watch_files: None,
         metrics_every: None,
         pid_file: None,
@@ -716,6 +721,11 @@ fn parse_args() -> Args {
             "--max-signers" => {
                 if let Some(value) = args.next() {
                     parsed.max_signers = value.parse().ok();
+                }
+            }
+            "--max-blocking-threads" => {
+                if let Some(value) = args.next() {
+                    parsed.max_blocking_threads = value.parse().ok();
                 }
             }
             "--watch" => parsed.watch_files = Some(true),
@@ -766,7 +776,8 @@ fn print_help() {
     println!("secretive-agent usage:\n");
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --default-scan | --no-default-scan");
-    println!("  --max-signers <n> --metrics-every <n>");
+    println!("  --max-signers <n> --max-blocking-threads <n>");
+    println!("  --metrics-every <n>");
     println!("  --watch | --no-watch --pid-file <path>");
     println!("  --identity-cache-ms <n>\n");
     println!("  --version\n");
