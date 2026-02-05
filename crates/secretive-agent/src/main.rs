@@ -46,7 +46,7 @@ static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Debug)]
 struct IdentityCache {
-    payload: tokio::sync::RwLock<Bytes>,
+    payload: parking_lot::RwLock<Bytes>,
     last_refresh_ms: AtomicU64,
     ttl_ms: u64,
     has_snapshot: AtomicBool,
@@ -60,7 +60,7 @@ impl IdentityCache {
             identities: Vec::new(),
         });
         Self {
-            payload: tokio::sync::RwLock::new(empty_payload),
+            payload: parking_lot::RwLock::new(empty_payload),
             last_refresh_ms: AtomicU64::new(0),
             ttl_ms,
             has_snapshot: AtomicBool::new(false),
@@ -81,7 +81,7 @@ impl IdentityCache {
         let now = now_ms();
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
-            return Ok(self.payload.read().await.clone());
+            return Ok(self.payload.read().clone());
         }
 
         if self.has_snapshot.load(Ordering::Relaxed) {
@@ -102,14 +102,14 @@ impl IdentityCache {
                     cache.refreshing.store(false, Ordering::Release);
                 });
             }
-            return Ok(self.payload.read().await.clone());
+            return Ok(self.payload.read().clone());
         }
 
         let _guard = self.refresh_lock.lock().await;
         let now = now_ms();
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
-            return Ok(self.payload.read().await.clone());
+            return Ok(self.payload.read().clone());
         }
 
         self.refresh_and_update(registry).await
@@ -117,7 +117,7 @@ impl IdentityCache {
 
     async fn update_from_identities(&self, identities: Vec<Identity>) {
         let payload = encode_identities_payload(identities);
-        *self.payload.write().await = payload;
+        *self.payload.write() = payload;
         self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
         self.has_snapshot.store(true, Ordering::Relaxed);
         self.refreshing.store(false, Ordering::Release);
@@ -135,7 +135,7 @@ impl IdentityCache {
         match result {
             Ok(Ok(identities)) => {
                 let payload = encode_identities_payload(map_identities(identities));
-                *self.payload.write().await = payload.clone();
+                *self.payload.write() = payload.clone();
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
                 Ok(payload)
