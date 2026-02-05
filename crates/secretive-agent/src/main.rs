@@ -1495,7 +1495,10 @@ async fn handle_sign_request(
                 return AgentResponse::Failure;
             }
             Err(_) => {
-                SIGN_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+                let timeouts = SIGN_TIMEOUTS.fetch_add(1, Ordering::Relaxed) + 1;
+                if timeouts % 100 == 0 {
+                    warn!(timeouts, "sign timeout");
+                }
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                 return AgentResponse::Failure;
             }
