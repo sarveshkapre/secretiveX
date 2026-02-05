@@ -1,9 +1,8 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use dashmap::DashMap;
 use directories::BaseDirs;
 use ssh_key::{Algorithm, HashAlg, PrivateKey};
 use sha1::Sha1;
@@ -30,7 +29,7 @@ impl Default for FileStoreConfig {
 
 #[derive(Clone)]
 pub struct FileStore {
-    entries: Arc<ArcSwap<DashMap<Vec<u8>, Arc<KeyEntry>>>>,
+    entries: Arc<ArcSwap<HashMap<Vec<u8>, Arc<KeyEntry>>>>,
     config: Arc<FileStoreConfig>,
 }
 
@@ -98,7 +97,7 @@ impl KeyStore for FileStore {
         let entries = self.entries.load();
         let mut identities = Vec::with_capacity(entries.len());
         for entry in entries.iter() {
-            identities.push(entry.value().identity.clone());
+            identities.push(entry.1.identity.clone());
         }
         Ok(identities)
     }
@@ -108,7 +107,6 @@ impl KeyStore for FileStore {
         let entry = entries
             .get(key_blob)
             .ok_or(CoreError::KeyNotFound)?
-            .value()
             .clone();
 
         let key_data = entry.private_key.key_data();
@@ -169,7 +167,7 @@ fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntry>>> {
+fn load_entries(config: &FileStoreConfig) -> Result<HashMap<Vec<u8>, Arc<KeyEntry>>> {
     let mut candidates = VecDeque::new();
     candidates.extend(config.paths.iter().cloned());
 
@@ -179,7 +177,7 @@ fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntr
         }
     }
 
-    let entries = DashMap::new();
+    let mut entries = HashMap::new();
     let mut seen = BTreeSet::new();
 
     while let Some(path) = candidates.pop_front() {
