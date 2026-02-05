@@ -42,6 +42,11 @@ static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
+static LIST_COUNT: AtomicU64 = AtomicU64::new(0);
+static LIST_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
+static LIST_CACHE_STALE: AtomicU64 = AtomicU64::new(0);
+static LIST_REFRESH: AtomicU64 = AtomicU64::new(0);
+static LIST_ERRORS: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Debug)]
@@ -81,10 +86,12 @@ impl IdentityCache {
         let now = now_ms();
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
+            LIST_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
             return Ok(self.payload.read().clone());
         }
 
         if self.has_snapshot.load(Ordering::Relaxed) {
+            LIST_CACHE_STALE.fetch_add(1, Ordering::Relaxed);
             if !self.refreshing.swap(true, Ordering::AcqRel) {
                 let cache = Arc::clone(self);
                 let registry = registry.clone();
@@ -109,6 +116,7 @@ impl IdentityCache {
         let now = now_ms();
         let last = self.last_refresh_ms.load(Ordering::Relaxed);
         if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
+            LIST_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
             return Ok(self.payload.read().clone());
         }
 
@@ -138,10 +146,17 @@ impl IdentityCache {
                 *self.payload.write() = payload.clone();
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
                 self.has_snapshot.store(true, Ordering::Relaxed);
+                LIST_REFRESH.fetch_add(1, Ordering::Relaxed);
                 Ok(payload)
             }
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(secretive_core::CoreError::Internal("identity task failed")),
+            Ok(Err(err)) => {
+                LIST_ERRORS.fetch_add(1, Ordering::Relaxed);
+                Err(err)
+            }
+            Err(_) => {
+                LIST_ERRORS.fetch_add(1, Ordering::Relaxed);
+                Err(secretive_core::CoreError::Internal("identity task failed"))
+            }
         }
     }
 }
@@ -443,11 +458,21 @@ async fn main() {
                     let avg = if count > 0 { total / count as f64 } else { 0.0 };
                     let available = sign_semaphore.available_permits() as u64;
                     let in_flight = max_signers.saturating_sub(available);
+                    let list_count = LIST_COUNT.load(Ordering::Relaxed);
+                    let list_hit = LIST_CACHE_HIT.load(Ordering::Relaxed);
+                    let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
+                    let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
+                    let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
                     info!(
                         count,
                         avg_ns = avg,
                         in_flight,
                         max_signers,
+                        list_count,
+                        list_hit,
+                        list_stale,
+                        list_refresh,
+                        list_errors,
                         "signing metrics snapshot"
                     );
                 }
@@ -793,6 +818,7 @@ where
 
         match request {
             AgentRequest::RequestIdentities => {
+                LIST_COUNT.fetch_add(1, Ordering::Relaxed);
                 match identity_cache.get_payload_or_refresh(registry.clone()).await {
                     Ok(payload) => {
                         if let Err(err) = write_payload(&mut writer, &payload).await {
