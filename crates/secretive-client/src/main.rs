@@ -71,6 +71,8 @@ async fn main() -> Result<()> {
             std::io::stdin().read_to_end(&mut buf)?;
             buf
         };
+        let request_capacity = 1 + 4 + key_blob.len() + 4 + data.len() + 4;
+        request_buffer.reserve(request_capacity);
         let signature_blob = sign_data(
             &mut reader,
             &mut writer,
