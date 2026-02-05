@@ -99,8 +99,10 @@ async fn main() -> Result<()> {
             serde_json::to_writer_pretty(&mut handle, &payload)?;
             writeln!(handle)?;
         } else {
-            println!("algorithm: {}", signature.algorithm().as_str());
-            println!("signature: {}", hex::encode(signature.as_bytes()));
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            writeln!(handle, "algorithm: {}", signature.algorithm().as_str())?;
+            writeln!(handle, "signature: {}", hex::encode(signature.as_bytes()))?;
         }
         return Ok(());
     }
@@ -166,6 +168,8 @@ where
         seq.end()?;
         writeln!(handle)?;
     } else {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
         for identity in identities {
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
                 let algorithm = public_key.algorithm();
@@ -173,36 +177,39 @@ where
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
                 if show_openssh {
                     if let Ok(ssh) = public_key.to_openssh() {
-                        println!(
+                        writeln!(
+                            handle,
                             "{} {} {} {} {}",
                             hex::encode(identity.key_blob),
                             identity.comment,
                             alg,
                             fp,
                             ssh.trim()
-                        );
+                        )?;
                         continue;
                     }
-                    println!(
+                    writeln!(
+                        handle,
                         "{} {} {} {}",
                         hex::encode(identity.key_blob),
                         identity.comment,
                         alg,
                         fp
-                    );
+                    )?;
                     continue;
                 } else {
-                    println!(
+                    writeln!(
+                        handle,
                         "{} {} {} {}",
                         hex::encode(identity.key_blob),
                         identity.comment,
                         alg,
                         fp
-                    );
+                    )?;
                     continue;
                 }
             }
-            println!("{} {}", hex::encode(identity.key_blob), identity.comment);
+            writeln!(handle, "{} {}", hex::encode(identity.key_blob), identity.comment)?;
         }
     }
 
