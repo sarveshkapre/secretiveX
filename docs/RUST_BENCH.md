@@ -24,6 +24,17 @@ cargo run -p secretive-bench -- \
   --payload-size 128
 ```
 
+## Reconnect per request
+
+Use `--reconnect` to open a fresh connection for every sign request (closer to pssh fan-out).
+
+```bash
+cargo run -p secretive-bench -- \
+  --concurrency 500 \
+  --requests 5 \
+  --reconnect
+```
+
 ## Duration-based run
 
 ```bash

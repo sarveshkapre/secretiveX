@@ -22,6 +22,7 @@ struct Args {
     payload_size: usize,
     flags: u32,
     key_blob_hex: Option<String>,
+    reconnect: bool,
     json: bool,
     help: bool,
     version: bool,
@@ -63,6 +64,7 @@ async fn main() -> Result<()> {
         let payload_size = args.payload_size;
         let flags = args.flags;
         let key_blob_hex = args.key_blob_hex.clone();
+        let reconnect = args.reconnect;
         let deadline = deadline.clone();
         handles.push(tokio::spawn(async move {
             run_worker(
@@ -73,6 +75,7 @@ async fn main() -> Result<()> {
                 payload_size,
                 flags,
                 key_blob_hex,
+                reconnect,
                 deadline,
             )
             .await
@@ -125,15 +128,15 @@ async fn run_worker(
     payload_size: usize,
     flags: u32,
     key_blob_hex: Option<String>,
+    reconnect: bool,
     deadline: Option<Instant>,
 ) -> Result<usize> {
-    let stream = connect(&socket_path).await?;
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut buffer = BytesMut::with_capacity(4096);
-
     let key_blob = if let Some(hex_key) = key_blob_hex {
         hex::decode(hex_key)?
     } else {
+        let stream = connect(&socket_path).await?;
+        let (mut reader, mut writer) = tokio::io::split(stream);
+        let mut buffer = BytesMut::with_capacity(4096);
         write_request(&mut writer, &AgentRequest::RequestIdentities).await?;
         let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
         match response {
@@ -151,18 +154,74 @@ async fn run_worker(
     let mut rng = rand::rngs::StdRng::from_entropy();
     let mut data = vec![0u8; payload_size];
 
-    for _ in 0..warmup {
-        rng.fill_bytes(&mut data);
-        let request = AgentRequest::SignRequest {
-            key_blob: key_blob.clone(),
-            data: data.clone(),
-            flags,
-        };
-        write_request(&mut writer, &request).await?;
-        let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
-        if !matches!(response, AgentResponse::SignResponse { .. }) {
-            return Err(anyhow::anyhow!("unexpected sign response"));
+    if reconnect {
+        for _ in 0..warmup {
+            rng.fill_bytes(&mut data);
+            let stream = connect(&socket_path).await?;
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let mut buffer = BytesMut::with_capacity(4096);
+            let request = AgentRequest::SignRequest {
+                key_blob: key_blob.clone(),
+                data: data.clone(),
+                flags,
+            };
+            write_request(&mut writer, &request).await?;
+            let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+            if !matches!(response, AgentResponse::SignResponse { .. }) {
+                return Err(anyhow::anyhow!("unexpected sign response"));
+            }
         }
+    } else {
+        let stream = connect(&socket_path).await?;
+        let (mut reader, mut writer) = tokio::io::split(stream);
+        let mut buffer = BytesMut::with_capacity(4096);
+        for _ in 0..warmup {
+            rng.fill_bytes(&mut data);
+            let request = AgentRequest::SignRequest {
+                key_blob: key_blob.clone(),
+                data: data.clone(),
+                flags,
+            };
+            write_request(&mut writer, &request).await?;
+            let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+            if !matches!(response, AgentResponse::SignResponse { .. }) {
+                return Err(anyhow::anyhow!("unexpected sign response"));
+            }
+        }
+
+        let mut completed = 0usize;
+        if let Some(deadline) = deadline {
+            while Instant::now() < deadline {
+                rng.fill_bytes(&mut data);
+                let request = AgentRequest::SignRequest {
+                    key_blob: key_blob.clone(),
+                    data: data.clone(),
+                    flags,
+                };
+                write_request(&mut writer, &request).await?;
+                let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+                if matches!(response, AgentResponse::SignResponse { .. }) {
+                    completed += 1;
+                }
+            }
+        } else {
+            for _ in 0..requests {
+                rng.fill_bytes(&mut data);
+                let request = AgentRequest::SignRequest {
+                    key_blob: key_blob.clone(),
+                    data: data.clone(),
+                    flags,
+                };
+                write_request(&mut writer, &request).await?;
+                let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
+                if matches!(response, AgentResponse::SignResponse { .. }) {
+                    completed += 1;
+                }
+            }
+        }
+
+        info!(worker_id, completed, "worker done");
+        return Ok(completed);
     }
 
     let mut completed = 0usize;
@@ -174,6 +233,9 @@ async fn run_worker(
                 data: data.clone(),
                 flags,
             };
+            let stream = connect(&socket_path).await?;
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let mut buffer = BytesMut::with_capacity(4096);
             write_request(&mut writer, &request).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
@@ -188,6 +250,9 @@ async fn run_worker(
                 data: data.clone(),
                 flags,
             };
+            let stream = connect(&socket_path).await?;
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let mut buffer = BytesMut::with_capacity(4096);
             write_request(&mut writer, &request).await?;
             let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
             if matches!(response, AgentResponse::SignResponse { .. }) {
@@ -210,6 +275,7 @@ fn parse_args() -> Args {
         payload_size: 32,
         flags: 0,
         key_blob_hex: None,
+        reconnect: false,
         json: false,
         help: false,
         version: false,
@@ -239,6 +305,7 @@ fn parse_args() -> Args {
                     parsed.payload_size = value.parse().unwrap_or(parsed.payload_size);
                 }
             }
+            "--reconnect" => parsed.reconnect = true,
             "--flags" => {
                 if let Some(value) = args.next() {
                     parsed.flags = value.parse().unwrap_or(parsed.flags);
@@ -265,7 +332,7 @@ fn print_help() {
     println!("  --concurrency <n> --requests <n> [--warmup <n>]");
     println!("  --duration <seconds> (overrides --requests)");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
-    println!("  --socket <path> --json\n");
+    println!("  --socket <path> --json --reconnect\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
