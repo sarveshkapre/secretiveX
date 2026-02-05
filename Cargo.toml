@@ -4,6 +4,7 @@ members = [
   "crates/secretive-core",
   "crates/secretive-agent",
   "crates/secretive-bench",
+  "crates/secretive-client",
 ]
 resolver = "2"
 

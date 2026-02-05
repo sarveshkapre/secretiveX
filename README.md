@@ -20,6 +20,7 @@ Current Rust milestones:
 - CLI flags for config, socket path, and key overrides
 - Config-driven store list (file now; pkcs11 placeholder)
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
+- Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
 Rust config format: see `docs/RUST_CONFIG.md`.
 <picture>

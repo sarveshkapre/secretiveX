@@ -1,0 +1,12 @@
+[package]
+name = "secretive-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+secretive-proto = { path = "../secretive-proto" }
+tokio.workspace = true
+ssh-key = { version = "0.6", features = ["alloc", "ed25519", "p256", "p384", "p521", "rsa"] }
+hex = "0.4"
+anyhow = "1.0"
