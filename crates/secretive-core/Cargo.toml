@@ -21,3 +21,7 @@ cryptoki = { version = "0.7", optional = true }
 [features]
 default = []
 pkcs11 = ["cryptoki"]
+
+[dev-dependencies]
+tempfile = "3.12"
+rand_core = "0.6"

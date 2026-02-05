@@ -252,3 +252,27 @@ fn sign_rsa(
 }
 
 // signature encoding delegated to secretive-proto
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand_core::OsRng;
+    use ssh_key::{Algorithm, LineEnding, PrivateKey};
+
+    #[test]
+    fn load_identity_from_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("id_ed25519");
+        let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).expect("key");
+        key.write_openssh_file(&path, LineEnding::LF).expect("write");
+
+        let store = FileStore::load(FileStoreConfig {
+            paths: vec![path],
+            scan_default_dir: false,
+        })
+        .expect("store");
+
+        let identities = store.list_identities().expect("identities");
+        assert_eq!(identities.len(), 1);
+    }
+}
