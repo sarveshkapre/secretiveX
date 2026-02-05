@@ -1906,8 +1906,30 @@ async fn run_windows(
 
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
+    let mut first_pipe_instance = true;
     loop {
-        let server = ServerOptions::new().create(&pipe_name)?;
+        let mut options = ServerOptions::new();
+        options.reject_remote_clients(true);
+        if first_pipe_instance {
+            options.first_pipe_instance(true);
+        }
+        let server = match options.create(&pipe_name) {
+            Ok(server) => {
+                first_pipe_instance = false;
+                server
+            }
+            Err(err) => {
+                if first_pipe_instance {
+                    warn!(
+                        ?err,
+                        "failed to claim first pipe instance; continuing without first-instance guard"
+                    );
+                    first_pipe_instance = false;
+                    continue;
+                }
+                return Err(err);
+            }
+        };
         tokio::select! {
             result = server.connect() => {
                 if let Err(err) = result {

@@ -39,7 +39,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 
 - [ ] Implement macOS Secure Enclave store end-to-end (key discovery + sign + policy hooks).
 - [x] Add Linux service packaging (`systemd` service/unit + install flow).
-- [ ] Add Windows service packaging and named-pipe ACL hardening.
+- [x] Add Windows service packaging and named-pipe ACL hardening.
 - [x] Add protocol compatibility tests against OpenSSH client flows (list/sign/error paths).
 - [x] Add CI benchmark smoke gate for reconnect fan-out workloads.
 - [x] Define and enforce initial SLOs:
