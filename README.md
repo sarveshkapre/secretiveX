@@ -26,6 +26,8 @@ Current Rust milestones:
 - Agent exposes simple sign latency metrics in logs
 - Concurrent sign requests are bounded by CPU-aware semaphore
 - `max_signers` lets you override concurrency
+- `max_blocking_threads` and `worker_threads` tune Tokio thread pools
+- `socket_backlog` tunes Unix socket listen backlog for large fan-out
 - Send `SIGUSR1` on Unix to log a metrics snapshot
 - `watch_files` controls automatic reloads
 - `metrics_every` controls logging frequency
@@ -35,6 +37,7 @@ Current Rust milestones:
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
+- Client `--raw` list mode skips key parsing for faster output
 
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
