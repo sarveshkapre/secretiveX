@@ -226,6 +226,8 @@ async fn main() {
         });
     } else if !watch_files {
         info!("file watching disabled");
+    } else {
+        info!("no file stores to watch");
     }
 
     #[cfg(unix)]
