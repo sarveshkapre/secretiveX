@@ -23,6 +23,7 @@ struct Args {
     flags: u32,
     key_blob_hex: Option<String>,
     json: bool,
+    help: bool,
 }
 
 #[tokio::main]
@@ -32,6 +33,10 @@ async fn main() -> Result<()> {
         .init();
 
     let args = parse_args();
+    if args.help {
+        print_help();
+        return Ok(());
+    }
     let socket_path = resolve_socket_path(args.socket_path.clone());
 
     let total_requests = args.concurrency * args.requests_per_worker;
@@ -167,6 +172,7 @@ fn parse_args() -> Args {
         flags: 0,
         key_blob_hex: None,
         json: false,
+        help: false,
     };
 
     while let Some(arg) = args.next() {
@@ -199,11 +205,21 @@ fn parse_args() -> Args {
             }
             "--key" => parsed.key_blob_hex = args.next(),
             "--json" => parsed.json = true,
+            "-h" | "--help" => parsed.help = true,
             _ => {}
         }
     }
 
     parsed
+}
+
+fn print_help() {
+    println!("secretive-bench usage:\n");
+    println!("  --concurrency <n> --requests <n> [--warmup <n>]");
+    println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
+    println!("  --socket <path> --json\n");
+    println!("Notes:");
+    println!("  Use --key to reuse a specific identity from secretive-client.");
 }
 
 #[cfg(unix)]
