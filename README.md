@@ -29,6 +29,7 @@ Current Rust milestones:
 - `max_signers` lets you override concurrency
 - `max_connections` caps concurrent client sessions
 - `max_blocking_threads` and `worker_threads` tune Tokio thread pools
+- `profile` presets (`balanced`, `fanout`, `low-memory`) set sensible defaults
 - `socket_backlog` tunes Unix socket listen backlog for large fan-out
 - Send `SIGUSR1` on Unix to log a metrics snapshot
 - `watch_files` controls automatic reloads

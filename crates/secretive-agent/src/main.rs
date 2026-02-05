@@ -27,6 +27,7 @@ use secretive_proto::{
 
 #[derive(Debug, Deserialize)]
 struct Config {
+    profile: Option<String>,
     socket_path: Option<String>,
     socket_backlog: Option<u32>,
     key_paths: Option<Vec<String>>,
@@ -279,6 +280,9 @@ fn main() {
     if let Some(inline_sign) = args.inline_sign {
         config.inline_sign = Some(inline_sign);
     }
+    if let Some(profile) = args.profile {
+        config.profile = Some(profile);
+    }
     if config.max_signers.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_MAX_SIGNERS") {
             config.max_signers = value.parse().ok();
@@ -339,6 +343,12 @@ fn main() {
             config.inline_sign = parse_bool_env(&value);
         }
     }
+    if config.profile.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_PROFILE") {
+            config.profile = Some(value);
+        }
+    }
+    apply_profile_defaults(&mut config);
     if check_config {
         let validation = validate_config(&config);
         for warning in validation.warnings {
@@ -794,6 +804,114 @@ fn compute_max_signers(config: &Config) -> usize {
     max_signers
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ConfigProfile {
+    Balanced,
+    Fanout,
+    LowMemory,
+}
+
+impl ConfigProfile {
+    fn parse(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("balanced") {
+            return Some(Self::Balanced);
+        }
+        if value.eq_ignore_ascii_case("fanout") {
+            return Some(Self::Fanout);
+        }
+        if value.eq_ignore_ascii_case("low-memory")
+            || value.eq_ignore_ascii_case("low_memory")
+            || value.eq_ignore_ascii_case("lowmemory")
+        {
+            return Some(Self::LowMemory);
+        }
+        None
+    }
+}
+
+fn apply_profile_defaults(config: &mut Config) {
+    let Some(profile_name) = config.profile.as_deref() else {
+        return;
+    };
+    let Some(profile) = ConfigProfile::parse(profile_name) else {
+        warn!(profile = profile_name, "unknown config profile");
+        return;
+    };
+
+    let cores = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4);
+
+    match profile {
+        ConfigProfile::Balanced => {
+            if config.max_connections.is_none() {
+                config.max_connections = Some(1024);
+            }
+            if config.sign_timeout_ms.is_none() {
+                config.sign_timeout_ms = Some(500);
+            }
+            if config.identity_cache_ms.is_none() {
+                config.identity_cache_ms = Some(1000);
+            }
+            if config.watch_debounce_ms.is_none() {
+                config.watch_debounce_ms = Some(200);
+            }
+            if config.max_signers.is_none() {
+                config.max_signers = Some(cores.saturating_mul(4).max(1));
+            }
+            if config.max_blocking_threads.is_none() {
+                config.max_blocking_threads = config.max_signers;
+            }
+        }
+        ConfigProfile::Fanout => {
+            if config.max_signers.is_none() {
+                config.max_signers = Some(cores.saturating_mul(8).max(8));
+            }
+            if config.max_blocking_threads.is_none() {
+                config.max_blocking_threads = config.max_signers;
+            }
+            if config.max_connections.is_none() {
+                config.max_connections = Some(8192);
+            }
+            if config.worker_threads.is_none() {
+                config.worker_threads = Some(cores.max(1));
+            }
+            if config.identity_cache_ms.is_none() {
+                config.identity_cache_ms = Some(5000);
+            }
+            if config.sign_timeout_ms.is_none() {
+                config.sign_timeout_ms = Some(250);
+            }
+            if config.socket_backlog.is_none() {
+                config.socket_backlog = Some(2048);
+            }
+            if config.idle_timeout_ms.is_none() {
+                config.idle_timeout_ms = Some(10000);
+            }
+        }
+        ConfigProfile::LowMemory => {
+            if config.max_signers.is_none() {
+                config.max_signers = Some(cores.saturating_mul(2).max(2));
+            }
+            if config.max_blocking_threads.is_none() {
+                config.max_blocking_threads = config.max_signers;
+            }
+            if config.max_connections.is_none() {
+                config.max_connections = Some(256);
+            }
+            if config.identity_cache_ms.is_none() {
+                config.identity_cache_ms = Some(250);
+            }
+            if config.sign_timeout_ms.is_none() {
+                config.sign_timeout_ms = Some(2000);
+            }
+            if config.watch_debounce_ms.is_none() {
+                config.watch_debounce_ms = Some(1000);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct ConfigValidation {
     errors: Vec<String>,
@@ -918,6 +1036,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         }
     }
     Config {
+        profile: None,
         socket_path: None,
         socket_backlog: None,
         key_paths: None,
@@ -946,6 +1065,7 @@ fn default_config_path() -> Option<PathBuf> {
 }
 
 struct Args {
+    profile: Option<String>,
     config_path: Option<String>,
     socket_path: Option<String>,
     socket_backlog: Option<u32>,
@@ -971,6 +1091,7 @@ struct Args {
 fn parse_args() -> Args {
     let mut args = std::env::args().skip(1);
     let mut parsed = Args {
+        profile: None,
         config_path: None,
         socket_path: None,
         socket_backlog: None,
@@ -995,6 +1116,7 @@ fn parse_args() -> Args {
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--profile" => parsed.profile = args.next(),
             "--config" => parsed.config_path = args.next(),
             "--socket" => parsed.socket_path = args.next(),
             "--socket-backlog" => {
@@ -1093,6 +1215,7 @@ fn parse_bool_env(value: &str) -> Option<bool> {
 
 fn print_help() {
     println!("secretive-agent usage:\n");
+    println!("  --profile <balanced|fanout|low-memory>");
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --socket-backlog <n>");
     println!("  --default-scan | --no-default-scan");
@@ -1752,6 +1875,7 @@ mod tests {
 
     fn empty_config() -> Config {
         Config {
+            profile: None,
             socket_path: None,
             socket_backlog: None,
             key_paths: None,
@@ -1870,5 +1994,31 @@ mod tests {
             .warnings
             .iter()
             .any(|entry| entry.contains("defines no key source")));
+    }
+
+    #[test]
+    fn profile_fanout_sets_expected_defaults() {
+        let mut config = empty_config();
+        config.profile = Some("fanout".to_string());
+        apply_profile_defaults(&mut config);
+
+        assert_eq!(config.max_connections, Some(8192));
+        assert_eq!(config.socket_backlog, Some(2048));
+        assert_eq!(config.sign_timeout_ms, Some(250));
+        assert_eq!(config.identity_cache_ms, Some(5000));
+        assert_eq!(config.idle_timeout_ms, Some(10000));
+        assert!(config.max_signers.unwrap_or(0) >= 8);
+    }
+
+    #[test]
+    fn profile_does_not_override_explicit_values() {
+        let mut config = empty_config();
+        config.profile = Some("low-memory".to_string());
+        config.max_connections = Some(123);
+        config.sign_timeout_ms = Some(456);
+        apply_profile_defaults(&mut config);
+
+        assert_eq!(config.max_connections, Some(123));
+        assert_eq!(config.sign_timeout_ms, Some(456));
     }
 }

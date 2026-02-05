@@ -15,6 +15,7 @@ Socket path overrides:
 
 ## Top-level fields
 
+- `profile` (string): optional preset (`balanced`, `fanout`, `low-memory`) applied to unset fields.
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
 - `socket_backlog` (number): override the Unix socket listen backlog (0 or omitted uses system default).
 - `stores` (array): ordered list of key stores to load.
@@ -33,6 +34,7 @@ Socket path overrides:
 
 Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_SIGNERS` sets `max_signers`.
+- `SECRETIVE_PROFILE` sets `profile`.
 - `SECRETIVE_MAX_CONNECTIONS` sets `max_connections`.
 - `SECRETIVE_MAX_BLOCKING_THREADS` sets `max_blocking_threads`.
 - `SECRETIVE_WORKER_THREADS` sets `worker_threads`.
@@ -48,6 +50,14 @@ Environment overrides (when config/CLI unset):
 Legacy fields (used only when `stores` is not provided):
 - `key_paths` (array of strings): explicit private key paths.
 - `scan_default_dir` (bool): whether to scan `~/.ssh` for private keys.
+
+## Profile presets
+
+Profiles only set fields that are still unset after CLI/config/env overrides.
+
+- `balanced`: general-purpose defaults (`max_connections=1024`, `sign_timeout_ms=500`, `identity_cache_ms=1000`).
+- `fanout`: aggressive concurrency (`max_connections=8192`, `socket_backlog=2048`, low sign timeout).
+- `low-memory`: conservative resource use (`max_connections=256`, lower cache, higher sign timeout).
 
 ## Store definitions
 
