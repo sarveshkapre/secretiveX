@@ -38,6 +38,7 @@ struct Config {
     worker_threads: Option<usize>,
     watch_files: Option<bool>,
     metrics_every: Option<u64>,
+    sign_timeout_ms: Option<u64>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
@@ -47,6 +48,7 @@ struct Config {
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
+static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static MAX_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -254,6 +256,9 @@ fn main() {
     if let Some(metrics_every) = args.metrics_every {
         config.metrics_every = Some(metrics_every);
     }
+    if let Some(sign_timeout_ms) = args.sign_timeout_ms {
+        config.sign_timeout_ms = Some(sign_timeout_ms);
+    }
     if let Some(pid_file) = args.pid_file {
         config.pid_file = Some(pid_file);
     }
@@ -282,6 +287,11 @@ fn main() {
     if config.metrics_every.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_METRICS_EVERY") {
             config.metrics_every = value.parse().ok();
+        }
+    }
+    if config.sign_timeout_ms.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_SIGN_TIMEOUT_MS") {
+            config.sign_timeout_ms = value.parse().ok();
         }
     }
     if config.watch_files.is_none() {
@@ -640,6 +650,18 @@ async fn run_async(mut config: Config, max_signers: usize) {
     } else {
         info!(metrics_every, "signing metrics interval");
     }
+    let sign_timeout = config.sign_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
+    if let Some(timeout) = sign_timeout {
+        info!(sign_timeout_ms = timeout.as_millis(), "sign timeout");
+    } else {
+        info!("sign timeout disabled");
+    }
 
     #[cfg(unix)]
     {
@@ -651,6 +673,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 while stream.recv().await.is_some() {
                     let count = SIGN_COUNT.load(Ordering::Relaxed);
                     let errors = SIGN_ERRORS.load(Ordering::Relaxed);
+                    let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
                     let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                     let avg = if count > 0 { total / count as f64 } else { 0.0 };
                     let available = sign_semaphore.available_permits() as u64;
@@ -668,6 +691,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     info!(
                         count,
                         errors,
+                        timeouts,
                         avg_ns = avg,
                         in_flight,
                         max_signers,
@@ -702,6 +726,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 identity_cache.clone(),
                 idle_timeout,
                 inline_sign,
+                sign_timeout,
             )
             .await
         {
@@ -720,6 +745,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
             identity_cache.clone(),
             idle_timeout,
             inline_sign,
+            sign_timeout,
         )
         .await
         {
@@ -774,6 +800,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         worker_threads: None,
         watch_files: None,
         metrics_every: None,
+        sign_timeout_ms: None,
         pid_file: None,
         identity_cache_ms: None,
         idle_timeout_ms: None,
@@ -804,6 +831,7 @@ struct Args {
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
     inline_sign: Option<bool>,
+    sign_timeout_ms: Option<u64>,
     help: bool,
     version: bool,
 }
@@ -826,6 +854,7 @@ fn parse_args() -> Args {
         identity_cache_ms: None,
         idle_timeout_ms: None,
         inline_sign: None,
+        sign_timeout_ms: None,
         help: false,
         version: false,
     };
@@ -871,6 +900,11 @@ fn parse_args() -> Args {
             "--metrics-every" => {
                 if let Some(value) = args.next() {
                     parsed.metrics_every = value.parse().ok();
+                }
+            }
+            "--sign-timeout-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.sign_timeout_ms = value.parse().ok();
                 }
             }
             "--pid-file" => parsed.pid_file = args.next(),
@@ -924,6 +958,7 @@ fn print_help() {
     println!("  --default-scan | --no-default-scan");
     println!("  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>");
     println!("  --metrics-every <n>");
+    println!("  --sign-timeout-ms <n>");
     println!("  --watch | --no-watch --pid-file <path>");
     println!("  --identity-cache-ms <n>");
     println!("  --inline-sign | --no-inline-sign");
@@ -1008,6 +1043,7 @@ async fn run_unix(
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
+    sign_timeout: Option<Duration>,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     use tokio::sync::oneshot;
@@ -1087,6 +1123,7 @@ async fn run_unix(
                         let identity_cache = identity_cache.clone();
                         let idle_timeout = idle_timeout;
                         let inline_sign = inline_sign;
+                        let sign_timeout = sign_timeout;
                         tokio::spawn(async move {
                             let _permit = connection_permit;
                             if let Err(err) =
@@ -1097,6 +1134,7 @@ async fn run_unix(
                                     identity_cache,
                                     idle_timeout,
                                     inline_sign,
+                                    sign_timeout,
                                 )
                                     .await
                             {
@@ -1138,6 +1176,7 @@ async fn run_windows(
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
+    sign_timeout: Option<Duration>,
 ) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -1173,6 +1212,7 @@ async fn run_windows(
                 let identity_cache = identity_cache.clone();
                 let idle_timeout = idle_timeout;
                 let inline_sign = inline_sign;
+                let sign_timeout = sign_timeout;
                 CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     let _permit = connection_permit;
@@ -1184,6 +1224,7 @@ async fn run_windows(
                             identity_cache,
                             idle_timeout,
                             inline_sign,
+                            sign_timeout,
                         )
                         .await
                     {
@@ -1208,6 +1249,7 @@ async fn handle_connection<S>(
     identity_cache: Arc<IdentityCache>,
     idle_timeout: Option<Duration>,
     inline_sign: bool,
+    sign_timeout: Option<Duration>,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -1267,6 +1309,7 @@ where
                         flags,
                         sign_semaphore.as_ref(),
                         inline_sign,
+                        sign_timeout,
                     )
                         .await;
                 match response {
@@ -1435,6 +1478,7 @@ async fn handle_sign_request(
     flags: u32,
     sign_semaphore: &Semaphore,
     inline_sign: bool,
+    sign_timeout: Option<Duration>,
 ) -> AgentResponse {
     let metrics_every = METRICS_EVERY.load(Ordering::Relaxed);
     let start = if metrics_every > 0 {
@@ -1442,13 +1486,28 @@ async fn handle_sign_request(
     } else {
         None
     };
-    let permit = match sign_semaphore.acquire().await {
-        Ok(permit) => permit,
-        Err(_) => {
-            warn!("signing semaphore closed");
-            SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
-            return AgentResponse::Failure;
-        }
+    let permit = match sign_timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, sign_semaphore.acquire()).await {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => {
+                warn!("signing semaphore closed");
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                return AgentResponse::Failure;
+            }
+            Err(_) => {
+                SIGN_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                return AgentResponse::Failure;
+            }
+        },
+        None => match sign_semaphore.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                warn!("signing semaphore closed");
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                return AgentResponse::Failure;
+            }
+        },
     };
     let registry = Arc::clone(registry);
     let result = if inline_sign {
@@ -1466,6 +1525,7 @@ async fn handle_sign_request(
                 SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
                 if count % metrics_every == 0 {
                     let errors = SIGN_ERRORS.load(Ordering::Relaxed);
+                    let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
                     let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                     let avg = total / count as f64;
                     let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
@@ -1477,6 +1537,7 @@ async fn handle_sign_request(
                     info!(
                         count,
                         errors,
+                        timeouts,
                         avg_ns = avg,
                         in_flight,
                         max_signers,

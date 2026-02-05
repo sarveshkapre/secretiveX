@@ -24,6 +24,7 @@ Current Rust milestones:
 - Secure Enclave store stub (macOS implementation next)
 - Config supports `secure_enclave` store type (stub)
 - Agent exposes simple sign latency metrics in logs
+- `sign_timeout_ms` caps how long sign requests wait for a worker
 - Concurrent sign requests are bounded by CPU-aware semaphore
 - `max_signers` lets you override concurrency
 - `max_connections` caps concurrent client sessions
