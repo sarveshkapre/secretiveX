@@ -196,9 +196,17 @@ mod enabled {
         }
 
         fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
-            let guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
-            let key = guard.get(key_blob).ok_or(CoreError::KeyNotFound)?.clone();
-            drop(guard);
+            let key = {
+                let guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
+                guard.get(key_blob).cloned()
+            };
+            let key = if let Some(key) = key {
+                key
+            } else {
+                self.refresh_keys()?;
+                let guard = self.key_map.lock().map_err(|_| CoreError::Internal("pkcs11 lock"))?;
+                guard.get(key_blob).cloned().ok_or(CoreError::KeyNotFound)?
+            };
 
             let session = self.open_session()?;
 
