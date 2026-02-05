@@ -219,6 +219,8 @@ async fn main() {
                 info!(count, "reloaded identities (watch)");
             }
         });
+    } else if !watch_files {
+        info!("file watching disabled");
     }
 
     #[cfg(unix)]
