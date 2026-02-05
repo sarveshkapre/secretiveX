@@ -132,6 +132,8 @@ async fn main() -> Result<()> {
             "requests_per_worker": args.requests_per_worker,
             "duration_secs": args.duration_secs,
             "randomize_payload": args.randomize_payload,
+            "payload_size": args.payload_size,
+            "flags": args.flags,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
