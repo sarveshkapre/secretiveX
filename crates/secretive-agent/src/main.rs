@@ -787,7 +787,10 @@ fn normalize_pipe_name(value: String) -> String {
         .strip_prefix("pipe\\")
         .or_else(|| trimmed.strip_prefix("pipe/"))
         .unwrap_or(trimmed);
-    format!("{PREFIX}{trimmed}")
+    let mut out = String::with_capacity(PREFIX.len() + trimmed.len());
+    out.push_str(PREFIX);
+    out.push_str(trimmed);
+    out
 }
 
 struct PidFileGuard {
