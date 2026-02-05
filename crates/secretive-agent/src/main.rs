@@ -19,8 +19,10 @@ use secretive_core::{
     EmptyStore, FileStore, FileStoreConfig, KeyIdentity, KeyStore, KeyStoreRegistry, Pkcs11Config,
     Pkcs11Store,
 };
-use bytes::BytesMut;
-use secretive_proto::{read_request_with_buffer, write_response, AgentRequest, AgentResponse, Identity};
+use bytes::{Bytes, BytesMut};
+use secretive_proto::{
+    read_request_with_buffer, write_payload, write_response, AgentRequest, AgentResponse, Identity,
+};
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -42,59 +44,57 @@ static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Debug)]
 struct IdentityCache {
-    identities: tokio::sync::RwLock<Vec<Identity>>,
+    payload: tokio::sync::RwLock<Bytes>,
     last_refresh_ms: AtomicU64,
     ttl_ms: u64,
 }
 
 impl IdentityCache {
     fn new(ttl_ms: u64) -> Self {
+        let empty_payload = secretive_proto::encode_response(&AgentResponse::IdentitiesAnswer {
+            identities: Vec::new(),
+        });
         Self {
-            identities: tokio::sync::RwLock::new(Vec::new()),
+            payload: tokio::sync::RwLock::new(empty_payload),
             last_refresh_ms: AtomicU64::new(0),
             ttl_ms,
         }
     }
 
-    async fn get_or_refresh(
+    async fn get_payload_or_refresh(
         &self,
         registry: Arc<KeyStoreRegistry>,
-    ) -> Result<Vec<Identity>, secretive_core::CoreError> {
+    ) -> Result<Bytes, secretive_core::CoreError> {
         if self.ttl_ms > 0 {
             let now = now_ms();
             let last = self.last_refresh_ms.load(Ordering::Relaxed);
             if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
-                return Ok(self.identities.read().await.clone());
+                return Ok(self.payload.read().await.clone());
             }
         }
 
         let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
         match result {
             Ok(Ok(identities)) => {
-                let mapped = map_identities(identities);
-                *self.identities.write().await = mapped.clone();
+                let payload = encode_identities_payload(map_identities(identities));
+                *self.payload.write().await = payload.clone();
                 self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
-                Ok(mapped)
+                Ok(payload)
             }
             Ok(Err(err)) => {
-                let cached = self.identities.read().await.clone();
-                if !cached.is_empty() {
-                    return Ok(cached);
-                }
-                Err(err)
+                warn!(?err, "failed to list identities; serving cached payload");
+                Ok(self.payload.read().await.clone())
             }
             Err(_) => {
-                let cached = self.identities.read().await.clone();
-                if !cached.is_empty() {
-                    return Ok(cached);
-                }
-                Err(secretive_core::CoreError::Internal("identity task failed"))
+                warn!("identity worker failed; serving cached payload");
+                Ok(self.payload.read().await.clone())
             }
         }
     }
 
-    async fn update(&self, identities: Vec<Identity>) {
-        *self.identities.write().await = identities;
+    async fn update_from_identities(&self, identities: Vec<Identity>) {
+        let payload = encode_identities_payload(identities);
+        *self.payload.write().await = payload;
         self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
     }
 
@@ -239,7 +239,9 @@ async fn main() {
     let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
     if let Ok(identities) = registry.list_identities() {
         info!(count = identities.len(), "loaded identities");
-        identity_cache.update(map_identities(identities)).await;
+        identity_cache
+            .update_from_identities(map_identities(identities))
+            .await;
     }
 
     let mut _watchers = Vec::new();
@@ -683,16 +685,32 @@ where
             }
         };
 
-        let response = handle_request(
-            registry.clone(),
-            request,
-            sign_semaphore.clone(),
-            identity_cache.clone(),
-        )
-        .await;
-        if let Err(err) = write_response(&mut writer, &response).await {
-            warn!(?err, "failed to write response");
-            break;
+        match request {
+            AgentRequest::RequestIdentities => {
+                match identity_cache.get_payload_or_refresh(registry.clone()).await {
+                    Ok(payload) => {
+                        if let Err(err) = write_payload(&mut writer, &payload).await {
+                            warn!(?err, "failed to write identities");
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        warn!(?err, "failed to list identities");
+                        if let Err(err) = write_response(&mut writer, &AgentResponse::Failure).await {
+                            warn!(?err, "failed to write failure response");
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {
+                let response =
+                    handle_request(registry.clone(), request, sign_semaphore.clone()).await;
+                if let Err(err) = write_response(&mut writer, &response).await {
+                    warn!(?err, "failed to write response");
+                    break;
+                }
+            }
         }
     }
 
@@ -703,18 +721,9 @@ async fn handle_request(
     registry: Arc<KeyStoreRegistry>,
     request: AgentRequest,
     sign_semaphore: Arc<Semaphore>,
-    identity_cache: Arc<IdentityCache>,
 ) -> AgentResponse {
     match request {
-        AgentRequest::RequestIdentities => {
-            match identity_cache.get_or_refresh(registry).await {
-                Ok(identities) => AgentResponse::IdentitiesAnswer { identities },
-                Err(err) => {
-                    warn!(?err, "failed to list identities");
-                    AgentResponse::Failure
-                }
-            }
-        }
+        AgentRequest::RequestIdentities => AgentResponse::Failure,
         AgentRequest::SignRequest { key_blob, data, flags } => {
             let start = Instant::now();
             let permit = match sign_semaphore.acquire().await {
@@ -764,6 +773,10 @@ fn map_identities(identities: Vec<KeyIdentity>) -> Vec<Identity> {
             comment: id.comment,
         })
         .collect()
+}
+
+fn encode_identities_payload(identities: Vec<Identity>) -> Bytes {
+    secretive_proto::encode_response(&AgentResponse::IdentitiesAnswer { identities })
 }
 
 fn now_ms() -> u64 {

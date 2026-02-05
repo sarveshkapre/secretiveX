@@ -100,6 +100,17 @@ where
     Ok(())
 }
 
+pub async fn write_payload<W>(writer: &mut W, payload: &[u8]) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    writer.write_all(payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    Ok(())
+}
+
 pub fn decode_request(frame: &[u8]) -> Result<AgentRequest> {
     let mut buf = Bytes::copy_from_slice(frame);
     if !buf.has_remaining() {
