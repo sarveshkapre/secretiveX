@@ -324,14 +324,17 @@ where
                     return Ok(identity.key_blob);
                 }
             } else {
-                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                let fp_stripped = strip_sha256_prefix(&fp);
-                if fp.eq_ignore_ascii_case(target)
-                    || fp_stripped.eq_ignore_ascii_case(target)
-                    || fp.eq_ignore_ascii_case(target_stripped)
-                {
-                    return Ok(identity.key_blob);
-                }
+            let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+            let fp_stripped = strip_sha256_prefix(&fp);
+            if fp == target
+                || fp_stripped == target
+                || fp == target_stripped
+                || fp.eq_ignore_ascii_case(target)
+                || fp_stripped.eq_ignore_ascii_case(target)
+                || fp.eq_ignore_ascii_case(target_stripped)
+            {
+                return Ok(identity.key_blob);
+            }
             }
         }
     }
