@@ -80,11 +80,11 @@ impl IdentityCache {
 
     async fn get_payload_or_refresh(
         self: &Arc<Self>,
-        registry: Arc<KeyStoreRegistry>,
+        registry: &Arc<KeyStoreRegistry>,
     ) -> Result<Bytes, secretive_core::CoreError> {
         if self.ttl_ms == 0 {
             let _guard = self.refresh_lock.lock().await;
-            return self.refresh_and_update(registry).await;
+            return self.refresh_and_update(Arc::clone(registry)).await;
         }
 
         let now = now_ms();
@@ -98,7 +98,7 @@ impl IdentityCache {
             LIST_CACHE_STALE.fetch_add(1, Ordering::Relaxed);
             if !self.refreshing.swap(true, Ordering::AcqRel) {
                 let cache = Arc::clone(self);
-                let registry = registry.clone();
+                let registry = Arc::clone(registry);
                 tokio::spawn(async move {
                     let _guard = cache.refresh_lock.lock().await;
                     let now = now_ms();
@@ -124,7 +124,7 @@ impl IdentityCache {
             return Ok(self.payload.load().as_ref().clone());
         }
 
-        self.refresh_and_update(registry).await
+        self.refresh_and_update(Arc::clone(registry)).await
     }
 
     async fn update_from_identities(&self, identities: Vec<KeyIdentity>) {
@@ -970,7 +970,7 @@ where
         match request {
             AgentRequest::RequestIdentities => {
                 LIST_COUNT.fetch_add(1, Ordering::Relaxed);
-                match identity_cache.get_payload_or_refresh(registry.clone()).await {
+                match identity_cache.get_payload_or_refresh(&registry).await {
                     Ok(payload) => {
                         if let Err(err) = writer.write_all(&payload).await {
                             warn!(?err, "failed to write identities");
