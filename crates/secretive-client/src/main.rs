@@ -154,21 +154,41 @@ where
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         for identity in identities {
-            let mut details = String::new();
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
                 let alg = public_key.algorithm().as_str().to_string();
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
                 if show_openssh {
                     if let Ok(ssh) = public_key.to_openssh() {
-                        details = format!(" {} {} {}", alg, fp, ssh.trim());
-                    } else {
-                        details = format!(" {} {}", alg, fp);
+                        println!(
+                            "{} {} {} {} {}",
+                            hex::encode(identity.key_blob),
+                            identity.comment,
+                            alg,
+                            fp,
+                            ssh.trim()
+                        );
+                        continue;
                     }
+                    println!(
+                        "{} {} {} {}",
+                        hex::encode(identity.key_blob),
+                        identity.comment,
+                        alg,
+                        fp
+                    );
+                    continue;
                 } else {
-                    details = format!(" {} {}", alg, fp);
+                    println!(
+                        "{} {} {} {}",
+                        hex::encode(identity.key_blob),
+                        identity.comment,
+                        alg,
+                        fp
+                    );
+                    continue;
                 }
             }
-            println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
+            println!("{} {}", hex::encode(identity.key_blob), identity.comment);
         }
     }
 
