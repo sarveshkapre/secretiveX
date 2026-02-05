@@ -41,6 +41,7 @@ struct Config {
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
+static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Debug)]
@@ -359,21 +360,6 @@ async fn main() {
         });
     }
 
-    #[cfg(unix)]
-    {
-        tokio::spawn(async move {
-            use tokio::signal::unix::{signal, SignalKind};
-            if let Ok(mut stream) = signal(SignalKind::user_defined1()) {
-                while stream.recv().await.is_some() {
-                    let count = SIGN_COUNT.load(Ordering::Relaxed);
-                    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
-                    let avg = if count > 0 { total / count as f64 } else { 0.0 };
-                    info!(count, avg_ns = avg, "signing metrics snapshot");
-                }
-            }
-        });
-    }
-
     let default_max_signers = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4)
@@ -384,10 +370,36 @@ async fn main() {
         max_signers = 1;
     }
     info!(max_signers, "sign concurrency limit");
+    MAX_SIGNERS.store(max_signers as u64, Ordering::Relaxed);
     let sign_semaphore = Arc::new(Semaphore::new(max_signers));
 
     let metrics_every = config.metrics_every.unwrap_or(1000);
     METRICS_EVERY.store(metrics_every, Ordering::Relaxed);
+
+    #[cfg(unix)]
+    {
+        let sign_semaphore = sign_semaphore.clone();
+        let max_signers = max_signers as u64;
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut stream) = signal(SignalKind::user_defined1()) {
+                while stream.recv().await.is_some() {
+                    let count = SIGN_COUNT.load(Ordering::Relaxed);
+                    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
+                    let avg = if count > 0 { total / count as f64 } else { 0.0 };
+                    let available = sign_semaphore.available_permits() as u64;
+                    let in_flight = max_signers.saturating_sub(available);
+                    info!(
+                        count,
+                        avg_ns = avg,
+                        in_flight,
+                        max_signers,
+                        "signing metrics snapshot"
+                    );
+                }
+            }
+        });
+    }
 
     #[cfg(unix)]
     {
@@ -788,7 +800,16 @@ async fn handle_request(
                     if every > 0 && count % every == 0 {
                         let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
                         let avg = total / count as f64;
-                        info!(count, avg_ns = avg, "signing metrics");
+                        let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
+                        let available = sign_semaphore.available_permits() as u64;
+                        let in_flight = max_signers.saturating_sub(available);
+                        info!(
+                            count,
+                            avg_ns = avg,
+                            in_flight,
+                            max_signers,
+                            "signing metrics"
+                        );
                     }
                     AgentResponse::SignResponse { signature_blob }
                 }
