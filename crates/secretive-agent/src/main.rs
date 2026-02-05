@@ -39,6 +39,7 @@ struct Config {
     metrics_every: Option<u64>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
+    idle_timeout_ms: Option<u64>,
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -254,6 +255,9 @@ fn main() {
     if let Some(socket_backlog) = args.socket_backlog {
         config.socket_backlog = Some(socket_backlog);
     }
+    if let Some(idle_timeout_ms) = args.idle_timeout_ms {
+        config.idle_timeout_ms = Some(idle_timeout_ms);
+    }
     if config.max_signers.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_MAX_SIGNERS") {
             config.max_signers = value.parse().ok();
@@ -287,6 +291,11 @@ fn main() {
     if config.socket_backlog.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_SOCKET_BACKLOG") {
             config.socket_backlog = value.parse().ok();
+        }
+    }
+    if config.idle_timeout_ms.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_IDLE_TIMEOUT_MS") {
+            config.idle_timeout_ms = value.parse().ok();
         }
     }
 
@@ -390,6 +399,18 @@ async fn run_async(mut config: Config, max_signers: usize) {
     info!(identity_cache_ms, "identity cache ttl");
     let registry = Arc::new(registry);
     let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
+    let idle_timeout = config.idle_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
+    if let Some(timeout) = idle_timeout {
+        info!(idle_timeout_ms = timeout.as_millis(), "connection idle timeout");
+    } else {
+        info!("connection idle timeout disabled");
+    }
     let registry_clone = registry.clone();
     match tokio::task::spawn_blocking(move || registry_clone.list_identities()).await {
         Ok(Ok(identities)) => {
@@ -635,6 +656,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
                 registry.clone(),
                 sign_semaphore.clone(),
                 identity_cache.clone(),
+                idle_timeout,
             )
             .await
         {
@@ -645,9 +667,14 @@ async fn run_async(mut config: Config, max_signers: usize) {
     #[cfg(windows)]
     {
         let pipe_name = resolve_pipe_name(config.socket_path);
-        if let Err(err) =
-            run_windows(pipe_name, registry.clone(), sign_semaphore.clone(), identity_cache.clone())
-                .await
+        if let Err(err) = run_windows(
+            pipe_name,
+            registry.clone(),
+            sign_semaphore.clone(),
+            identity_cache.clone(),
+            idle_timeout,
+        )
+        .await
         {
             error!(?err, "agent exited with error");
         }
@@ -701,6 +728,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         metrics_every: None,
         pid_file: None,
         identity_cache_ms: None,
+        idle_timeout_ms: None,
     }
 }
 
@@ -724,6 +752,7 @@ struct Args {
     metrics_every: Option<u64>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
+    idle_timeout_ms: Option<u64>,
     help: bool,
     version: bool,
 }
@@ -743,6 +772,7 @@ fn parse_args() -> Args {
         metrics_every: None,
         pid_file: None,
         identity_cache_ms: None,
+        idle_timeout_ms: None,
         help: false,
         version: false,
     };
@@ -791,6 +821,11 @@ fn parse_args() -> Args {
                     parsed.identity_cache_ms = value.parse().ok();
                 }
             }
+            "--idle-timeout-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.idle_timeout_ms = value.parse().ok();
+                }
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -830,7 +865,8 @@ fn print_help() {
     println!("  --max-signers <n> --max-blocking-threads <n> --worker-threads <n>");
     println!("  --metrics-every <n>");
     println!("  --watch | --no-watch --pid-file <path>");
-    println!("  --identity-cache-ms <n>\n");
+    println!("  --identity-cache-ms <n>");
+    println!("  --idle-timeout-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");
@@ -908,6 +944,7 @@ async fn run_unix(
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
+    idle_timeout: Option<Duration>,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     use tokio::sync::oneshot;
@@ -968,9 +1005,16 @@ async fn run_unix(
                         let registry = registry.clone();
                         let sign_semaphore = sign_semaphore.clone();
                         let identity_cache = identity_cache.clone();
+                        let idle_timeout = idle_timeout;
                         tokio::spawn(async move {
                             if let Err(err) =
-                                handle_connection(stream, registry, sign_semaphore, identity_cache)
+                                handle_connection(
+                                    stream,
+                                    registry,
+                                    sign_semaphore,
+                                    identity_cache,
+                                    idle_timeout,
+                                )
                                     .await
                             {
                                 warn!(?err, "connection error");
@@ -1008,6 +1052,7 @@ async fn run_windows(
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
+    idle_timeout: Option<Duration>,
 ) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
@@ -1026,10 +1071,18 @@ async fn run_windows(
                 let registry = registry.clone();
                 let sign_semaphore = sign_semaphore.clone();
                 let identity_cache = identity_cache.clone();
+                let idle_timeout = idle_timeout;
                 CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     if let Err(err) =
-                        handle_connection(server, registry, sign_semaphore, identity_cache).await
+                        handle_connection(
+                            server,
+                            registry,
+                            sign_semaphore,
+                            identity_cache,
+                            idle_timeout,
+                        )
+                        .await
                     {
                         warn!(?err, "connection error");
                     }
@@ -1050,6 +1103,7 @@ async fn handle_connection<S>(
     registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
+    idle_timeout: Option<Duration>,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -1060,7 +1114,17 @@ where
     let mut buffer = BytesMut::new();
     let mut response_buffer: Option<BytesMut> = None;
     loop {
-        let request = match read_request_with_buffer(&mut stream, &mut buffer).await {
+        let read_result = if let Some(timeout) = idle_timeout {
+            match tokio::time::timeout(timeout, read_request_with_buffer(&mut stream, &mut buffer))
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => break,
+            }
+        } else {
+            read_request_with_buffer(&mut stream, &mut buffer).await
+        };
+        let request = match read_result {
             Ok(request) => request,
             Err(err) => {
                 if matches!(err, ProtoError::UnexpectedEof) {

@@ -33,6 +33,7 @@ Current Rust milestones:
 - `metrics_every` controls logging frequency
 - `pid_file` writes the agent PID for monitoring
 - `identity_cache_ms` caches identity lists for fast fan-out
+- `idle_timeout_ms` closes idle connections to free resources
 - Unix default socket path prefers `XDG_RUNTIME_DIR`
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out
