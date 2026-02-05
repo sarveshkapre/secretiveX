@@ -890,6 +890,7 @@ async fn handle_request(
                 Ok(permit) => permit,
                 Err(_) => {
                     warn!("signing semaphore closed");
+                    SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                     return AgentResponse::Failure;
                 }
             };
