@@ -401,13 +401,8 @@ async fn fetch_first_key(socket_path: &Path) -> Result<Vec<u8>> {
     let stream = connect(socket_path).await?;
     let (mut reader, mut writer) = tokio::io::split(stream);
     let mut buffer = BytesMut::with_capacity(4096);
-    let mut request_buffer = BytesMut::with_capacity(128);
-    write_request_with_buffer(
-        &mut writer,
-        &AgentRequest::RequestIdentities,
-        &mut request_buffer,
-    )
-    .await?;
+    let frame = encode_request_frame(&AgentRequest::RequestIdentities)?;
+    writer.write_all(&frame).await?;
     let response = read_response_with_buffer(&mut reader, &mut buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => identities
