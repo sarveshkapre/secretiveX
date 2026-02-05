@@ -4,11 +4,11 @@ use std::io::Read;
 use anyhow::Result;
 use bytes::BytesMut;
 use secretive_proto::{
-    read_response_with_buffer, write_request_with_buffer, AgentRequest, AgentResponse, Identity,
-    SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
+    encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
+    AgentResponse, Identity, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
 use ssh_key::Signature;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[cfg(unix)]
 use tokio::net::UnixStream as AgentStream;
@@ -38,7 +38,6 @@ async fn main() -> Result<()> {
             &mut reader,
             &mut writer,
             &mut buffer,
-            &mut request_buffer,
             args.show_openssh,
             args.json,
             args.filter.as_deref(),
@@ -51,14 +50,13 @@ async fn main() -> Result<()> {
         let key_blob = if let Some(key_hex) = args.sign_key_blob {
             hex::decode(key_hex)?
         } else if let Some(comment) = args.sign_comment.as_deref() {
-            select_key_by_comment(&mut reader, &mut writer, &mut buffer, &mut request_buffer, comment)
+            select_key_by_comment(&mut reader, &mut writer, &mut buffer, comment)
                 .await?
         } else if let Some(fingerprint) = args.sign_fingerprint.as_deref() {
             select_key_by_fingerprint(
                 &mut reader,
                 &mut writer,
                 &mut buffer,
-                &mut request_buffer,
                 fingerprint,
             )
             .await?
@@ -107,7 +105,6 @@ async fn list_identities<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
-    request_buffer: &mut BytesMut,
     show_openssh: bool,
     json_output: bool,
     filter: Option<&str>,
@@ -116,7 +113,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut identities = fetch_identities(reader, writer, buffer, request_buffer).await?;
+    let mut identities = fetch_identities(reader, writer, buffer).await?;
     if let Some(filter) = filter {
         let filter_lower = filter.to_lowercase();
         identities.retain(|id| {
@@ -208,13 +205,13 @@ async fn fetch_identities<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
-    request_buffer: &mut BytesMut,
 ) -> Result<Vec<Identity>>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    write_request_with_buffer(writer, &AgentRequest::RequestIdentities, request_buffer).await?;
+    let frame = encode_request_frame(&AgentRequest::RequestIdentities)?;
+    writer.write_all(&frame).await?;
     let response = read_response_with_buffer(reader, buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
@@ -226,14 +223,13 @@ async fn select_key_by_comment<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
-    request_buffer: &mut BytesMut,
     comment: &str,
 ) -> Result<Vec<u8>>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer, request_buffer).await?;
+    let identities = fetch_identities(reader, writer, buffer).await?;
     identities
         .into_iter()
         .find(|id| id.comment.eq_ignore_ascii_case(comment))
@@ -245,14 +241,13 @@ async fn select_key_by_fingerprint<R, W>(
     reader: &mut R,
     writer: &mut W,
     buffer: &mut BytesMut,
-    request_buffer: &mut BytesMut,
     fingerprint: &str,
 ) -> Result<Vec<u8>>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let identities = fetch_identities(reader, writer, buffer, request_buffer).await?;
+    let identities = fetch_identities(reader, writer, buffer).await?;
     let target = fingerprint.to_lowercase();
     for identity in identities {
         if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
