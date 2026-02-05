@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::time::Duration;
 
+use directories::BaseDirs;
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
@@ -262,7 +263,8 @@ async fn main() {
 fn load_config(path_override: Option<&str>) -> Config {
     let path = path_override
         .map(|value| value.to_string())
-        .or_else(|| std::env::var("SECRETIVE_CONFIG").ok());
+        .or_else(|| std::env::var("SECRETIVE_CONFIG").ok())
+        .or_else(|| default_config_path().map(|path| path.display().to_string()));
     if let Some(path) = path {
         if let Ok(contents) = std::fs::read_to_string(path) {
             if let Ok(config) = serde_json::from_str::<Config>(&contents) {
@@ -277,6 +279,13 @@ fn load_config(path_override: Option<&str>) -> Config {
         stores: None,
         max_signers: None,
     }
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(path).join("secretive").join("agent.json"));
+    }
+    BaseDirs::new().map(|dirs| dirs.config_dir().join("secretive").join("agent.json"))
 }
 
 struct Args {

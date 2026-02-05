@@ -2,6 +2,10 @@
 
 The Rust agent supports a JSON configuration file. You can point to it via `SECRETIVE_CONFIG` or `--config`.
 
+If no path is provided, the agent looks for:
+- `$XDG_CONFIG_HOME/secretive/agent.json`
+- `<config_dir>/secretive/agent.json` (from `directories::BaseDirs`)
+
 ## Top-level fields
 
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
