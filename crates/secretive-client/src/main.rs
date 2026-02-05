@@ -157,7 +157,8 @@ where
     } else {
         for identity in identities {
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-                let alg = public_key.algorithm().as_str().to_string();
+                let algorithm = public_key.algorithm();
+                let alg = algorithm.as_str();
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
                 if show_openssh {
                     if let Ok(ssh) = public_key.to_openssh() {
