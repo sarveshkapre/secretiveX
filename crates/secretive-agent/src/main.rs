@@ -1080,13 +1080,14 @@ async fn handle_request(
 }
 
 fn map_identities(identities: Vec<KeyIdentity>) -> Vec<Identity> {
-    identities
-        .into_iter()
-        .map(|id| Identity {
+    let mut mapped = Vec::with_capacity(identities.len());
+    for id in identities {
+        mapped.push(Identity {
             key_blob: id.key_blob,
             comment: id.comment,
-        })
-        .collect()
+        });
+    }
+    mapped
 }
 
 fn encode_identities_frame(identities: Vec<Identity>) -> Result<Bytes, ProtoError> {
