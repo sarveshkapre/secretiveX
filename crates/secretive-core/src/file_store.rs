@@ -8,6 +8,7 @@ use ssh_key::{Algorithm, HashAlg, PrivateKey};
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
+const SSH_AGENT_RSA_SHA2_256: u32 = 2;
 const SSH_AGENT_RSA_SHA2_512: u32 = 4;
 
 #[derive(Clone, Debug)]
@@ -225,11 +226,29 @@ fn sign_rsa(
     flags: u32,
 ) -> Result<ssh_key::Signature> {
     use rsa::pkcs1v15::SigningKey;
+    use sha1::Sha1;
     use sha2::{Sha256, Sha512};
     use signature::{SignatureEncoding, Signer};
 
     let use_sha512 = flags & SSH_AGENT_RSA_SHA2_512 != 0;
-    if !use_sha512 {
+    let use_sha256 = flags & SSH_AGENT_RSA_SHA2_256 != 0;
+
+    if use_sha512 {
+        let signing_key = SigningKey::<Sha512>::try_from(keypair)
+            .map_err(|_| CoreError::Crypto("rsa signing key"))?;
+        let signature = signing_key
+            .try_sign(data)
+            .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
+            .to_vec();
+
+        return Ok(ssh_key::Signature::new(
+            Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
+            signature,
+        )
+        .map_err(|_| CoreError::Crypto("rsa sha512 signature"))?);
+    }
+
+    if use_sha256 {
         let signing_key = SigningKey::<Sha256>::try_from(keypair)
             .map_err(|_| CoreError::Crypto("rsa signing key"))?;
         let signature = signing_key
@@ -243,18 +262,18 @@ fn sign_rsa(
         .map_err(|_| CoreError::Crypto("rsa sha256 signature"))?);
     }
 
-    let signing_key = SigningKey::<Sha512>::try_from(keypair)
+    let signing_key = SigningKey::<Sha1>::try_from(keypair)
         .map_err(|_| CoreError::Crypto("rsa signing key"))?;
     let signature = signing_key
         .try_sign(data)
-        .map_err(|_| CoreError::Crypto("rsa sha512 sign"))?
+        .map_err(|_| CoreError::Crypto("rsa sha1 sign"))?
         .to_vec();
 
     Ok(ssh_key::Signature::new(
-        Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
+        Algorithm::Rsa { hash: None },
         signature,
     )
-    .map_err(|_| CoreError::Crypto("rsa sha512 signature"))?)
+    .map_err(|_| CoreError::Crypto("rsa sha1 signature"))?)
 }
 
 // signature encoding delegated to secretive-proto
