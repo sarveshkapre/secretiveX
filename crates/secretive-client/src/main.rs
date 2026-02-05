@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::io::Read;
+use std::sync::OnceLock;
 
 use anyhow::Result;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use secretive_proto::{
     encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, Identity, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
@@ -14,6 +15,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream as AgentStream;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
+
+static LIST_FRAME: OnceLock<Bytes> = OnceLock::new();
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -115,14 +118,13 @@ where
 {
     let mut identities = fetch_identities(reader, writer, buffer).await?;
     if let Some(filter) = filter {
-        let filter_lower = filter.to_lowercase();
         identities.retain(|id| {
-            if id.comment.to_lowercase().contains(&filter_lower) {
+            if contains_ignore_ascii_case(&id.comment, filter) {
                 return true;
             }
             if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&id.key_blob) {
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                return fp.to_lowercase().contains(&filter_lower);
+                return contains_ignore_ascii_case(&fp, filter);
             }
             false
         });
@@ -230,13 +232,19 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let frame = encode_request_frame(&AgentRequest::RequestIdentities)?;
-    writer.write_all(&frame).await?;
+    writer.write_all(list_request_frame()).await?;
     let response = read_response_with_buffer(reader, buffer).await?;
     match response {
         AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
         _ => Err(anyhow::anyhow!("unexpected response")),
     }
+}
+
+fn list_request_frame() -> &'static Bytes {
+    LIST_FRAME.get_or_init(|| {
+        encode_request_frame(&AgentRequest::RequestIdentities)
+            .expect("list request frame encoding failed")
+    })
 }
 
 async fn select_key_by_comment<R, W>(
@@ -289,6 +297,47 @@ fn strip_sha256_prefix(value: &str) -> &str {
     match value.get(..7) {
         Some(prefix) if prefix.eq_ignore_ascii_case("sha256:") => &value[7..],
         _ => value,
+    }
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle_bytes = needle.as_bytes();
+    let haystack_bytes = haystack.as_bytes();
+    if needle_bytes.len() > haystack_bytes.len() {
+        return false;
+    }
+    let first = ascii_lower(needle_bytes[0]);
+    let limit = haystack_bytes.len() - needle_bytes.len();
+    for idx in 0..=limit {
+        if ascii_lower(haystack_bytes[idx]) != first {
+            continue;
+        }
+        if needle_bytes.len() == 1 {
+            return true;
+        }
+        let mut matched = true;
+        for (offset, &b) in needle_bytes[1..].iter().enumerate() {
+            if ascii_lower(haystack_bytes[idx + 1 + offset]) != ascii_lower(b) {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return true;
+        }
+    }
+    false
+}
+
+#[inline]
+fn ascii_lower(byte: u8) -> u8 {
+    if (b'A'..=b'Z').contains(&byte) {
+        byte + 32
+    } else {
+        byte
     }
 }
 
