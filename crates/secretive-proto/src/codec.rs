@@ -134,11 +134,8 @@ where
 {
     use tokio::io::AsyncWriteExt;
 
-    if payload.len() > MAX_FRAME_LEN {
-        return Err(ProtoError::FrameTooLarge(payload.len()));
-    }
-    writer.write_u32(payload.len() as u32).await.map_err(|_| ProtoError::UnexpectedEof)?;
-    writer.write_all(payload).await.map_err(|_| ProtoError::UnexpectedEof)?;
+    let frame = encode_frame(payload)?;
+    writer.write_all(&frame).await.map_err(|_| ProtoError::UnexpectedEof)?;
     Ok(())
 }
 
