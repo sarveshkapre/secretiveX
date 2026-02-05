@@ -50,6 +50,8 @@ struct IdentityCache {
     last_refresh_ms: AtomicU64,
     ttl_ms: u64,
     has_snapshot: AtomicBool,
+    refreshing: AtomicBool,
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 impl IdentityCache {
@@ -62,21 +64,73 @@ impl IdentityCache {
             last_refresh_ms: AtomicU64::new(0),
             ttl_ms,
             has_snapshot: AtomicBool::new(false),
+            refreshing: AtomicBool::new(false),
+            refresh_lock: tokio::sync::Mutex::new(()),
         }
     }
 
     async fn get_payload_or_refresh(
+        self: &Arc<Self>,
+        registry: Arc<KeyStoreRegistry>,
+    ) -> Result<Bytes, secretive_core::CoreError> {
+        if self.ttl_ms == 0 {
+            let _guard = self.refresh_lock.lock().await;
+            return self.refresh_and_update(registry).await;
+        }
+
+        let now = now_ms();
+        let last = self.last_refresh_ms.load(Ordering::Relaxed);
+        if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
+            return Ok(self.payload.read().await.clone());
+        }
+
+        if self.has_snapshot.load(Ordering::Relaxed) {
+            if !self.refreshing.swap(true, Ordering::AcqRel) {
+                let cache = Arc::clone(self);
+                let registry = registry.clone();
+                tokio::spawn(async move {
+                    let _guard = cache.refresh_lock.lock().await;
+                    let now = now_ms();
+                    let last = cache.last_refresh_ms.load(Ordering::Relaxed);
+                    if last != 0 && now.saturating_sub(last) <= cache.ttl_ms {
+                        cache.refreshing.store(false, Ordering::Release);
+                        return;
+                    }
+                    if let Err(err) = cache.refresh_and_update(registry).await {
+                        warn!(?err, "failed to refresh identities");
+                    }
+                    cache.refreshing.store(false, Ordering::Release);
+                });
+            }
+            return Ok(self.payload.read().await.clone());
+        }
+
+        let _guard = self.refresh_lock.lock().await;
+        let now = now_ms();
+        let last = self.last_refresh_ms.load(Ordering::Relaxed);
+        if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
+            return Ok(self.payload.read().await.clone());
+        }
+
+        self.refresh_and_update(registry).await
+    }
+
+    async fn update_from_identities(&self, identities: Vec<Identity>) {
+        let payload = encode_identities_payload(identities);
+        *self.payload.write().await = payload;
+        self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
+        self.has_snapshot.store(true, Ordering::Relaxed);
+        self.refreshing.store(false, Ordering::Release);
+    }
+
+    fn invalidate(&self) {
+        self.last_refresh_ms.store(0, Ordering::Relaxed);
+    }
+
+    async fn refresh_and_update(
         &self,
         registry: Arc<KeyStoreRegistry>,
     ) -> Result<Bytes, secretive_core::CoreError> {
-        if self.ttl_ms > 0 {
-            let now = now_ms();
-            let last = self.last_refresh_ms.load(Ordering::Relaxed);
-            if last != 0 && now.saturating_sub(last) <= self.ttl_ms {
-                return Ok(self.payload.read().await.clone());
-            }
-        }
-
         let result = tokio::task::spawn_blocking(move || registry.list_identities()).await;
         match result {
             Ok(Ok(identities)) => {
@@ -86,34 +140,9 @@ impl IdentityCache {
                 self.has_snapshot.store(true, Ordering::Relaxed);
                 Ok(payload)
             }
-            Ok(Err(err)) => {
-                if self.has_snapshot.load(Ordering::Relaxed) {
-                    warn!(?err, "failed to list identities; serving cached payload");
-                    Ok(self.payload.read().await.clone())
-                } else {
-                    Err(err)
-                }
-            }
-            Err(_) => {
-                if self.has_snapshot.load(Ordering::Relaxed) {
-                    warn!("identity worker failed; serving cached payload");
-                    Ok(self.payload.read().await.clone())
-                } else {
-                    Err(secretive_core::CoreError::Internal("identity task failed"))
-                }
-            }
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(secretive_core::CoreError::Internal("identity task failed")),
         }
-    }
-
-    async fn update_from_identities(&self, identities: Vec<Identity>) {
-        let payload = encode_identities_payload(identities);
-        *self.payload.write().await = payload;
-        self.last_refresh_ms.store(now_ms(), Ordering::Relaxed);
-        self.has_snapshot.store(true, Ordering::Relaxed);
-    }
-
-    fn invalidate(&self) {
-        self.last_refresh_ms.store(0, Ordering::Relaxed);
     }
 }
 
