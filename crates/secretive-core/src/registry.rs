@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
@@ -7,21 +8,22 @@ use crate::{CoreError, KeyIdentity, KeyStore, Result};
 #[derive(Default)]
 pub struct KeyStoreRegistry {
     stores: Vec<Arc<dyn KeyStore>>,
-    index: DashMap<Vec<u8>, Arc<dyn KeyStore>>,
+    index: ArcSwap<DashMap<Vec<u8>, Arc<dyn KeyStore>>>,
 }
 
 impl KeyStoreRegistry {
     pub fn new() -> Self {
         Self {
             stores: Vec::new(),
-            index: DashMap::new(),
+            index: ArcSwap::from_pointee(DashMap::new()),
         }
     }
 
     pub fn register(&mut self, store: Arc<dyn KeyStore>) {
         if let Ok(identities) = store.list_identities() {
+            let index = self.index.load();
             for identity in identities {
-                self.index.insert(identity.key_blob, store.clone());
+                index.insert(identity.key_blob, store.clone());
             }
         }
         self.stores.push(store);
@@ -51,10 +53,11 @@ impl KeyStoreRegistry {
         if !any_ok {
             return Err(last_err.unwrap_or(CoreError::Internal("no key stores")));
         }
-        self.index.clear();
+        let new_index = DashMap::with_capacity(index_entries.len());
         for (key_blob, store) in index_entries {
-            self.index.insert(key_blob, store);
+            new_index.insert(key_blob, store);
         }
+        self.index.store(Arc::new(new_index));
         out.sort_by(|a, b| {
             let comment = a.comment.cmp(&b.comment);
             if comment == std::cmp::Ordering::Equal {
@@ -67,11 +70,12 @@ impl KeyStoreRegistry {
     }
 
     pub fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
-        if let Some(store) = self.index.get(key_blob).map(|entry| entry.value().clone()) {
+        let index = self.index.load();
+        if let Some(store) = index.get(key_blob).map(|entry| entry.value().clone()) {
             match store.sign(key_blob, data, flags) {
                 Ok(sig) => return Ok(sig),
                 Err(CoreError::KeyNotFound) => {
-                    self.index.remove(key_blob);
+                    index.remove(key_blob);
                 }
                 Err(err) => return Err(err),
             }
@@ -80,7 +84,7 @@ impl KeyStoreRegistry {
         for store in &self.stores {
             match store.sign(key_blob, data, flags) {
                 Ok(sig) => {
-                    self.index.insert(key_blob.to_vec(), store.clone());
+                    self.index.load().insert(key_blob.to_vec(), store.clone());
                     return Ok(sig);
                 }
                 Err(CoreError::KeyNotFound) => continue,
