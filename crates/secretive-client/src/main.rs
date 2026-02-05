@@ -42,7 +42,13 @@ async fn list_identities(stream: &mut AgentStream) -> Result<()> {
     match response {
         AgentResponse::IdentitiesAnswer { identities } => {
             for identity in identities {
-                println!("{} {}", hex::encode(identity.key_blob), identity.comment);
+                let mut details = String::new();
+                if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                    let alg = public_key.algorithm().as_str().to_string();
+                    let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
+                    details = format!(" {} {}", alg, fp);
+                }
+                println!("{} {}{}", hex::encode(identity.key_blob), identity.comment, details);
             }
         }
         _ => {
