@@ -23,6 +23,14 @@ Legacy fields (used only when `stores` is not provided):
 }
 ```
 
+### Secure Enclave store (macOS, planned)
+
+```json
+{
+  "type": "secure_enclave"
+}
+```
+
 ### PKCS#11 store (planned)
 
 ```json

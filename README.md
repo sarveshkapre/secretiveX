@@ -22,6 +22,7 @@ Current Rust milestones:
 - PKCS#11 store (enable via `secretive-core` feature `pkcs11`)
 - File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
 - Secure Enclave store stub (macOS implementation next)
+- Config supports `secure_enclave` store type (stub)
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 

@@ -29,6 +29,7 @@ enum StoreConfig {
         paths: Option<Vec<String>>,
         scan_default_dir: Option<bool>,
     },
+    SecureEnclave,
     Pkcs11 {
         module_path: String,
         slot: Option<u64>,
@@ -92,6 +93,15 @@ async fn main() {
                     }
                 }
             }
+            StoreConfig::SecureEnclave => match secretive_core::SecureEnclaveStore::load() {
+                Ok(store) => {
+                    let store = Arc::new(store);
+                    registry.register(store);
+                }
+                Err(err) => {
+                    warn!(?err, "failed to load secure enclave store");
+                }
+            },
             StoreConfig::Pkcs11 { module_path, slot, pin_env } => {
                 let config = Pkcs11Config {
                     module_path: PathBuf::from(module_path),
