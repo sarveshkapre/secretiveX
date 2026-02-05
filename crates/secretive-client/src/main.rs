@@ -227,7 +227,12 @@ where
     for identity in identities {
         if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
             let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-            if fp == fingerprint {
+            if fp == fingerprint
+                || fp
+                    .strip_prefix("SHA256:")
+                    .map(|suffix| suffix == fingerprint)
+                    .unwrap_or(false)
+            {
                 return Ok(identity.key_blob);
             }
         }
