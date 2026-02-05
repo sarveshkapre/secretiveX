@@ -1,0 +1,21 @@
+name: OpenSSH Compatibility Smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  openssh-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run OpenSSH compatibility smoke test
+        run: ./scripts/openssh_compat_smoke.sh

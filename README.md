@@ -44,6 +44,7 @@ Current Rust milestones:
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Bench supports reconnect and list-only modes for pssh-like fan-out
 - CI includes reconnect fan-out benchmark smoke gating
+- CI includes OpenSSH compatibility smoke checks (list/sign/error)
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
@@ -52,6 +53,7 @@ Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
 Tuning guidance: see `docs/RUST_TUNING.md`.
 Linux service setup: see `docs/LINUX_SYSTEMD.md`.
+OpenSSH compatibility smoke: see `docs/OPENSSH_COMPAT.md`.
 Product roadmap: see `docs/PRODUCT_FEATURES.md`.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/readme/app-dark.png">
