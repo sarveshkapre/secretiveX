@@ -45,9 +45,10 @@ impl KeyStore for Pkcs11Store {
 
 #[cfg(feature = "pkcs11")]
 mod enabled {
-    use std::collections::BTreeMap;
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
+    use ahash::RandomState;
     use cryptoki::context::{Pkcs11, Pkcs11Flags};
     use cryptoki::mechanism::Mechanism;
     use cryptoki::object::{Attribute, AttributeType, ObjectClass};
@@ -66,7 +67,7 @@ mod enabled {
         context: Arc<Pkcs11>,
         slot: Slot,
         pin: Option<String>,
-        key_map: Arc<Mutex<BTreeMap<Vec<u8>, Pkcs11Key>>>,
+        key_map: Arc<Mutex<HashMap<Vec<u8>, Pkcs11Key, RandomState>>>,
     }
 
     #[derive(Clone)]
@@ -98,7 +99,7 @@ mod enabled {
                 context: Arc::new(context),
                 slot,
                 pin,
-                key_map: Arc::new(Mutex::new(BTreeMap::new())),
+                key_map: Arc::new(Mutex::new(HashMap::with_hasher(RandomState::new()))),
             };
 
             store.refresh_keys()?;
@@ -131,7 +132,8 @@ mod enabled {
                 .find_objects(&template)
                 .map_err(|_| CoreError::Internal("pkcs11 find objects"))?;
 
-            let mut map = BTreeMap::new();
+            let mut map: HashMap<Vec<u8>, Pkcs11Key, RandomState> =
+                HashMap::with_hasher(RandomState::new());
 
             for object in objects {
                 let attributes = session
