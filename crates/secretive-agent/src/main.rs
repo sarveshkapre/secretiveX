@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 
 use notify::{RecursiveMode, Watcher};
 use secretive_core::{
-    EmptyStore, FileStore, FileStoreConfig, KeyIdentity, KeyStore, KeyStoreRegistry, Pkcs11Config,
+    EmptyStore, FileStore, FileStoreConfig, KeyIdentity, KeyStoreRegistry, Pkcs11Config,
     Pkcs11Store,
 };
 use bytes::{Bytes, BytesMut};
@@ -236,6 +236,7 @@ async fn main() {
     }
 
     let identity_cache_ms = config.identity_cache_ms.unwrap_or(1000);
+    let registry = Arc::new(registry);
     let identity_cache = Arc::new(IdentityCache::new(identity_cache_ms));
     if let Ok(identities) = registry.list_identities() {
         info!(count = identities.len(), "loaded identities");
@@ -267,6 +268,7 @@ async fn main() {
 
         let reloadable_stores = reloadable_stores.clone();
         let identity_cache = identity_cache.clone();
+        let registry = registry.clone();
         tokio::spawn(async move {
             let debounce = Duration::from_millis(200);
             loop {
@@ -291,13 +293,19 @@ async fn main() {
                         warn!(?err, "failed to reload keys");
                     }
                 }
-                identity_cache.invalidate();
-                let count = reloadable_stores
-                    .iter()
-                    .filter_map(|store| store.list_identities().ok())
-                    .map(|ids| ids.len())
-                    .sum::<usize>();
-                info!(count, "reloaded identities (watch)");
+                match registry.list_identities() {
+                    Ok(identities) => {
+                        let count = identities.len();
+                        identity_cache
+                            .update_from_identities(map_identities(identities))
+                            .await;
+                        info!(count, "reloaded identities (watch)");
+                    }
+                    Err(err) => {
+                        identity_cache.invalidate();
+                        warn!(?err, "failed to refresh identities after reload");
+                    }
+                }
             }
         });
     } else if !watch_files {
@@ -310,6 +318,7 @@ async fn main() {
     if !reloadable_stores.is_empty() {
         let reloadable_stores = reloadable_stores.clone();
         let identity_cache = identity_cache.clone();
+        let registry = registry.clone();
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             if let Ok(mut stream) = signal(SignalKind::hangup()) {
@@ -319,13 +328,19 @@ async fn main() {
                             warn!(?err, "failed to reload keys");
                         }
                     }
-                    identity_cache.invalidate();
-                    let count = reloadable_stores
-                        .iter()
-                        .filter_map(|store| store.list_identities().ok())
-                        .map(|ids| ids.len())
-                        .sum::<usize>();
-                    info!(count, "reloaded identities");
+                    match registry.list_identities() {
+                        Ok(identities) => {
+                            let count = identities.len();
+                            identity_cache
+                                .update_from_identities(map_identities(identities))
+                                .await;
+                            info!(count, "reloaded identities");
+                        }
+                        Err(err) => {
+                            identity_cache.invalidate();
+                            warn!(?err, "failed to refresh identities after reload");
+                        }
+                    }
                 }
             }
         });
@@ -365,7 +380,8 @@ async fn main() {
     {
         let socket_path = resolve_socket_path(config.socket_path);
         if let Err(err) =
-            run_unix(socket_path, registry, sign_semaphore.clone(), identity_cache.clone()).await
+            run_unix(socket_path, registry.clone(), sign_semaphore.clone(), identity_cache.clone())
+                .await
         {
             error!(?err, "agent exited with error");
         }
@@ -375,7 +391,8 @@ async fn main() {
     {
         let pipe_name = resolve_pipe_name(config.socket_path);
         if let Err(err) =
-            run_windows(pipe_name, registry, sign_semaphore.clone(), identity_cache.clone()).await
+            run_windows(pipe_name, registry.clone(), sign_semaphore.clone(), identity_cache.clone())
+                .await
         {
             error!(?err, "agent exited with error");
         }
@@ -554,7 +571,7 @@ impl Drop for PidFileGuard {
 #[cfg(unix)]
 async fn run_unix(
     socket_path: PathBuf,
-    registry: KeyStoreRegistry,
+    registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()> {
@@ -587,7 +604,6 @@ async fn run_unix(
     }
     info!(path = %socket_path.display(), "secretive agent listening");
 
-    let registry = Arc::new(registry);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
     if let Ok(mut sigterm) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
         tokio::spawn(async move {
@@ -640,14 +656,13 @@ async fn run_unix(
 #[cfg(windows)]
 async fn run_windows(
     pipe_name: String,
-    registry: KeyStoreRegistry,
+    registry: Arc<KeyStoreRegistry>,
     sign_semaphore: Arc<Semaphore>,
     identity_cache: Arc<IdentityCache>,
 ) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
     info!(pipe = %pipe_name, "secretive agent listening");
-    let registry = Arc::new(registry);
 
     loop {
         let server = ServerOptions::new().create(&pipe_name)?;
