@@ -346,26 +346,60 @@ async fn main() {
     let mut _watchers = Vec::new();
     let watch_files = config.watch_files.unwrap_or(true);
     if watch_files && !reloadable_stores.is_empty() {
-        let mut watch_paths = Vec::new();
+        use std::collections::BTreeMap;
+
+        let mut raw_paths = Vec::new();
         for store in &reloadable_stores {
-            watch_paths.extend(store.watch_paths());
+            raw_paths.extend(store.watch_paths());
         }
-        watch_paths.sort();
-        watch_paths.dedup();
-        info!(count = watch_paths.len(), "watching key paths");
+        raw_paths.sort();
+        raw_paths.dedup();
+
+        let mut watch_targets: BTreeMap<PathBuf, RecursiveMode> = BTreeMap::new();
+        for path in raw_paths {
+            if path.is_file() {
+                let target = path.parent().unwrap_or(&path).to_path_buf();
+                watch_targets
+                    .entry(target)
+                    .and_modify(|mode| {
+                        if matches!(mode, RecursiveMode::Recursive) {
+                            return;
+                        }
+                        *mode = RecursiveMode::NonRecursive;
+                    })
+                    .or_insert(RecursiveMode::NonRecursive);
+            } else if path.is_dir() {
+                watch_targets
+                    .entry(path)
+                    .and_modify(|mode| {
+                        if matches!(mode, RecursiveMode::Recursive) {
+                            return;
+                        }
+                        *mode = RecursiveMode::Recursive;
+                    })
+                    .or_insert(RecursiveMode::Recursive);
+            } else {
+                watch_targets
+                    .entry(path)
+                    .and_modify(|mode| {
+                        if matches!(mode, RecursiveMode::Recursive) {
+                            return;
+                        }
+                        *mode = RecursiveMode::NonRecursive;
+                    })
+                    .or_insert(RecursiveMode::NonRecursive);
+            }
+        }
+
+        info!(count = watch_targets.len(), "watching key paths");
 
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
         match notify::recommended_watcher(move |res| {
             let _ = notify_tx.send(res);
         }) {
             Ok(mut watcher) => {
-                for path in &watch_paths {
-                    let mode = if path.is_dir() {
-                        RecursiveMode::Recursive
-                    } else {
-                        RecursiveMode::NonRecursive
-                    };
-                    if let Err(err) = watcher.watch(path, mode) {
+                for (path, mode) in &watch_targets {
+                    if let Err(err) = watcher.watch(path, *mode) {
                         warn!(?err, path = %path.display(), "failed to watch key path");
                     }
                 }
