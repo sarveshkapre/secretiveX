@@ -423,7 +423,9 @@ fn parse_args() -> Args {
             "--reconnect" => parsed.reconnect = true,
             "--flags" => {
                 if let Some(value) = args.next() {
-                    parsed.flags = value.parse().unwrap_or(parsed.flags);
+                    if let Some(parsed_value) = parse_flags(&value) {
+                        parsed.flags = parsed_value;
+                    }
                 }
             }
             "--duration" => {
@@ -452,6 +454,16 @@ fn print_help() {
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
     println!("  Use --list to benchmark list-identities instead of signing.");
+    println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
+}
+
+fn parse_flags(value: &str) -> Option<u32> {
+    match value.trim().to_lowercase().as_str() {
+        "sha256" | "rsa-sha2-256" => Some(2),
+        "sha512" | "rsa-sha2-512" => Some(4),
+        "ssh-rsa" | "sha1" => Some(0),
+        _ => value.parse().ok(),
+    }
 }
 
 #[cfg(unix)]

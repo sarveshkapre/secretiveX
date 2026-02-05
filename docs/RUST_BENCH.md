@@ -57,4 +57,4 @@ cargo run -p secretive-bench -- --concurrency 200 --requests 50 --key <hex_blob>
 
 ## RSA hash flags
 
-Use `--flags` to exercise RSA SHA-256/512 flags (2 or 4 respectively).
+Use `--flags` to exercise RSA SHA-256/512 flags (2 or 4 respectively), or pass `sha256`/`sha512`/`ssh-rsa`.
