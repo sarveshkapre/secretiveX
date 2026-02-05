@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -287,6 +289,9 @@ async fn run_unix(socket_path: PathBuf, registry: KeyStoreRegistry) -> std::io::
     }
 
     let listener = UnixListener::bind(&socket_path)?;
+    if let Err(err) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+        warn!(?err, "failed to set socket permissions");
+    }
     info!(path = %socket_path.display(), "secretive agent listening");
 
     let registry = Arc::new(registry);
