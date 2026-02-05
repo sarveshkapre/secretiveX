@@ -60,6 +60,19 @@ impl FileStore {
         }
         Ok(())
     }
+
+    pub fn watch_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        paths.extend(self.config.paths.iter().cloned());
+
+        if self.config.scan_default_dir {
+            if let Some(dir) = default_ssh_dir() {
+                paths.push(dir);
+            }
+        }
+
+        paths
+    }
 }
 
 impl KeyStore for FileStore {
@@ -133,8 +146,7 @@ fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntr
     candidates.extend(config.paths.iter().cloned());
 
     if config.scan_default_dir {
-        if let Some(base_dirs) = BaseDirs::new() {
-            let ssh_dir = base_dirs.home_dir().join(".ssh");
+        if let Some(ssh_dir) = default_ssh_dir() {
             candidates.extend(discover_private_keys(&ssh_dir));
         }
     }
@@ -191,6 +203,10 @@ fn load_entries(config: &FileStoreConfig) -> Result<DashMap<Vec<u8>, Arc<KeyEntr
     }
 
     Ok(entries)
+}
+
+fn default_ssh_dir() -> Option<PathBuf> {
+    BaseDirs::new().map(|base_dirs| base_dirs.home_dir().join(".ssh"))
 }
 
 fn sign_rsa(

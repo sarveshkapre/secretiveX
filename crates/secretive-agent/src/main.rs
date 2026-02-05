@@ -5,6 +5,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info, warn};
 
+use notify::{RecursiveMode, Watcher};
 use secretive_core::{
     EmptyStore, FileStore, FileStoreConfig, KeyStore, KeyStoreRegistry, Pkcs11Config, Pkcs11Store,
 };
@@ -114,6 +115,43 @@ async fn main() {
 
     if let Ok(identities) = registry.list_identities() {
         info!(count = identities.len(), "loaded identities");
+    }
+
+    let mut _watchers = Vec::new();
+    if !reloadable_stores.is_empty() {
+        let mut watch_paths = Vec::new();
+        for store in &reloadable_stores {
+            watch_paths.extend(store.watch_paths());
+        }
+        watch_paths.sort();
+        watch_paths.dedup();
+
+        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+        if let Ok(mut watcher) = notify::recommended_watcher(move |res| {
+            let _ = notify_tx.send(res);
+        }) {
+            for path in &watch_paths {
+                let _ = watcher.watch(path, RecursiveMode::Recursive);
+            }
+            _watchers.push(watcher);
+        }
+
+        let reloadable_stores = reloadable_stores.clone();
+        tokio::spawn(async move {
+            while let Some(_event) = notify_rx.recv().await {
+                for store in &reloadable_stores {
+                    if let Err(err) = store.reload() {
+                        warn!(?err, "failed to reload keys");
+                    }
+                }
+                let count = reloadable_stores
+                    .iter()
+                    .filter_map(|store| store.list_identities().ok())
+                    .map(|ids| ids.len())
+                    .sum::<usize>();
+                info!(count, "reloaded identities (watch)");
+            }
+        });
     }
 
     #[cfg(unix)]

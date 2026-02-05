@@ -20,6 +20,7 @@ Current Rust milestones:
 - CLI flags for config, socket path, and key overrides
 - Config-driven store list (file now; pkcs11 placeholder)
 - PKCS#11 store (enable via `secretive-core` feature `pkcs11`)
+- File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
 - Load-testing CLI (`secretive-bench`) for concurrency/throughput checks
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 
