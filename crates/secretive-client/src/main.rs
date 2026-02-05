@@ -303,25 +303,29 @@ where
     let target = fingerprint.trim();
     let target_stripped = strip_sha256_prefix(target);
     let target_fp = parse_fingerprint_input(target);
-    for identity in identities {
-        if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
-            if let Some(target_fp) = target_fp {
+    if let Some(target_fp) = target_fp {
+        for identity in identities {
+            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
                 let fp = public_key.fingerprint(target_fp.algorithm());
                 if fp == target_fp {
                     return Ok(identity.key_blob);
                 }
-            } else {
-            let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-            let fp_stripped = strip_sha256_prefix(&fp);
-            if fp == target
-                || fp_stripped == target
-                || fp == target_stripped
+            }
+        }
+    } else {
+        for identity in identities {
+            if let Ok(public_key) = ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+                let fp_stripped = strip_sha256_prefix(&fp);
+                if fp == target
+                    || fp_stripped == target
+                    || fp == target_stripped
                 || fp.eq_ignore_ascii_case(target)
                 || fp_stripped.eq_ignore_ascii_case(target)
                 || fp.eq_ignore_ascii_case(target_stripped)
-            {
-                return Ok(identity.key_blob);
-            }
+                {
+                    return Ok(identity.key_blob);
+                }
             }
         }
     }
