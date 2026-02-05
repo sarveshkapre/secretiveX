@@ -37,6 +37,7 @@ impl KeyStoreRegistry {
                 Ok(identities) => {
                     any_ok = true;
                     out.reserve(identities.len());
+                    index_entries.reserve(identities.len());
                     for identity in &identities {
                         index_entries.push((identity.key_blob.clone(), store.clone()));
                     }
