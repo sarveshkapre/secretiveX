@@ -36,6 +36,7 @@ Current Rust milestones:
 - `watch_debounce_ms` tunes reload debounce for file watchers
 - `metrics_every` controls logging frequency
 - `metrics_json` emits machine-readable JSON metrics lines
+- metrics include per-store sign counters (`file`, `pkcs11`, `secure_enclave`, `other`)
 - `audit_requests` emits privacy-safe structured request audit logs
 - `policy` rules can allow/deny sign requests by key blob, fingerprint, or comment
 - `pid_file` writes the agent PID for monitoring

@@ -41,6 +41,10 @@ impl KeyStore for Pkcs11Store {
     fn sign(&self, _key_blob: &[u8], _data: &[u8], _flags: u32) -> Result<Vec<u8>> {
         Err(CoreError::Unsupported("pkcs11 feature not enabled"))
     }
+
+    fn store_kind(&self) -> &'static str {
+        "pkcs11"
+    }
 }
 
 #[cfg(feature = "pkcs11")]
@@ -229,6 +233,10 @@ mod enabled {
             Ok(secretive_proto::encode_signature_blob(
                 algorithm, &signature,
             ))
+        }
+
+        fn store_kind(&self) -> &'static str {
+            "pkcs11"
         }
     }
 

@@ -138,6 +138,10 @@ impl KeyStore for FileStore {
 
         Ok(signature_blob)
     }
+
+    fn store_kind(&self) -> &'static str {
+        "file"
+    }
 }
 
 fn discover_private_keys(ssh_dir: &Path) -> Vec<PathBuf> {

@@ -50,7 +50,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 ## P1 (High)
 
 - [ ] Harden PKCS#11 behavior under contention and token/session churn.
-- [ ] Add per-store metrics (file vs PKCS#11 vs Secure Enclave) in agent logs/JSON.
+- [x] Add per-store metrics (file vs PKCS#11 vs Secure Enclave) in agent logs/JSON.
 - [x] Add optional structured metrics endpoint/output format for scraping.
 - [x] Add config profile presets (`balanced`, `fanout`, `low-memory`) with documented defaults.
 - [x] Add graceful startup validation (`--check-config`) with actionable errors.

@@ -70,11 +70,21 @@ impl KeyStoreRegistry {
     }
 
     pub fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>> {
+        self.sign_with_store(key_blob, data, flags)
+            .map(|(signature, _store_kind)| signature)
+    }
+
+    pub fn sign_with_store(
+        &self,
+        key_blob: &[u8],
+        data: &[u8],
+        flags: u32,
+    ) -> Result<(Vec<u8>, &'static str)> {
         let index = self.index.load();
         let mut failed_store: Option<Arc<dyn KeyStore>> = None;
         if let Some(store) = index.get(key_blob).map(|entry| entry.value().clone()) {
             match store.sign(key_blob, data, flags) {
-                Ok(sig) => return Ok(sig),
+                Ok(sig) => return Ok((sig, store.store_kind())),
                 Err(CoreError::KeyNotFound) => {
                     index.remove(key_blob);
                     failed_store = Some(store);
@@ -92,7 +102,7 @@ impl KeyStoreRegistry {
             match store.sign(key_blob, data, flags) {
                 Ok(sig) => {
                     self.index.load().insert(key_blob.to_vec(), store.clone());
-                    return Ok(sig);
+                    return Ok((sig, store.store_kind()));
                 }
                 Err(CoreError::KeyNotFound) => continue,
                 Err(err) => return Err(err),
@@ -111,6 +121,10 @@ impl KeyStore for EmptyStore {
 
     fn sign(&self, _key_blob: &[u8], _data: &[u8], _flags: u32) -> Result<Vec<u8>> {
         Err(CoreError::KeyNotFound)
+    }
+
+    fn store_kind(&self) -> &'static str {
+        "empty"
     }
 }
 

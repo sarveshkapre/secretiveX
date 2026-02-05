@@ -26,4 +26,7 @@ pub struct KeyIdentity {
 pub trait KeyStore: Send + Sync {
     fn list_identities(&self) -> Result<Vec<KeyIdentity>>;
     fn sign(&self, key_blob: &[u8], data: &[u8], flags: u32) -> Result<Vec<u8>>;
+    fn store_kind(&self) -> &'static str {
+        "unknown"
+    }
 }

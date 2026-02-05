@@ -69,6 +69,10 @@ static LIST_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 static LIST_CACHE_STALE: AtomicU64 = AtomicU64::new(0);
 static LIST_REFRESH: AtomicU64 = AtomicU64::new(0);
 static LIST_ERRORS: AtomicU64 = AtomicU64::new(0);
+static STORE_SIGN_FILE: AtomicU64 = AtomicU64::new(0);
+static STORE_SIGN_PKCS11: AtomicU64 = AtomicU64::new(0);
+static STORE_SIGN_SECURE_ENCLAVE: AtomicU64 = AtomicU64::new(0);
+static STORE_SIGN_OTHER: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 static FAILURE_FRAME: OnceLock<Bytes> = OnceLock::new();
 
@@ -796,6 +800,11 @@ async fn run_async(mut config: Config, max_signers: usize) {
                     let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
                     let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
                     let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
+                    let store_sign_file = STORE_SIGN_FILE.load(Ordering::Relaxed);
+                    let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
+                    let store_sign_secure_enclave =
+                        STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
+                    let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
                     let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
                     let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
                     let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
@@ -818,6 +827,10 @@ async fn run_async(mut config: Config, max_signers: usize) {
                         list_stale,
                         list_refresh,
                         list_errors,
+                        store_sign_file,
+                        store_sign_pkcs11,
+                        store_sign_secure_enclave,
+                        store_sign_other,
                     };
                     emit_sign_metrics("snapshot", &snapshot);
                 }
@@ -1193,6 +1206,10 @@ struct SignMetricsSnapshot {
     list_stale: u64,
     list_refresh: u64,
     list_errors: u64,
+    store_sign_file: u64,
+    store_sign_pkcs11: u64,
+    store_sign_secure_enclave: u64,
+    store_sign_other: u64,
 }
 
 fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
@@ -1213,7 +1230,11 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
         "list_hit": metrics.list_hit,
         "list_stale": metrics.list_stale,
         "list_refresh": metrics.list_refresh,
-        "list_errors": metrics.list_errors
+        "list_errors": metrics.list_errors,
+        "store_sign_file": metrics.store_sign_file,
+        "store_sign_pkcs11": metrics.store_sign_pkcs11,
+        "store_sign_secure_enclave": metrics.store_sign_secure_enclave,
+        "store_sign_other": metrics.store_sign_other
     })
     .to_string()
 }
@@ -1248,6 +1269,10 @@ fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
         list_stale = metrics.list_stale,
         list_refresh = metrics.list_refresh,
         list_errors = metrics.list_errors,
+        store_sign_file = metrics.store_sign_file,
+        store_sign_pkcs11 = metrics.store_sign_pkcs11,
+        store_sign_secure_enclave = metrics.store_sign_secure_enclave,
+        store_sign_other = metrics.store_sign_other,
         "{}",
         message
     );
@@ -2279,14 +2304,30 @@ async fn handle_sign_request(
     };
     let registry = Arc::clone(registry);
     let result = if inline_sign {
-        Ok(registry.sign(key_blob.as_ref(), data.as_ref(), flags))
+        Ok(registry.sign_with_store(key_blob.as_ref(), data.as_ref(), flags))
     } else {
-        tokio::task::spawn_blocking(move || registry.sign(key_blob.as_ref(), data.as_ref(), flags))
-            .await
+        tokio::task::spawn_blocking(move || {
+            registry.sign_with_store(key_blob.as_ref(), data.as_ref(), flags)
+        })
+        .await
     };
     drop(permit);
     match result {
-        Ok(Ok(signature_blob)) => {
+        Ok(Ok((signature_blob, store_kind))) => {
+            match store_kind {
+                "file" => {
+                    STORE_SIGN_FILE.fetch_add(1, Ordering::Relaxed);
+                }
+                "pkcs11" => {
+                    STORE_SIGN_PKCS11.fetch_add(1, Ordering::Relaxed);
+                }
+                "secure_enclave" => {
+                    STORE_SIGN_SECURE_ENCLAVE.fetch_add(1, Ordering::Relaxed);
+                }
+                _ => {
+                    STORE_SIGN_OTHER.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             let count = SIGN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(start) = start {
                 let elapsed = start.elapsed();
@@ -2309,6 +2350,11 @@ async fn handle_sign_request(
                     let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
                     let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
                     let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
+                    let store_sign_file = STORE_SIGN_FILE.load(Ordering::Relaxed);
+                    let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
+                    let store_sign_secure_enclave =
+                        STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
+                    let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
                     let snapshot = SignMetricsSnapshot {
                         count,
                         errors,
@@ -2326,6 +2372,10 @@ async fn handle_sign_request(
                         list_stale,
                         list_refresh,
                         list_errors,
+                        store_sign_file,
+                        store_sign_pkcs11,
+                        store_sign_secure_enclave,
+                        store_sign_other,
                     };
                     emit_sign_metrics("interval", &snapshot);
                 }
@@ -2658,12 +2708,17 @@ mod tests {
             list_stale: 14,
             list_refresh: 15,
             list_errors: 16,
+            store_sign_file: 17,
+            store_sign_pkcs11: 18,
+            store_sign_secure_enclave: 19,
+            store_sign_other: 20,
         };
         let payload = format_metrics_json("snapshot", &snapshot);
         assert!(payload.contains("\"kind\":\"snapshot\""));
         assert!(payload.contains("\"count\":1"));
         assert!(payload.contains("\"max_signers\":6"));
         assert!(payload.contains("\"list_errors\":16"));
+        assert!(payload.contains("\"store_sign_file\":17"));
     }
 
     #[test]

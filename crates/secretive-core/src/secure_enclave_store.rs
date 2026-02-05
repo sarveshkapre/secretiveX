@@ -23,4 +23,8 @@ impl KeyStore for SecureEnclaveStore {
             "secure enclave store not yet implemented",
         ))
     }
+
+    fn store_kind(&self) -> &'static str {
+        "secure_enclave"
+    }
 }
