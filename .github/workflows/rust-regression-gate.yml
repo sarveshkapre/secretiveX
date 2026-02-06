@@ -40,3 +40,6 @@ jobs:
 
       - name: Build secretive-core with pkcs11 feature
         run: cargo test -p secretive-core --features pkcs11 --no-run
+
+      - name: Build secretive-agent with pkcs11 feature
+        run: cargo test -p secretive-agent --features pkcs11 --no-run

@@ -62,6 +62,7 @@ Current Rust milestones:
 - CI includes OpenSSH compatibility matrix checks (ed25519/rsa/ecdsa on Linux/macOS)
 - CI includes a consolidated Rust regression gate (compat + smoke + SLO checks)
 - CI validates `secretive-core` builds with `pkcs11` feature on Linux and macOS
+- CI validates `secretive-agent` builds with `pkcs11` feature on Linux and macOS
 - CI includes a dedicated scheduled 1000-session fan-out gate
 - CI gate jobs use retry wrapping to reduce transient flake failures
 - CI includes a scheduled Rust soak gate with uploaded benchmark artifacts
