@@ -1,0 +1,81 @@
+name: Windows Agent Smoke
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 4"
+
+jobs:
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Windows named-pipe smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "secretive-win-smoke-$env:GITHUB_RUN_ID")
+          $keyPath = Join-Path $tmp.FullName "id_ed25519"
+          $configPath = Join-Path $tmp.FullName "agent.json"
+          $payloadPath = Join-Path $tmp.FullName "payload.bin"
+          $pipeName = "\\.\pipe\secretive-smoke-$env:GITHUB_RUN_ID"
+
+          ssh-keygen -t ed25519 -N "" -f $keyPath | Out-Null
+
+          $escapedKey = $keyPath.Replace('\', '\\')
+          @"
+          {
+            "stores": [
+              {
+                "type": "file",
+                "paths": ["$escapedKey"],
+                "scan_default_dir": false
+              }
+            ],
+            "watch_files": false,
+            "metrics_every": 0
+          }
+          "@ | Set-Content -Path $configPath -Encoding UTF8
+
+          $agent = Start-Process -FilePath cargo -ArgumentList @("run","-p","secretive-agent","--","--config",$configPath,"--socket",$pipeName,"--no-watch","--metrics-every","0") -PassThru -WindowStyle Hidden
+
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 120; $i++) {
+              try {
+                cargo run -p secretive-client -- --socket $pipeName --list --raw | Out-Null
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 200
+              }
+            }
+            if (-not $ready) {
+              throw "agent failed to become ready"
+            }
+
+            $listJson = cargo run -p secretive-client -- --socket $pipeName --list --json-compact
+            $identities = $listJson | ConvertFrom-Json
+            if (-not $identities -or $identities.Count -lt 1) {
+              throw "expected at least one identity in list output"
+            }
+            $keyBlob = $identities[0].key_blob_hex
+
+            [System.IO.File]::WriteAllText($payloadPath, "windows-smoke-payload")
+            cargo run -p secretive-client -- --socket $pipeName --sign $keyBlob --data $payloadPath --flags sha256 | Out-Null
+
+            Write-Host "windows named-pipe smoke passed"
+          } finally {
+            if (-not $agent.HasExited) {
+              Stop-Process -Id $agent.Id -Force
+            }
+          }

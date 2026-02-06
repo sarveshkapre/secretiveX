@@ -42,6 +42,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - SLO/soak benchmark gates now surface agent queue-wait metrics and support queue-wait thresholds.
 - Scheduled CI SLO/fanout/soak workflows now set conservative queue-wait threshold gates.
 - CI now includes real PKCS#11 smoke (SoftHSM) for list/sign path regression coverage.
+- CI now includes Windows named-pipe list/sign smoke on hosted Windows runners.
 
 ## Gaps to Close for V1
 
