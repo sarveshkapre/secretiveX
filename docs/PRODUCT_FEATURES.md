@@ -35,6 +35,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - CI fan-out/SLO/regression workflows now retry gate scripts to reduce flake sensitivity.
 - CI now runs scheduled soak coverage and stores benchmark JSON artifacts for analysis.
 - Agent can write the latest structured metrics snapshot to a file path for scraping.
+- Client can inspect metrics snapshot files directly for offline diagnostics.
 
 ## Gaps to Close for V1
 

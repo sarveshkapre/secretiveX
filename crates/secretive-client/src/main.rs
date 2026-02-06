@@ -10,6 +10,7 @@ use secretive_proto::{
     encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, Identity, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
+use serde::Deserialize;
 use serde::ser::{SerializeSeq, Serializer};
 use serde::Serialize;
 use ssh_key::Signature;
@@ -32,6 +33,10 @@ async fn main() -> Result<()> {
     }
     if args.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if let Some(path) = args.metrics_file.as_deref() {
+        print_metrics_file(path, args.json, args.json_compact)?;
         return Ok(());
     }
     let socket_path = resolve_socket_path(args.socket_path.clone());
@@ -662,6 +667,108 @@ fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
     Ok(signature)
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct MetricsSnapshot {
+    kind: String,
+    count: u64,
+    errors: u64,
+    timeouts: u64,
+    avg_ns: f64,
+    queue_wait_avg_ns: Option<f64>,
+    queue_wait_max_ns: Option<u64>,
+    in_flight: u64,
+    max_signers: u64,
+    connections: Option<u64>,
+    active_connections: Option<u64>,
+    max_active_connections: Option<u64>,
+    max_connections: Option<u64>,
+    connection_rejected: Option<u64>,
+    list_count: Option<u64>,
+    list_hit: Option<u64>,
+    list_stale: Option<u64>,
+    list_refresh: Option<u64>,
+    list_errors: Option<u64>,
+    store_sign_file: Option<u64>,
+    store_sign_pkcs11: Option<u64>,
+    store_sign_secure_enclave: Option<u64>,
+    store_sign_other: Option<u64>,
+}
+
+fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Result<()> {
+    let content = std::fs::read_to_string(path)?;
+    let metrics: MetricsSnapshot = serde_json::from_str(&content)?;
+
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    if json_output {
+        if json_compact {
+            serde_json::to_writer(&mut handle, &metrics)?;
+        } else {
+            serde_json::to_writer_pretty(&mut handle, &metrics)?;
+        }
+        writeln!(handle)?;
+        return Ok(());
+    }
+
+    writeln!(handle, "kind: {}", metrics.kind)?;
+    writeln!(handle, "count: {}", metrics.count)?;
+    writeln!(handle, "errors: {}", metrics.errors)?;
+    writeln!(handle, "timeouts: {}", metrics.timeouts)?;
+    writeln!(handle, "avg_ns: {:.2}", metrics.avg_ns)?;
+    if let Some(value) = metrics.queue_wait_avg_ns {
+        writeln!(handle, "queue_wait_avg_ns: {:.2}", value)?;
+    }
+    if let Some(value) = metrics.queue_wait_max_ns {
+        writeln!(handle, "queue_wait_max_ns: {}", value)?;
+    }
+    writeln!(handle, "in_flight: {}", metrics.in_flight)?;
+    writeln!(handle, "max_signers: {}", metrics.max_signers)?;
+    if let Some(value) = metrics.connections {
+        writeln!(handle, "connections: {}", value)?;
+    }
+    if let Some(value) = metrics.active_connections {
+        writeln!(handle, "active_connections: {}", value)?;
+    }
+    if let Some(value) = metrics.max_active_connections {
+        writeln!(handle, "max_active_connections: {}", value)?;
+    }
+    if let Some(value) = metrics.max_connections {
+        writeln!(handle, "max_connections: {}", value)?;
+    }
+    if let Some(value) = metrics.connection_rejected {
+        writeln!(handle, "connection_rejected: {}", value)?;
+    }
+    if let Some(value) = metrics.list_count {
+        writeln!(handle, "list_count: {}", value)?;
+    }
+    if let Some(value) = metrics.list_hit {
+        writeln!(handle, "list_hit: {}", value)?;
+    }
+    if let Some(value) = metrics.list_stale {
+        writeln!(handle, "list_stale: {}", value)?;
+    }
+    if let Some(value) = metrics.list_refresh {
+        writeln!(handle, "list_refresh: {}", value)?;
+    }
+    if let Some(value) = metrics.list_errors {
+        writeln!(handle, "list_errors: {}", value)?;
+    }
+    if let Some(value) = metrics.store_sign_file {
+        writeln!(handle, "store_sign_file: {}", value)?;
+    }
+    if let Some(value) = metrics.store_sign_pkcs11 {
+        writeln!(handle, "store_sign_pkcs11: {}", value)?;
+    }
+    if let Some(value) = metrics.store_sign_secure_enclave {
+        writeln!(handle, "store_sign_secure_enclave: {}", value)?;
+    }
+    if let Some(value) = metrics.store_sign_other {
+        writeln!(handle, "store_sign_other: {}", value)?;
+    }
+
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct JsonIdentity<'a> {
     key_blob_hex: String,
@@ -726,6 +833,7 @@ fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
 #[derive(Debug)]
 struct Args {
     socket_path: Option<String>,
+    metrics_file: Option<String>,
     list: bool,
     health: bool,
     show_openssh: bool,
@@ -747,6 +855,7 @@ fn parse_args() -> Args {
     let mut args = std::env::args().skip(1);
     let mut parsed = Args {
         socket_path: None,
+        metrics_file: None,
         list: false,
         health: false,
         show_openssh: false,
@@ -767,6 +876,7 @@ fn parse_args() -> Args {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--socket" => parsed.socket_path = args.next(),
+            "--metrics-file" => parsed.metrics_file = args.next(),
             "--list" => parsed.list = true,
             "--health" => parsed.health = true,
             "--openssh" => parsed.show_openssh = true,
@@ -806,6 +916,7 @@ fn print_help() {
     println!("secretive-client usage:\n");
     println!("  --list [--json|--json-compact] [--openssh] [--raw] [--filter <substring>]");
     println!("  --health [--json|--json-compact] [--filter <substring>]");
+    println!("  --metrics-file <path> [--json|--json-compact]");
     println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!(
@@ -817,6 +928,7 @@ fn print_help() {
     println!("Notes:");
     println!("  If --data is omitted, stdin is used for signing.");
     println!("  --health reports identity quality and duplicate diagnostics.");
+    println!("  --metrics-file reads a metrics JSON snapshot file (no socket required).");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
     println!("  --json-compact emits compact JSON (no pretty formatting).");
@@ -841,7 +953,7 @@ fn parse_flags(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_health_report, parse_fingerprint_input, parse_flags};
+    use super::{build_health_report, parse_fingerprint_input, parse_flags, MetricsSnapshot};
     use secretive_proto::Identity;
 
     #[test]
@@ -901,6 +1013,30 @@ mod tests {
         assert_eq!(report.duplicate_fingerprints, 1);
         assert_eq!(report.duplicate_comments, 1);
         assert_eq!(report.algorithms.get("ssh-ed25519"), Some(&2));
+    }
+
+    #[test]
+    fn metrics_snapshot_parses_optional_fields() {
+        let raw = r#"{
+            "kind":"snapshot",
+            "count":100,
+            "errors":2,
+            "timeouts":1,
+            "avg_ns":42.0,
+            "queue_wait_avg_ns":7.5,
+            "queue_wait_max_ns":900,
+            "in_flight":3,
+            "max_signers":64,
+            "store_sign_file":80,
+            "store_sign_pkcs11":20
+        }"#;
+        let snapshot: MetricsSnapshot = serde_json::from_str(raw).expect("metrics json");
+        assert_eq!(snapshot.kind, "snapshot");
+        assert_eq!(snapshot.count, 100);
+        assert_eq!(snapshot.queue_wait_max_ns, Some(900));
+        assert_eq!(snapshot.store_sign_file, Some(80));
+        assert_eq!(snapshot.store_sign_pkcs11, Some(20));
+        assert_eq!(snapshot.store_sign_other, None);
     }
 }
 

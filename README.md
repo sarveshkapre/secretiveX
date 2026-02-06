@@ -68,6 +68,7 @@ Current Rust milestones:
 - End-to-end soak test script for multi-minute/hour reliability runs
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 - Client `--health` diagnostics for invalid keys, duplicates, and algorithm mix
+- Client `--metrics-file` inspects structured metrics snapshots without agent socket access
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
 

@@ -22,6 +22,9 @@
   - `secretive-client --health`
   - `secretive-client --health --json`
   - `secretive-client --health --filter prod`
+- Metrics snapshot inspection (from agent `metrics_output_path`):
+  - `secretive-client --metrics-file /path/to/metrics.json`
+  - `secretive-client --metrics-file /path/to/metrics.json --json`
 
 ## Health report fields
 
