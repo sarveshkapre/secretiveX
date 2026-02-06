@@ -27,4 +27,6 @@ jobs:
           SLO_MIN_RPS: "20"
           SLO_MAX_P95_US: "350000"
           SLO_MAX_FAILURE_RATE: "0.02"
+          SLO_MAX_QUEUE_WAIT_AVG_NS: "80000000"
+          SLO_MAX_QUEUE_WAIT_MAX_NS: "800000000"
         run: ./scripts/ci_retry.sh 2 ./scripts/fanout_1000_gate.sh

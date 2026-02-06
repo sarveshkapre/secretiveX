@@ -67,6 +67,7 @@ Current Rust milestones:
 - CI includes a scheduled Rust soak gate with uploaded benchmark artifacts
 - CI includes shell script syntax sanity checks (`scripts/*.sh`)
 - SLO/soak gates report agent queue-wait metrics (`queue_wait_avg_ns`, `queue_wait_max_ns`)
+- SLO/fanout/soak CI gates enforce conservative queue-wait threshold checks
 - Initial SLO gate script and scheduled CI job for reconnect workloads
 - End-to-end soak test script for multi-minute/hour reliability runs
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads

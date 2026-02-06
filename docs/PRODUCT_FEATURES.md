@@ -40,6 +40,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - Agent supports periodic time-based metrics snapshots in addition to per-sign intervals.
 - Config validation now warns when metrics output is configured but auto-emission is disabled.
 - SLO/soak benchmark gates now surface agent queue-wait metrics and support queue-wait thresholds.
+- Scheduled CI SLO/fanout/soak workflows now set conservative queue-wait threshold gates.
 
 ## Gaps to Close for V1
 

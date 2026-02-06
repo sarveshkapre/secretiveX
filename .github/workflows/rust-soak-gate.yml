@@ -26,6 +26,8 @@ jobs:
           SOAK_RECONNECT: "1"
           SOAK_MIN_RPS: "15"
           SOAK_MAX_FAILURE_RATE: "0.02"
+          SOAK_MAX_QUEUE_WAIT_AVG_NS: "100000000"
+          SOAK_MAX_QUEUE_WAIT_MAX_NS: "1000000000"
           SOAK_OUTPUT_JSON: "${{ runner.temp }}/soak.json"
           SOAK_OUTPUT_METRICS: "${{ runner.temp }}/soak-metrics.json"
         run: ./scripts/ci_retry.sh 2 ./scripts/soak_test.sh

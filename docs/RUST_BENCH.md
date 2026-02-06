@@ -153,6 +153,7 @@ It also captures agent queue-wait metrics from `metrics_output_path` and reports
 Optional thresholds:
 - `SLO_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
 - `SLO_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
+- CI jobs set conservative non-zero defaults for queue-wait sanity checks.
 
 ## Dedicated 1000-session gate
 
