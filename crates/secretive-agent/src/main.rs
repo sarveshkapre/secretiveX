@@ -42,6 +42,7 @@ struct Config {
     watch_files: Option<bool>,
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
+    metrics_interval_ms: Option<u64>,
     metrics_json: Option<bool>,
     metrics_output_path: Option<String>,
     audit_requests: Option<bool>,
@@ -292,6 +293,9 @@ fn main() {
     if let Some(metrics_every) = args.metrics_every {
         config.metrics_every = Some(metrics_every);
     }
+    if let Some(metrics_interval_ms) = args.metrics_interval_ms {
+        config.metrics_interval_ms = Some(metrics_interval_ms);
+    }
     if let Some(metrics_json) = args.metrics_json {
         config.metrics_json = Some(metrics_json);
     }
@@ -335,6 +339,11 @@ fn main() {
     if config.metrics_every.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_METRICS_EVERY") {
             config.metrics_every = value.parse().ok();
+        }
+    }
+    if config.metrics_interval_ms.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_METRICS_INTERVAL_MS") {
+            config.metrics_interval_ms = value.parse().ok();
         }
     }
     if config.metrics_json.is_none() {
@@ -790,6 +799,18 @@ async fn run_async(mut config: Config, max_signers: usize) {
     } else {
         info!(metrics_every, "signing metrics interval");
     }
+    let metrics_interval = config.metrics_interval_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
+    if let Some(interval) = metrics_interval {
+        info!(metrics_interval_ms = interval.as_millis(), "periodic metrics");
+    } else {
+        info!("periodic metrics disabled");
+    }
     let audit_requests = config.audit_requests.unwrap_or(false);
     AUDIT_REQUESTS.store(audit_requests, Ordering::Relaxed);
     if audit_requests {
@@ -825,6 +846,18 @@ async fn run_async(mut config: Config, max_signers: usize) {
         info!("access policy disabled");
     }
 
+    if let Some(interval) = metrics_interval {
+        let sign_semaphore = Arc::clone(&sign_semaphore);
+        let max_signers = max_signers as u64;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let snapshot = build_metrics_snapshot(&sign_semaphore, max_signers);
+                emit_sign_metrics("periodic", &snapshot);
+            }
+        });
+    }
+
     #[cfg(unix)]
     {
         let sign_semaphore = sign_semaphore.clone();
@@ -833,59 +866,7 @@ async fn run_async(mut config: Config, max_signers: usize) {
             use tokio::signal::unix::{signal, SignalKind};
             if let Ok(mut stream) = signal(SignalKind::user_defined1()) {
                 while stream.recv().await.is_some() {
-                    let count = SIGN_COUNT.load(Ordering::Relaxed);
-                    let errors = SIGN_ERRORS.load(Ordering::Relaxed);
-                    let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
-                    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
-                    let avg = if count > 0 { total / count as f64 } else { 0.0 };
-                    let wait_total = SIGN_QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64;
-                    let queue_wait_avg_ns = if count > 0 {
-                        wait_total / count as f64
-                    } else {
-                        0.0
-                    };
-                    let queue_wait_max_ns = SIGN_QUEUE_WAIT_MAX_NS.load(Ordering::Relaxed);
-                    let available = sign_semaphore.available_permits() as u64;
-                    let in_flight = max_signers.saturating_sub(available);
-                    let list_count = LIST_COUNT.load(Ordering::Relaxed);
-                    let list_hit = LIST_CACHE_HIT.load(Ordering::Relaxed);
-                    let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
-                    let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
-                    let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
-                    let store_sign_file = STORE_SIGN_FILE.load(Ordering::Relaxed);
-                    let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
-                    let store_sign_secure_enclave =
-                        STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
-                    let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
-                    let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
-                    let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
-                    let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
-                    let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
-                    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
-                    let snapshot = SignMetricsSnapshot {
-                        count,
-                        errors,
-                        timeouts,
-                        avg_ns: avg,
-                        queue_wait_avg_ns,
-                        queue_wait_max_ns,
-                        in_flight,
-                        max_signers,
-                        connections,
-                        active_connections,
-                        max_active_connections,
-                        max_connections,
-                        connection_rejected,
-                        list_count,
-                        list_hit,
-                        list_stale,
-                        list_refresh,
-                        list_errors,
-                        store_sign_file,
-                        store_sign_pkcs11,
-                        store_sign_secure_enclave,
-                        store_sign_other,
-                    };
+                    let snapshot = build_metrics_snapshot(&sign_semaphore, max_signers);
                     emit_sign_metrics("snapshot", &snapshot);
                 }
             }
@@ -1282,6 +1263,61 @@ struct SignMetricsSnapshot {
     store_sign_other: u64,
 }
 
+fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignMetricsSnapshot {
+    let count = SIGN_COUNT.load(Ordering::Relaxed);
+    let errors = SIGN_ERRORS.load(Ordering::Relaxed);
+    let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
+    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
+    let avg_ns = if count > 0 { total / count as f64 } else { 0.0 };
+    let wait_total = SIGN_QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64;
+    let queue_wait_avg_ns = if count > 0 {
+        wait_total / count as f64
+    } else {
+        0.0
+    };
+    let queue_wait_max_ns = SIGN_QUEUE_WAIT_MAX_NS.load(Ordering::Relaxed);
+    let available = sign_semaphore.available_permits() as u64;
+    let in_flight = max_signers.saturating_sub(available);
+    let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
+    let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
+    let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
+    let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
+    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
+    let list_count = LIST_COUNT.load(Ordering::Relaxed);
+    let list_hit = LIST_CACHE_HIT.load(Ordering::Relaxed);
+    let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
+    let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
+    let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
+    let store_sign_file = STORE_SIGN_FILE.load(Ordering::Relaxed);
+    let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
+    let store_sign_secure_enclave = STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
+    let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
+    SignMetricsSnapshot {
+        count,
+        errors,
+        timeouts,
+        avg_ns,
+        queue_wait_avg_ns,
+        queue_wait_max_ns,
+        in_flight,
+        max_signers,
+        connections,
+        active_connections,
+        max_active_connections,
+        max_connections,
+        connection_rejected,
+        list_count,
+        list_hit,
+        list_stale,
+        list_refresh,
+        list_errors,
+        store_sign_file,
+        store_sign_pkcs11,
+        store_sign_secure_enclave,
+        store_sign_other,
+    }
+}
+
 fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
     serde_json::json!({
         "kind": kind,
@@ -1612,6 +1648,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         watch_files: None,
         watch_debounce_ms: None,
         metrics_every: None,
+        metrics_interval_ms: None,
         metrics_json: None,
         metrics_output_path: None,
         audit_requests: None,
@@ -1644,6 +1681,7 @@ struct Args {
     watch_files: Option<bool>,
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
+    metrics_interval_ms: Option<u64>,
     metrics_json: Option<bool>,
     metrics_output_path: Option<String>,
     audit_requests: Option<bool>,
@@ -1674,6 +1712,7 @@ fn parse_args() -> Args {
         watch_files: None,
         watch_debounce_ms: None,
         metrics_every: None,
+        metrics_interval_ms: None,
         metrics_json: None,
         metrics_output_path: None,
         audit_requests: None,
@@ -1735,6 +1774,11 @@ fn parse_args() -> Args {
             "--metrics-every" => {
                 if let Some(value) = args.next() {
                     parsed.metrics_every = value.parse().ok();
+                }
+            }
+            "--metrics-interval-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.metrics_interval_ms = value.parse().ok();
                 }
             }
             "--metrics-json" => parsed.metrics_json = Some(true),
@@ -1803,6 +1847,7 @@ fn print_help() {
         "  --max-signers <n> --max-connections <n> --max-blocking-threads <n> --worker-threads <n>"
     );
     println!("  --metrics-every <n>");
+    println!("  --metrics-interval-ms <n>");
     println!("  --metrics-json | --no-metrics-json");
     println!("  --metrics-output <path>");
     println!("  --audit-requests | --no-audit-requests");
@@ -2494,55 +2539,8 @@ async fn handle_sign_request(
                 let elapsed = start.elapsed();
                 SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
                 if count % metrics_every == 0 {
-                    let errors = SIGN_ERRORS.load(Ordering::Relaxed);
-                    let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
-                    let total = SIGN_TIME_NS.load(Ordering::Relaxed) as f64;
-                    let avg = total / count as f64;
-                    let wait_total = SIGN_QUEUE_WAIT_NS.load(Ordering::Relaxed) as f64;
-                    let queue_wait_avg_ns = wait_total / count as f64;
-                    let queue_wait_max_ns = SIGN_QUEUE_WAIT_MAX_NS.load(Ordering::Relaxed);
                     let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
-                    let available = sign_semaphore.available_permits() as u64;
-                    let in_flight = max_signers.saturating_sub(available);
-                    let connections = CONNECTION_COUNT.load(Ordering::Relaxed);
-                    let active_connections = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
-                    let max_connections = MAX_CONNECTIONS.load(Ordering::Relaxed);
-                    let max_active_connections = MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
-                    let connection_rejected = CONNECTION_REJECTED.load(Ordering::Relaxed);
-                    let list_count = LIST_COUNT.load(Ordering::Relaxed);
-                    let list_hit = LIST_CACHE_HIT.load(Ordering::Relaxed);
-                    let list_stale = LIST_CACHE_STALE.load(Ordering::Relaxed);
-                    let list_refresh = LIST_REFRESH.load(Ordering::Relaxed);
-                    let list_errors = LIST_ERRORS.load(Ordering::Relaxed);
-                    let store_sign_file = STORE_SIGN_FILE.load(Ordering::Relaxed);
-                    let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
-                    let store_sign_secure_enclave =
-                        STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
-                    let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
-                    let snapshot = SignMetricsSnapshot {
-                        count,
-                        errors,
-                        timeouts,
-                        avg_ns: avg,
-                        queue_wait_avg_ns,
-                        queue_wait_max_ns,
-                        in_flight,
-                        max_signers,
-                        connections,
-                        active_connections,
-                        max_active_connections,
-                        max_connections,
-                        connection_rejected,
-                        list_count,
-                        list_hit,
-                        list_stale,
-                        list_refresh,
-                        list_errors,
-                        store_sign_file,
-                        store_sign_pkcs11,
-                        store_sign_secure_enclave,
-                        store_sign_other,
-                    };
+                    let snapshot = build_metrics_snapshot(sign_semaphore, max_signers);
                     emit_sign_metrics("interval", &snapshot);
                 }
             }
@@ -2711,6 +2709,7 @@ mod tests {
             watch_files: None,
             watch_debounce_ms: None,
             metrics_every: None,
+            metrics_interval_ms: None,
             metrics_json: None,
             metrics_output_path: None,
             audit_requests: None,

@@ -28,6 +28,7 @@ Socket path overrides:
 - `watch_files` (bool): enable or disable file-store watching (default: true).
 - `watch_debounce_ms` (number): debounce interval for file watcher reloads (default: 200).
 - `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
+- `metrics_interval_ms` (number): emit periodic metrics snapshots every N milliseconds (default: disabled). Use `0` to disable.
 - `metrics_json` (bool): emit sign metrics as JSON lines in logs (default: false). Includes per-store counters (`store_sign_file`, `store_sign_pkcs11`, `store_sign_secure_enclave`, `store_sign_other`) and queue wait telemetry (`queue_wait_avg_ns`, `queue_wait_max_ns`).
 - `metrics_output_path` (string): write the latest metrics snapshot JSON to this path (atomically via temp+rename) for scrape/file collection.
 - `audit_requests` (bool): emit privacy-safe structured audit logs for list/sign requests (default: false).
@@ -44,6 +45,7 @@ Environment overrides (when config/CLI unset):
 - `SECRETIVE_MAX_BLOCKING_THREADS` sets `max_blocking_threads`.
 - `SECRETIVE_WORKER_THREADS` sets `worker_threads`.
 - `SECRETIVE_METRICS_EVERY` sets `metrics_every`.
+- `SECRETIVE_METRICS_INTERVAL_MS` sets `metrics_interval_ms`.
 - `SECRETIVE_METRICS_JSON` sets `metrics_json` (`true`/`false`).
 - `SECRETIVE_METRICS_OUTPUT` sets `metrics_output_path`.
 - `SECRETIVE_AUDIT_REQUESTS` sets `audit_requests` (`true`/`false`).

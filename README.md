@@ -38,6 +38,7 @@ Current Rust milestones:
 - `watch_files` controls automatic reloads
 - `watch_debounce_ms` tunes reload debounce for file watchers
 - `metrics_every` controls logging frequency
+- `metrics_interval_ms` emits periodic metrics snapshots on wall clock interval
 - `metrics_json` emits machine-readable JSON metrics lines
 - `metrics_output_path` writes latest metrics JSON snapshot atomically for scrapers
 - metrics include per-store sign counters (`file`, `pkcs11`, `secure_enclave`, `other`)
