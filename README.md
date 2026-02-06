@@ -64,6 +64,7 @@ Current Rust milestones:
 - CI includes a dedicated scheduled 1000-session fan-out gate
 - CI gate jobs use retry wrapping to reduce transient flake failures
 - CI includes a scheduled Rust soak gate with uploaded benchmark artifacts
+- CI includes shell script syntax sanity checks (`scripts/*.sh`)
 - Initial SLO gate script and scheduled CI job for reconnect workloads
 - End-to-end soak test script for multi-minute/hour reliability runs
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
