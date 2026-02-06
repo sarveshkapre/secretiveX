@@ -1,0 +1,38 @@
+name: Rust Soak Gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 6"
+
+jobs:
+  soak-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run soak gate
+        env:
+          SOAK_DURATION_SECS: "600"
+          SOAK_CONCURRENCY: "384"
+          SOAK_PAYLOAD_SIZE: "64"
+          SOAK_RECONNECT: "1"
+          SOAK_MIN_RPS: "15"
+          SOAK_MAX_FAILURE_RATE: "0.02"
+          SOAK_OUTPUT_JSON: "${{ runner.temp }}/soak.json"
+        run: ./scripts/ci_retry.sh 2 ./scripts/soak_test.sh
+
+      - name: Upload soak result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-soak-result
+          path: ${{ runner.temp }}/soak.json
+          if-no-files-found: warn

@@ -179,3 +179,9 @@ Run soak test against an already-running agent:
 ```bash
 SOAK_SOCKET=\"$XDG_RUNTIME_DIR/secretive/agent.sock\" ./scripts/soak_test.sh
 ```
+
+Persist soak JSON result to a specific path:
+
+```bash
+SOAK_OUTPUT_JSON=/tmp/secretive-soak.json ./scripts/soak_test.sh
+```

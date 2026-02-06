@@ -7,6 +7,7 @@ SOAK_PAYLOAD_SIZE="${SOAK_PAYLOAD_SIZE:-64}"
 SOAK_RECONNECT="${SOAK_RECONNECT:-1}"
 SOAK_MIN_RPS="${SOAK_MIN_RPS:-0}"
 SOAK_MAX_FAILURE_RATE="${SOAK_MAX_FAILURE_RATE:-0.01}"
+SOAK_OUTPUT_JSON="${SOAK_OUTPUT_JSON:-}"
 
 EXTERNAL_SOCKET="${SOAK_SOCKET:-}"
 
@@ -83,6 +84,12 @@ fi
 
 # shellcheck disable=SC2086
 cargo run -p secretive-bench -- $bench_args > "$bench_json"
+
+if [ -n "$SOAK_OUTPUT_JSON" ]; then
+  output_dir="$(dirname "$SOAK_OUTPUT_JSON")"
+  mkdir -p "$output_dir"
+  cp "$bench_json" "$SOAK_OUTPUT_JSON"
+fi
 
 rps="$(grep -o '"rps":[0-9.]*' "$bench_json" | head -n1 | cut -d: -f2)"
 ok="$(grep -o '"ok":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
