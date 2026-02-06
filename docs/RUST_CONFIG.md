@@ -7,6 +7,8 @@ Validate config and exits:
 - `secretive-agent --check-config --config /path/to/agent.json`
 - `secretive-agent --dump-effective-config` (prints merged config and exits)
 
+`--check-config` warns when automatic metrics emission is disabled (`metrics_every=0` and `metrics_interval_ms` unset/0), especially if `metrics_output_path` is configured.
+
 If no path is provided, the agent looks for:
 - `$XDG_CONFIG_HOME/secretive/agent.json`
 - `<config_dir>/secretive/agent.json` (from `directories::BaseDirs`)

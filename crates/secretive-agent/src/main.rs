@@ -1464,6 +1464,19 @@ fn validate_config(config: &Config) -> ConfigValidation {
                 .push("metrics_output_path must not be empty when set".to_string());
         }
     }
+    let metrics_every_enabled = config.metrics_every.unwrap_or(1000) > 0;
+    let metrics_interval_enabled = config.metrics_interval_ms.unwrap_or(0) > 0;
+    if !metrics_every_enabled && !metrics_interval_enabled {
+        out.warnings.push(
+            "metrics_every=0 and metrics_interval_ms unset/0 disable automatic metrics emission"
+                .to_string(),
+        );
+    }
+    if config.metrics_output_path.is_some() && !metrics_every_enabled && !metrics_interval_enabled {
+        out.warnings.push(
+            "metrics_output_path is set but automatic metrics emission is disabled".to_string(),
+        );
+    }
 
     let mut has_key_source = false;
     let mut has_pkcs11 = false;
@@ -3042,5 +3055,28 @@ mod tests {
             .errors
             .iter()
             .any(|entry| entry.contains("metrics_output_path must not be empty")));
+    }
+
+    #[test]
+    fn validate_config_warns_when_metrics_emission_disabled() {
+        let mut config = empty_config();
+        config.metrics_every = Some(0);
+        let validation = validate_config(&config);
+        assert!(validation.warnings.iter().any(|entry| {
+            entry.contains("disable automatic metrics emission")
+        }));
+    }
+
+    #[test]
+    fn validate_config_warns_when_metrics_output_without_emission() {
+        let mut config = empty_config();
+        config.metrics_every = Some(0);
+        config.metrics_interval_ms = Some(0);
+        config.metrics_output_path = Some("/tmp/metrics.json".to_string());
+        let validation = validate_config(&config);
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|entry| entry.contains("metrics_output_path is set but automatic metrics emission is disabled")));
     }
 }
