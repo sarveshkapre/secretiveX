@@ -27,6 +27,7 @@ jobs:
           SOAK_MIN_RPS: "15"
           SOAK_MAX_FAILURE_RATE: "0.02"
           SOAK_OUTPUT_JSON: "${{ runner.temp }}/soak.json"
+          SOAK_OUTPUT_METRICS: "${{ runner.temp }}/soak-metrics.json"
         run: ./scripts/ci_retry.sh 2 ./scripts/soak_test.sh
 
       - name: Upload soak result
@@ -34,5 +35,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-soak-result
-          path: ${{ runner.temp }}/soak.json
+          path: |
+            ${{ runner.temp }}/soak.json
+            ${{ runner.temp }}/soak-metrics.json
           if-no-files-found: warn

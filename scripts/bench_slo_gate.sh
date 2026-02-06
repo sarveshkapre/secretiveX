@@ -8,6 +8,8 @@ SLO_WORKER_START_SPREAD_MS="${SLO_WORKER_START_SPREAD_MS:-1500}"
 SLO_MIN_RPS="${SLO_MIN_RPS:-20}"
 SLO_MAX_P95_US="${SLO_MAX_P95_US:-300000}"
 SLO_MAX_FAILURE_RATE="${SLO_MAX_FAILURE_RATE:-0.01}"
+SLO_MAX_QUEUE_WAIT_AVG_NS="${SLO_MAX_QUEUE_WAIT_AVG_NS:-0}"
+SLO_MAX_QUEUE_WAIT_MAX_NS="${SLO_MAX_QUEUE_WAIT_MAX_NS:-0}"
 
 tmpdir="$(mktemp -d)"
 agent_pid=""
@@ -27,6 +29,7 @@ key_path="$tmpdir/id_ed25519"
 config_path="$tmpdir/agent.json"
 socket_path="$tmpdir/agent.sock"
 bench_json="$tmpdir/bench.json"
+metrics_json="$tmpdir/agent-metrics.json"
 
 ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null
 
@@ -41,6 +44,8 @@ cat > "$config_path" <<JSON
   ],
   "watch_files": false,
   "metrics_every": 0,
+  "metrics_interval_ms": 1000,
+  "metrics_output_path": "$metrics_json",
   "identity_cache_ms": 5000,
   "socket_backlog": 4096,
   "max_connections": 4096,
@@ -116,4 +121,29 @@ if ! awk -v rate="$failure_rate" -v max="$SLO_MAX_FAILURE_RATE" 'BEGIN { exit (r
   exit 1
 fi
 
-echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate"
+queue_wait_avg_ns=""
+queue_wait_max_ns=""
+if [ -f "$metrics_json" ]; then
+  queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$metrics_json" | head -n1 | cut -d: -f2)"
+  queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$metrics_json" | head -n1 | cut -d: -f2)"
+fi
+
+if [ -n "$queue_wait_avg_ns" ] && [ "$SLO_MAX_QUEUE_WAIT_AVG_NS" != "0" ]; then
+  if ! awk -v value="$queue_wait_avg_ns" -v max="$SLO_MAX_QUEUE_WAIT_AVG_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
+    echo "SLO failure: queue wait avg above maximum (queue_wait_avg_ns=$queue_wait_avg_ns max=$SLO_MAX_QUEUE_WAIT_AVG_NS)" >&2
+    cat "$bench_json" >&2
+    cat "$metrics_json" >&2
+    exit 1
+  fi
+fi
+
+if [ -n "$queue_wait_max_ns" ] && [ "$SLO_MAX_QUEUE_WAIT_MAX_NS" != "0" ]; then
+  if ! awk -v value="$queue_wait_max_ns" -v max="$SLO_MAX_QUEUE_WAIT_MAX_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
+    echo "SLO failure: queue wait max above maximum (queue_wait_max_ns=$queue_wait_max_ns max=$SLO_MAX_QUEUE_WAIT_MAX_NS)" >&2
+    cat "$bench_json" >&2
+    cat "$metrics_json" >&2
+    exit 1
+  fi
+fi
+
+echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a}"

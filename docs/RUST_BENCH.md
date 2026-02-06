@@ -149,6 +149,10 @@ Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
 ```
 
 Default SLO gate uses staggered worker start (`SLO_WORKER_START_SPREAD_MS=1500`) to model fan-out ramp while keeping load high.
+It also captures agent queue-wait metrics from `metrics_output_path` and reports `queue_wait_avg_ns` / `queue_wait_max_ns`.
+Optional thresholds:
+- `SLO_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
+- `SLO_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
 
 ## Dedicated 1000-session gate
 
@@ -185,3 +189,13 @@ Persist soak JSON result to a specific path:
 ```bash
 SOAK_OUTPUT_JSON=/tmp/secretive-soak.json ./scripts/soak_test.sh
 ```
+
+Persist agent metrics snapshot JSON from soak run:
+
+```bash
+SOAK_OUTPUT_METRICS=/tmp/secretive-soak-metrics.json ./scripts/soak_test.sh
+```
+
+Optional queue-wait thresholds for soak:
+- `SOAK_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
+- `SOAK_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
