@@ -43,6 +43,7 @@ struct Config {
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
     metrics_json: Option<bool>,
+    metrics_output_path: Option<String>,
     audit_requests: Option<bool>,
     sign_timeout_ms: Option<u64>,
     pid_file: Option<String>,
@@ -57,8 +58,10 @@ static SIGN_QUEUE_WAIT_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_QUEUE_WAIT_MAX_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+static METRICS_WRITE_ERRORS: AtomicU64 = AtomicU64::new(0);
 static METRICS_EVERY: AtomicU64 = AtomicU64::new(1000);
 static METRICS_JSON: AtomicBool = AtomicBool::new(false);
+static METRICS_OUTPUT_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 static AUDIT_REQUESTS: AtomicBool = AtomicBool::new(false);
 static MAX_SIGNERS: AtomicU64 = AtomicU64::new(0);
 static MAX_CONNECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -292,6 +295,9 @@ fn main() {
     if let Some(metrics_json) = args.metrics_json {
         config.metrics_json = Some(metrics_json);
     }
+    if let Some(metrics_output_path) = args.metrics_output_path {
+        config.metrics_output_path = Some(metrics_output_path);
+    }
     if let Some(audit_requests) = args.audit_requests {
         config.audit_requests = Some(audit_requests);
     }
@@ -334,6 +340,14 @@ fn main() {
     if config.metrics_json.is_none() {
         if let Ok(value) = std::env::var("SECRETIVE_METRICS_JSON") {
             config.metrics_json = parse_bool_env(&value);
+        }
+    }
+    if config.metrics_output_path.is_none() {
+        if let Ok(value) = std::env::var("SECRETIVE_METRICS_OUTPUT") {
+            let value = value.trim();
+            if !value.is_empty() {
+                config.metrics_output_path = Some(value.to_string());
+            }
         }
     }
     if config.audit_requests.is_none() {
@@ -756,10 +770,20 @@ async fn run_async(mut config: Config, max_signers: usize) {
     METRICS_EVERY.store(metrics_every, Ordering::Relaxed);
     let metrics_json = config.metrics_json.unwrap_or(false);
     METRICS_JSON.store(metrics_json, Ordering::Relaxed);
+    if let Ok(mut guard) = METRICS_OUTPUT_PATH.lock() {
+        *guard = config.metrics_output_path.as_ref().map(PathBuf::from);
+    } else {
+        warn!("failed to set metrics output path");
+    }
     if metrics_json {
         info!("metrics format: json");
     } else {
         info!("metrics format: log");
+    }
+    if let Some(path) = config.metrics_output_path.as_ref() {
+        info!(path, "metrics output path");
+    } else {
+        info!("metrics output path disabled");
     }
     if metrics_every == 0 {
         info!("signing metrics disabled");
@@ -1287,7 +1311,52 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
     .to_string()
 }
 
+fn metrics_output_path() -> Option<PathBuf> {
+    METRICS_OUTPUT_PATH
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+fn note_metrics_write_error(path: &Path, err: &std::io::Error) {
+    let errors = METRICS_WRITE_ERRORS.fetch_add(1, Ordering::Relaxed) + 1;
+    if errors == 1 || errors % 100 == 0 {
+        warn!(
+            errors,
+            path = %path.display(),
+            ?err,
+            "failed to write metrics output"
+        );
+    }
+}
+
+fn emit_metrics_output(kind: &str, metrics: &SignMetricsSnapshot) {
+    let Some(path) = metrics_output_path() else {
+        return;
+    };
+
+    let payload = format_metrics_json(kind, metrics);
+    if let Some(parent) = path.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            note_metrics_write_error(&path, &err);
+            return;
+        }
+    }
+
+    let temp_path = path.with_extension("tmp");
+    if let Err(err) = std::fs::write(&temp_path, payload.as_bytes()) {
+        note_metrics_write_error(&path, &err);
+        return;
+    }
+    if let Err(err) = std::fs::rename(&temp_path, &path) {
+        let _ = std::fs::remove_file(&temp_path);
+        note_metrics_write_error(&path, &err);
+    }
+}
+
 fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
+    emit_metrics_output(kind, metrics);
+
     if METRICS_JSON.load(Ordering::Relaxed) {
         let payload = format_metrics_json(kind, metrics);
         info!(kind, metrics_json = %payload, "signing metrics");
@@ -1352,6 +1421,12 @@ fn validate_config(config: &Config) -> ConfigValidation {
     if matches!(config.watch_debounce_ms, Some(0)) {
         out.errors
             .push("watch_debounce_ms must be greater than 0".to_string());
+    }
+    if let Some(path) = config.metrics_output_path.as_ref() {
+        if path.trim().is_empty() {
+            out.errors
+                .push("metrics_output_path must not be empty when set".to_string());
+        }
     }
 
     let mut has_key_source = false;
@@ -1538,6 +1613,7 @@ fn load_config(path_override: Option<&str>) -> Config {
         watch_debounce_ms: None,
         metrics_every: None,
         metrics_json: None,
+        metrics_output_path: None,
         audit_requests: None,
         sign_timeout_ms: None,
         pid_file: None,
@@ -1569,6 +1645,7 @@ struct Args {
     watch_debounce_ms: Option<u64>,
     metrics_every: Option<u64>,
     metrics_json: Option<bool>,
+    metrics_output_path: Option<String>,
     audit_requests: Option<bool>,
     pid_file: Option<String>,
     identity_cache_ms: Option<u64>,
@@ -1598,6 +1675,7 @@ fn parse_args() -> Args {
         watch_debounce_ms: None,
         metrics_every: None,
         metrics_json: None,
+        metrics_output_path: None,
         audit_requests: None,
         pid_file: None,
         identity_cache_ms: None,
@@ -1661,6 +1739,7 @@ fn parse_args() -> Args {
             }
             "--metrics-json" => parsed.metrics_json = Some(true),
             "--no-metrics-json" => parsed.metrics_json = Some(false),
+            "--metrics-output" => parsed.metrics_output_path = args.next(),
             "--audit-requests" => parsed.audit_requests = Some(true),
             "--no-audit-requests" => parsed.audit_requests = Some(false),
             "--sign-timeout-ms" => {
@@ -1725,6 +1804,7 @@ fn print_help() {
     );
     println!("  --metrics-every <n>");
     println!("  --metrics-json | --no-metrics-json");
+    println!("  --metrics-output <path>");
     println!("  --audit-requests | --no-audit-requests");
     println!("  --sign-timeout-ms <n>");
     println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
@@ -2632,6 +2712,7 @@ mod tests {
             watch_debounce_ms: None,
             metrics_every: None,
             metrics_json: None,
+            metrics_output_path: None,
             audit_requests: None,
             sign_timeout_ms: None,
             pid_file: None,
@@ -2833,6 +2914,54 @@ mod tests {
     }
 
     #[test]
+    fn emit_metrics_output_writes_json_file() {
+        let path = std::env::temp_dir().join(format!(
+            "secretive-metrics-{}-{}.json",
+            std::process::id(),
+            now_ms()
+        ));
+        {
+            let mut guard = METRICS_OUTPUT_PATH.lock().expect("metrics output path lock");
+            *guard = Some(path.clone());
+        }
+
+        let snapshot = SignMetricsSnapshot {
+            count: 1,
+            errors: 0,
+            timeouts: 0,
+            avg_ns: 2.0,
+            queue_wait_avg_ns: 1.0,
+            queue_wait_max_ns: 3,
+            in_flight: 0,
+            max_signers: 4,
+            connections: 5,
+            active_connections: 6,
+            max_active_connections: 7,
+            max_connections: 8,
+            connection_rejected: 0,
+            list_count: 0,
+            list_hit: 0,
+            list_stale: 0,
+            list_refresh: 0,
+            list_errors: 0,
+            store_sign_file: 1,
+            store_sign_pkcs11: 0,
+            store_sign_secure_enclave: 0,
+            store_sign_other: 0,
+        };
+        emit_metrics_output("snapshot", &snapshot);
+        let content = std::fs::read_to_string(&path).expect("read metrics output");
+        assert!(content.contains("\"kind\":\"snapshot\""));
+        assert!(content.contains("\"queue_wait_max_ns\":3"));
+
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut guard = METRICS_OUTPUT_PATH.lock().expect("metrics output path lock");
+            *guard = None;
+        }
+    }
+
+    #[test]
     fn audit_key_id_formats_fingerprint_or_blob_length() {
         let public_key = ssh_key::PublicKey::from_openssh(
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICG6kjK0iJxESpkwvCTOwwcUsJcggrGhSdHyaP0JHGub",
@@ -2903,5 +3032,16 @@ mod tests {
         assert!(validation.errors.iter().any(|entry| {
             entry.contains("policy.pin_fingerprints[0] must be a valid fingerprint")
         }));
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_metrics_output_path() {
+        let mut config = empty_config();
+        config.metrics_output_path = Some("  ".to_string());
+        let validation = validate_config(&config);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|entry| entry.contains("metrics_output_path must not be empty")));
     }
 }
