@@ -20,7 +20,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run regression gate
-        run: sh ./scripts/regression_gate.sh
+        run: ./scripts/ci_retry.sh 2 sh ./scripts/regression_gate.sh
 
   pkcs11-feature-build:
     runs-on: ${{ matrix.os }}

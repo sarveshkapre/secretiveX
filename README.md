@@ -61,6 +61,7 @@ Current Rust milestones:
 - CI includes a consolidated Rust regression gate (compat + smoke + SLO checks)
 - CI validates `secretive-core` builds with `pkcs11` feature on Linux and macOS
 - CI includes a dedicated scheduled 1000-session fan-out gate
+- CI gate jobs use retry wrapping to reduce transient flake failures
 - Initial SLO gate script and scheduled CI job for reconnect workloads
 - End-to-end soak test script for multi-minute/hour reliability runs
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads

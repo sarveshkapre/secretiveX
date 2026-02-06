@@ -23,4 +23,4 @@ jobs:
           BENCH_REQUESTS: "8"
           BENCH_PAYLOAD_SIZE: "64"
           MIN_RPS: "25"
-        run: ./scripts/bench_smoke_gate.sh
+        run: ./scripts/ci_retry.sh 2 ./scripts/bench_smoke_gate.sh

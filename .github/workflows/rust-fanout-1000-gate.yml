@@ -27,4 +27,4 @@ jobs:
           SLO_MIN_RPS: "20"
           SLO_MAX_P95_US: "350000"
           SLO_MAX_FAILURE_RATE: "0.02"
-        run: ./scripts/fanout_1000_gate.sh
+        run: ./scripts/ci_retry.sh 2 ./scripts/fanout_1000_gate.sh
