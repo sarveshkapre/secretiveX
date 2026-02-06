@@ -1,0 +1,30 @@
+name: Rust PKCS11 Smoke
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 2"
+
+jobs:
+  pkcs11-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PKCS11 test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y softhsm2 opensc
+
+      - name: Run PKCS11 smoke test
+        env:
+          PKCS11_SMOKE_REQUIRE_TOOLS: "1"
+        run: ./scripts/ci_retry.sh 2 ./scripts/pkcs11_smoke.sh

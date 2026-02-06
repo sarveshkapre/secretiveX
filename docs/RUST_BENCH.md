@@ -200,3 +200,17 @@ SOAK_OUTPUT_METRICS=/tmp/secretive-soak-metrics.json ./scripts/soak_test.sh
 Optional queue-wait thresholds for soak:
 - `SOAK_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
 - `SOAK_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
+
+## PKCS#11 smoke
+
+Run local PKCS#11 smoke test (uses SoftHSM when available):
+
+```bash
+./scripts/pkcs11_smoke.sh
+```
+
+Force failure when required tools are missing:
+
+```bash
+PKCS11_SMOKE_REQUIRE_TOOLS=1 ./scripts/pkcs11_smoke.sh
+```
