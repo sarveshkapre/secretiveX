@@ -1,8 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
+
 tmpdir="$(mktemp -d)"
 agent_pid=""
+agent_log="$tmpdir/agent.log"
 OPENSSH_KEY_TYPES="${OPENSSH_KEY_TYPES:-ed25519,rsa,ecdsa}"
 OPENSSH_RSA_BITS="${OPENSSH_RSA_BITS:-3072}"
 OPENSSH_SIGN_KEY_TYPES="${OPENSSH_SIGN_KEY_TYPES:-ed25519,ecdsa}"
@@ -97,24 +101,14 @@ cargo run -p secretive-agent -- \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \
-  --metrics-every 0 >/dev/null 2>&1 &
+  --metrics-every 0 >"$agent_log" 2>&1 &
 agent_pid="$!"
 
-ready=0
-for _ in $(seq 1 100); do
-  if [ -S "$socket_path" ]; then
-    if cargo run -p secretive-client -- --socket "$socket_path" --list --raw >/dev/null 2>&1; then
-      ready=1
-      break
-    fi
-  fi
-  sleep 0.1
-done
-
-if [ "$ready" -ne 1 ]; then
-  echo "agent failed to become ready" >&2
-  exit 1
-fi
+"$script_dir/wait_for_agent_ready.sh" \
+  "$socket_path" \
+  "$agent_pid" \
+  "$agent_log" \
+  "$AGENT_STARTUP_TIMEOUT_SECS"
 
 export SSH_AUTH_SOCK="$socket_path"
 

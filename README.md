@@ -73,6 +73,7 @@ Current Rust milestones:
 - CI gate jobs use retry wrapping to reduce transient flake failures
 - CI includes a scheduled Rust soak gate with uploaded benchmark artifacts
 - CI includes shell script syntax sanity checks (`scripts/*.sh`)
+- CI smoke/gate scripts now share a readiness helper with configurable `AGENT_STARTUP_TIMEOUT_SECS` and startup-log tails for actionable failure diagnostics
 - SLO/soak gates report agent queue-wait metrics (`queue_wait_avg_ns`, `queue_wait_max_ns`)
 - SLO/fanout/soak CI gates enforce conservative queue-wait threshold checks
 - CI includes long-duration multi-host stress matrix with strict queue-wait SLO envelopes

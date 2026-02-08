@@ -33,3 +33,11 @@ Control which key types must pass sign/verify:
 ```bash
 OPENSSH_KEY_TYPES='ed25519,rsa,ecdsa' OPENSSH_SIGN_KEY_TYPES='ed25519,ecdsa' ./scripts/openssh_compat_smoke.sh
 ```
+
+Tune cold-start readiness timeout (useful on fresh CI runners that still need to compile Rust crates):
+
+```bash
+AGENT_STARTUP_TIMEOUT_SECS=120 ./scripts/openssh_compat_smoke.sh
+```
+
+On readiness failures, the smoke script now prints the tail of the captured agent startup log to make root cause visible in CI logs.

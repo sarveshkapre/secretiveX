@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
+
 SOAK_DURATION_SECS="${SOAK_DURATION_SECS:-1800}"
 SOAK_CONCURRENCY="${SOAK_CONCURRENCY:-256}"
 SOAK_PAYLOAD_SIZE="${SOAK_PAYLOAD_SIZE:-64}"
@@ -21,6 +24,7 @@ EXTERNAL_SOCKET="${SOAK_SOCKET:-}"
 
 tmpdir="$(mktemp -d)"
 agent_pid=""
+agent_log="$tmpdir/agent.log"
 agent_metrics_json="$tmpdir/agent-metrics.json"
 
 cleanup() {
@@ -67,24 +71,14 @@ JSON
     --config "$config_path" \
     --socket "$socket_path" \
     --no-watch \
-    --metrics-every 0 >/dev/null 2>&1 &
+    --metrics-every 0 >"$agent_log" 2>&1 &
   agent_pid="$!"
 
-  ready=0
-  for _ in $(seq 1 120); do
-    if [ -S "$socket_path" ]; then
-      if cargo run -p secretive-client -- --socket "$socket_path" --list --raw >/dev/null 2>&1; then
-        ready=1
-        break
-      fi
-    fi
-    sleep 0.1
-  done
-
-  if [ "$ready" -ne 1 ]; then
-    echo "agent failed to become ready" >&2
-    exit 1
-  fi
+  "$script_dir/wait_for_agent_ready.sh" \
+    "$socket_path" \
+    "$agent_pid" \
+    "$agent_log" \
+    "$AGENT_STARTUP_TIMEOUT_SECS"
 fi
 
 bench_json="$tmpdir/soak.json"

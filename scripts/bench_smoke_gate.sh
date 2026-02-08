@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
+
 BENCH_CONCURRENCY="${BENCH_CONCURRENCY:-128}"
 BENCH_REQUESTS="${BENCH_REQUESTS:-8}"
 BENCH_PAYLOAD_SIZE="${BENCH_PAYLOAD_SIZE:-64}"
@@ -10,6 +13,7 @@ MIN_RPS="${MIN_RPS:-25}"
 workdir="$(pwd)"
 tmpdir="$(mktemp -d)"
 agent_pid=""
+agent_log="$tmpdir/agent.log"
 
 cleanup() {
   if [ -n "$agent_pid" ] && kill -0 "$agent_pid" >/dev/null 2>&1; then
@@ -49,24 +53,14 @@ cargo run -p secretive-agent -- \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \
-  --metrics-every 0 >/dev/null 2>&1 &
+  --metrics-every 0 >"$agent_log" 2>&1 &
 agent_pid="$!"
 
-ready=0
-for _ in $(seq 1 100); do
-  if [ -S "$socket_path" ]; then
-    if cargo run -p secretive-client -- --socket "$socket_path" --list --raw >/dev/null 2>&1; then
-      ready=1
-      break
-    fi
-  fi
-  sleep 0.1
-done
-
-if [ "$ready" -ne 1 ]; then
-  echo "agent failed to become ready" >&2
-  exit 1
-fi
+"$script_dir/wait_for_agent_ready.sh" \
+  "$socket_path" \
+  "$agent_pid" \
+  "$agent_log" \
+  "$AGENT_STARTUP_TIMEOUT_SECS"
 
 cargo run -p secretive-bench -- \
   --socket "$socket_path" \

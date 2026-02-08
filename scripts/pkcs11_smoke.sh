@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
+
 PKCS11_SMOKE_REQUIRE_TOOLS="${PKCS11_SMOKE_REQUIRE_TOOLS:-0}"
 PKCS11_TOKEN_LABEL="${PKCS11_TOKEN_LABEL:-secretivex-smoke}"
 PKCS11_LABEL="${PKCS11_LABEL:-secretivex-smoke-key}"
@@ -9,6 +12,7 @@ PKCS11_SO_PIN="${PKCS11_SO_PIN:-123456}"
 
 tmpdir="$(mktemp -d)"
 agent_pid=""
+agent_log="$tmpdir/agent.log"
 
 cleanup() {
   if [ -n "$agent_pid" ] && kill -0 "$agent_pid" >/dev/null 2>&1; then
@@ -129,24 +133,14 @@ cargo run -p secretive-agent --features pkcs11 -- \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \
-  --metrics-every 0 >/dev/null 2>&1 &
+  --metrics-every 0 >"$agent_log" 2>&1 &
 agent_pid="$!"
 
-ready=0
-for _ in $(seq 1 120); do
-  if [ -S "$socket_path" ]; then
-    if cargo run -p secretive-client -- --socket "$socket_path" --list --raw >/dev/null 2>&1; then
-      ready=1
-      break
-    fi
-  fi
-  sleep 0.1
-done
-
-if [ "$ready" -ne 1 ]; then
-  echo "pkcs11 smoke: agent failed to become ready" >&2
-  exit 1
-fi
+"$script_dir/wait_for_agent_ready.sh" \
+  "$socket_path" \
+  "$agent_pid" \
+  "$agent_log" \
+  "$AGENT_STARTUP_TIMEOUT_SECS"
 
 if ! cargo run -p secretive-client -- --socket "$socket_path" --list --raw | grep -q "$PKCS11_LABEL"; then
   echo "pkcs11 smoke: expected key label not found in identity list" >&2

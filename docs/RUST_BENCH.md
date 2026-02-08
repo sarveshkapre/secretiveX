@@ -186,6 +186,7 @@ MIN_RPS=50 BENCH_CONCURRENCY=256 BENCH_REQUESTS=8 ./scripts/bench_smoke_gate.sh
 
 Profile selection:
 - `BENCH_PROFILE` controls the agent profile for smoke gate config (default: `fanout`).
+- `AGENT_STARTUP_TIMEOUT_SECS` controls how long gate scripts wait for the agent to become ready (default: `90`).
 
 ## Regression gate
 
@@ -193,6 +194,12 @@ Run consolidated regression checks (OpenSSH matrix smoke + reconnect smoke + SLO
 
 ```bash
 ./scripts/regression_gate.sh
+```
+
+If CI or cold-start local runs are still compiling crates and hit readiness timeouts, raise:
+
+```bash
+AGENT_STARTUP_TIMEOUT_SECS=120 ./scripts/regression_gate.sh
 ```
 
 ## SLO gate
@@ -212,6 +219,7 @@ Optional thresholds:
 - `SLO_QUEUE_WAIT_TAIL_NS` + `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` (defaults `0`): fail if more than the allowed ratio of requests land in histogram buckets whose upper bound is >= the tail threshold. Example: `SLO_QUEUE_WAIT_TAIL_NS=5000000 SLO_QUEUE_WAIT_TAIL_MAX_RATIO=0.05` alerts when >5% of signs wait ≥5ms in the queue.
 - CI jobs set conservative non-zero defaults for queue-wait sanity checks.
 - Leaving both tail knobs unset now auto-selects a guardrail for the chosen profile (`pssh` uses 4ms <=3% tail, `fanout` 6ms <=4%, `balanced` 8ms <=5%, `low-memory` 12ms <=7%). Override the environment variables to customize these values.
+- `AGENT_STARTUP_TIMEOUT_SECS` (default `90`) controls readiness wait for the temporary agent process before the bench run starts.
 
 ## Dedicated 1000-session gate
 
