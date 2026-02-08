@@ -14,6 +14,7 @@
 - [ ] Resolve `TODO: CHECK VERSION` in `Sources/Secretive/Controllers/AgentStatusChecker.swift` with either implementation or removal.
 
 ## Implemented
+- 2026-02-08: Stabilized `scripts/regression_gate.sh` SLO defaults for hosted CI by reducing reconnect SLO fan-out pressure (`REGRESSION_SLO_CONCURRENCY` 256 -> 64, `REGRESSION_SLO_DURATION_SECS` 8 -> 10) so regression gates continue to validate latency/reliability without over-saturating shared runners (scripts/regression_gate.sh, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/regression_gate.sh`).
 - 2026-02-08: Fixed CI smoke/gate flake root cause where cold-start `cargo run` compilations could exceed 10-12s readiness loops. Added shared helper `scripts/wait_for_agent_ready.sh` with configurable timeout (`AGENT_STARTUP_TIMEOUT_SECS`, default 90s), agent PID liveness checks, and automatic startup-log tail diagnostics on failure (scripts/wait_for_agent_ready.sh, scripts/openssh_compat_smoke.sh, scripts/bench_smoke_gate.sh, scripts/bench_slo_gate.sh, scripts/pkcs11_smoke.sh, scripts/soak_test.sh).
 - 2026-02-08: Documented the new readiness timeout and diagnostics behavior for smoke/gate operators (README.md, docs/OPENSSH_COMPAT.md, docs/RUST_BENCH.md).
 - 2026-02-08: Verification evidence:
