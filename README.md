@@ -46,7 +46,7 @@ Current Rust milestones:
 - metrics include per-store sign counters (`file`, `pkcs11`, `secure_enclave`, `other`)
 - metrics include queue wait telemetry (`queue_wait_avg_ns`, `queue_wait_max_ns`, `queue_wait_histogram`)
 - metrics emit queue-wait percentile summaries (p50/p90/p95/p99) for quick SLO checks without external crunching
-- SLO gate now enforces histogram-based queue-wait tail ratios to catch latency blow-ups that avg/max miss
+- SLO gate now prefers agent-provided queue-wait percentiles for tail enforcement (falls back to histograms) so latency blow-ups surface without bucket crunching
 - `audit_requests` emits privacy-safe structured request audit logs
 - `policy` rules can allow/deny sign requests by key blob, fingerprint, or comment
 - `pid_file` writes the agent PID for monitoring

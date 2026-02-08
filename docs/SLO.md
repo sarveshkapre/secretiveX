@@ -19,7 +19,7 @@ These are baseline guardrails and should tighten as implementation matures.
 Queue-wait envelopes are treated as strict when configured:
 - Non-zero queue-wait thresholds require queue-wait metrics to be present.
 - Missing queue-wait metrics with strict envelopes fails the gate.
-- Tail thresholds are available when both `SLO_QUEUE_WAIT_TAIL_NS` and `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` are non-zero. The gate sums histogram buckets whose upper bound is greater than or equal to the tail threshold and fails when their ratio exceeds the configured maximum.
+- Tail thresholds are available when both `SLO_QUEUE_WAIT_TAIL_NS` and `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` are non-zero. The gate now prefers agent-provided percentiles (`queue_wait_percentiles`) to calculate whether the configured tail percentile violates the threshold; when percentiles are missing it falls back to summing histogram buckets whose upper bound is greater than or equal to the tail threshold and fails when their ratio exceeds the configured maximum.
 - Agent metrics also emit `queue_wait_percentiles` (p50/p90/p95/p99) so you can make quick pass/fail calls without crunching histograms; scripts can prefer these when the JSON snapshot has them.
 
 ## Enforcing SLOs
