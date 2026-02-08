@@ -1331,8 +1331,8 @@ mod tests {
             }),
         };
         let mut buf = Vec::new();
-        let wrote =
-            write_metrics_queue_wait_percentiles(&mut buf, &percentiles).expect("write percentiles");
+        let wrote = write_metrics_queue_wait_percentiles(&mut buf, &percentiles)
+            .expect("write percentiles");
         assert!(wrote);
         let output = String::from_utf8(buf).expect("utf8");
         assert!(output.contains("queue_wait_p50_ns: <="));
