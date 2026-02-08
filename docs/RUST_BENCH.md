@@ -152,7 +152,7 @@ Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
 ```
 
 Default SLO gate uses staggered worker start (`SLO_WORKER_START_SPREAD_MS=1500`) to model fan-out ramp while keeping load high.
-It also captures agent queue-wait metrics from `metrics_output_path` and reports `queue_wait_avg_ns` / `queue_wait_max_ns`.
+It also captures agent queue-wait metrics from `metrics_output_path` and reports `queue_wait_avg_ns` / `queue_wait_max_ns` plus `queue_wait_histogram` buckets when available.
 `SLO_PROFILE` controls the agent profile for gate config (default: `pssh`).
 Optional thresholds:
 - `SLO_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)

@@ -697,6 +697,7 @@ struct MetricsSnapshot {
     store_sign_pkcs11: Option<u64>,
     store_sign_secure_enclave: Option<u64>,
     store_sign_other: Option<u64>,
+    queue_wait_histogram: Option<Vec<u64>>,
 }
 
 fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Result<()> {
@@ -725,6 +726,11 @@ fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Resu
     }
     if let Some(value) = metrics.queue_wait_max_ns {
         writeln!(handle, "queue_wait_max_ns: {}", value)?;
+    }
+    if let Some(hist) = metrics.queue_wait_histogram.as_ref() {
+        if !hist.is_empty() {
+            writeln!(handle, "queue_wait_histogram: {}", format_histogram(hist))?;
+        }
     }
     writeln!(handle, "in_flight: {}", metrics.in_flight)?;
     writeln!(handle, "max_signers: {}", metrics.max_signers)?;
@@ -772,6 +778,20 @@ fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Resu
     }
 
     Ok(())
+}
+
+fn format_histogram(hist: &[u64]) -> String {
+    const MAX_ITEMS: usize = 10;
+    if hist.len() <= MAX_ITEMS {
+        return format!("{hist:?}");
+    }
+    let mut head: Vec<String> = hist[..MAX_ITEMS]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    head.push("...".to_string());
+    head.push(hist.last().copied().unwrap_or_default().to_string());
+    format!("[{}]", head.join(", "))
 }
 
 fn print_pssh_hints(socket_path: &Path) -> Result<()> {

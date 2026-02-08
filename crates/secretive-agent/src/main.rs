@@ -57,6 +57,36 @@ static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_QUEUE_WAIT_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_QUEUE_WAIT_MAX_NS: AtomicU64 = AtomicU64::new(0);
+const QUEUE_WAIT_BUCKET_BOUNDS: [u64; 25] = [
+    500,
+    1_000,
+    2_000,
+    4_000,
+    8_000,
+    16_000,
+    32_000,
+    64_000,
+    128_000,
+    256_000,
+    512_000,
+    1_000_000,
+    2_000_000,
+    4_000_000,
+    8_000_000,
+    16_000_000,
+    32_000_000,
+    64_000_000,
+    128_000_000,
+    256_000_000,
+    512_000_000,
+    1_000_000_000,
+    2_000_000_000,
+    4_000_000_000,
+    8_000_000_000,
+];
+const QUEUE_WAIT_BUCKET_COUNT: usize = QUEUE_WAIT_BUCKET_BOUNDS.len() + 1;
+static QUEUE_WAIT_BUCKETS: [AtomicU64; QUEUE_WAIT_BUCKET_COUNT] =
+    [const { AtomicU64::new(0) }; QUEUE_WAIT_BUCKET_COUNT];
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 static METRICS_WRITE_ERRORS: AtomicU64 = AtomicU64::new(0);
@@ -946,6 +976,14 @@ fn update_atomic_max(target: &AtomicU64, value: u64) {
     }
 }
 
+fn record_queue_wait_bucket(wait_ns: u64) {
+    let bucket = QUEUE_WAIT_BUCKET_BOUNDS
+        .iter()
+        .position(|&bound| wait_ns <= bound)
+        .unwrap_or(QUEUE_WAIT_BUCKET_COUNT - 1);
+    QUEUE_WAIT_BUCKETS[bucket].fetch_add(1, Ordering::Relaxed);
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ConfigProfile {
     Balanced,
@@ -1301,6 +1339,7 @@ struct SignMetricsSnapshot {
     store_sign_pkcs11: u64,
     store_sign_secure_enclave: u64,
     store_sign_other: u64,
+    queue_wait_histogram: [u64; QUEUE_WAIT_BUCKET_COUNT],
 }
 
 fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignMetricsSnapshot {
@@ -1332,6 +1371,10 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
     let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
     let store_sign_secure_enclave = STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
     let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
+    let mut queue_wait_histogram = [0u64; QUEUE_WAIT_BUCKET_COUNT];
+    for (idx, bucket) in QUEUE_WAIT_BUCKETS.iter().enumerate() {
+        queue_wait_histogram[idx] = bucket.load(Ordering::Relaxed);
+    }
     SignMetricsSnapshot {
         count,
         errors,
@@ -1355,6 +1398,7 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
         store_sign_pkcs11,
         store_sign_secure_enclave,
         store_sign_other,
+        queue_wait_histogram,
     }
 }
 
@@ -1382,7 +1426,8 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
         "store_sign_file": metrics.store_sign_file,
         "store_sign_pkcs11": metrics.store_sign_pkcs11,
         "store_sign_secure_enclave": metrics.store_sign_secure_enclave,
-        "store_sign_other": metrics.store_sign_other
+        "store_sign_other": metrics.store_sign_other,
+        "queue_wait_histogram": metrics.queue_wait_histogram,
     })
     .to_string()
 }
@@ -1468,6 +1513,7 @@ fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
         store_sign_pkcs11 = metrics.store_sign_pkcs11,
         store_sign_secure_enclave = metrics.store_sign_secure_enclave,
         store_sign_other = metrics.store_sign_other,
+        queue_wait_histogram = ?metrics.queue_wait_histogram,
         "{}",
         message
     );
@@ -2565,6 +2611,7 @@ async fn handle_sign_request(
     let wait_ns = wait_started.elapsed().as_nanos() as u64;
     SIGN_QUEUE_WAIT_NS.fetch_add(wait_ns, Ordering::Relaxed);
     update_atomic_max(&SIGN_QUEUE_WAIT_MAX_NS, wait_ns);
+    record_queue_wait_bucket(wait_ns);
     let registry = Arc::clone(registry);
     let result = if inline_sign {
         Ok(registry.sign_with_store(key_blob.as_ref(), data.as_ref(), flags))
@@ -2976,6 +3023,7 @@ mod tests {
             store_sign_pkcs11: 18,
             store_sign_secure_enclave: 19,
             store_sign_other: 20,
+            queue_wait_histogram: [0; QUEUE_WAIT_BUCKET_COUNT],
         };
         let payload = format_metrics_json("snapshot", &snapshot);
         assert!(payload.contains("\"kind\":\"snapshot\""));
@@ -2985,6 +3033,7 @@ mod tests {
         assert!(payload.contains("\"queue_wait_max_ns\":6"));
         assert!(payload.contains("\"list_errors\":16"));
         assert!(payload.contains("\"store_sign_file\":17"));
+        assert!(payload.contains("\"queue_wait_histogram\""));
     }
 
     #[test]
@@ -3024,11 +3073,13 @@ mod tests {
             store_sign_pkcs11: 0,
             store_sign_secure_enclave: 0,
             store_sign_other: 0,
+            queue_wait_histogram: [0; QUEUE_WAIT_BUCKET_COUNT],
         };
         emit_metrics_output("snapshot", &snapshot);
         let content = std::fs::read_to_string(&path).expect("read metrics output");
         assert!(content.contains("\"kind\":\"snapshot\""));
         assert!(content.contains("\"queue_wait_max_ns\":3"));
+        assert!(content.contains("\"queue_wait_histogram\""));
 
         let _ = std::fs::remove_file(&path);
         {
