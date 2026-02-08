@@ -54,6 +54,36 @@ struct Config {
     inline_sign: Option<bool>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            profile: None,
+            socket_path: None,
+            socket_backlog: None,
+            key_paths: None,
+            scan_default_dir: None,
+            stores: None,
+            policy: None,
+            max_signers: None,
+            max_connections: None,
+            max_blocking_threads: None,
+            worker_threads: None,
+            watch_files: None,
+            watch_debounce_ms: None,
+            metrics_every: None,
+            metrics_interval_ms: None,
+            metrics_json: None,
+            metrics_output_path: None,
+            audit_requests: None,
+            sign_timeout_ms: None,
+            pid_file: None,
+            identity_cache_ms: None,
+            idle_timeout_ms: None,
+            inline_sign: None,
+        }
+    }
+}
+
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIME_NS: AtomicU64 = AtomicU64::new(0);
 static SIGN_QUEUE_WAIT_NS: AtomicU64 = AtomicU64::new(0);
@@ -318,6 +348,10 @@ fn main() {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if args.suggest_queue_wait && args.reset_metrics {
+        eprintln!("--suggest-queue-wait cannot be combined with --reset-metrics");
+        std::process::exit(2);
+    }
     if args.pid.is_some() && !args.reset_metrics {
         eprintln!("--pid is only valid with --reset-metrics");
         std::process::exit(2);
@@ -522,11 +556,28 @@ fn main() {
                 std::process::exit(2);
             }
         }
-        if !check_config {
+        if !check_config && !args.suggest_queue_wait {
             return;
         }
     }
-
+    let max_signers = compute_max_signers(&config);
+    if args.suggest_queue_wait {
+        if check_config {
+            let validation = validate_config(&config);
+            for warning in validation.warnings {
+                eprintln!("warning: {warning}");
+            }
+            if !validation.errors.is_empty() {
+                eprintln!("config validation failed:");
+                for error in validation.errors {
+                    eprintln!("- {error}");
+                }
+                std::process::exit(2);
+            }
+        }
+        emit_queue_wait_suggestion(&config, max_signers);
+        return;
+    }
     if check_config {
         let validation = validate_config(&config);
         for warning in validation.warnings {
@@ -542,8 +593,6 @@ fn main() {
         }
         std::process::exit(2);
     }
-
-    let max_signers = compute_max_signers(&config);
     let max_blocking_threads = config.max_blocking_threads.unwrap_or(max_signers).max(1);
     info!(max_blocking_threads, "blocking thread pool size");
     let mut runtime = tokio::runtime::Builder::new_multi_thread();
@@ -1049,6 +1098,212 @@ fn compute_max_signers(config: &Config) -> usize {
 
 fn effective_inline_sign(explicit: Option<bool>, has_pkcs11_store: bool) -> bool {
     explicit.unwrap_or(!has_pkcs11_store)
+}
+
+#[derive(Debug, Clone)]
+struct QueueWaitSuggestion {
+    profile_label: String,
+    profile_inferred: bool,
+    cpu_cores: usize,
+    max_signers: usize,
+    signers_per_core: f64,
+    tail_ns: u64,
+    tail_ratio: f64,
+    inline_sign: bool,
+    has_pkcs11: bool,
+    max_connections: Option<usize>,
+    reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QueueWaitDefaults {
+    tail_ns: u64,
+    tail_ratio: f64,
+    baseline_signers_per_core: f64,
+}
+
+fn queue_wait_profile_info(config: &Config) -> (Option<ConfigProfile>, String, bool) {
+    if let Some(name) = config.profile.as_deref() {
+        if let Some(profile) = ConfigProfile::parse(name) {
+            return (Some(profile), name.to_string(), false);
+        }
+        return (None, format!("custom ({name})"), false);
+    }
+    (
+        Some(ConfigProfile::Balanced),
+        "balanced (implicit)".to_string(),
+        true,
+    )
+}
+
+fn queue_wait_defaults(profile: Option<ConfigProfile>) -> QueueWaitDefaults {
+    match profile {
+        Some(ConfigProfile::Pssh) => QueueWaitDefaults {
+            tail_ns: 4_000_000,
+            tail_ratio: 0.03,
+            baseline_signers_per_core: 12.0,
+        },
+        Some(ConfigProfile::Fanout) => QueueWaitDefaults {
+            tail_ns: 6_000_000,
+            tail_ratio: 0.04,
+            baseline_signers_per_core: 8.0,
+        },
+        Some(ConfigProfile::LowMemory) => QueueWaitDefaults {
+            tail_ns: 12_000_000,
+            tail_ratio: 0.07,
+            baseline_signers_per_core: 2.0,
+        },
+        _ => QueueWaitDefaults {
+            tail_ns: 8_000_000,
+            tail_ratio: 0.05,
+            baseline_signers_per_core: 4.0,
+        },
+    }
+}
+
+fn config_has_pkcs11_store(config: &Config) -> bool {
+    config
+        .stores
+        .as_ref()
+        .map(|stores| {
+            stores
+                .iter()
+                .any(|store| matches!(store, StoreConfig::Pkcs11 { .. }))
+        })
+        .unwrap_or(false)
+}
+
+fn queue_wait_cpu_cores() -> usize {
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .max(1)
+}
+
+fn build_queue_wait_suggestion(config: &Config, max_signers: usize) -> QueueWaitSuggestion {
+    let cpu_cores = queue_wait_cpu_cores();
+    build_queue_wait_suggestion_with_cores(config, max_signers, cpu_cores)
+}
+
+fn build_queue_wait_suggestion_with_cores(
+    config: &Config,
+    max_signers: usize,
+    cpu_cores: usize,
+) -> QueueWaitSuggestion {
+    let (profile, profile_label, profile_inferred) = queue_wait_profile_info(config);
+    let defaults = queue_wait_defaults(profile);
+    let signers_per_core = max_signers as f64 / cpu_cores as f64;
+    let mut tail_ns = defaults.tail_ns;
+    let mut tail_ratio = defaults.tail_ratio;
+    let mut reasons = Vec::new();
+    reasons.push(format!(
+        "profile {profile_label} starts with {:.2} ms tail and {:.1}% ratio guardrail",
+        tail_ns as f64 / 1_000_000.0,
+        tail_ratio * 100.0
+    ));
+
+    let baseline = defaults.baseline_signers_per_core.max(1.0);
+    let concurrency_ratio = signers_per_core / baseline;
+    if concurrency_ratio > 1.1 {
+        let scale = 1.0 + ((concurrency_ratio - 1.0).min(1.5)) * 0.35;
+        tail_ns = ((tail_ns as f64) * scale).round() as u64;
+        tail_ratio = (tail_ratio + 0.01 + (concurrency_ratio - 1.0).min(1.0) * 0.01).min(0.15);
+        reasons.push(format!(
+            "max_signers={max_signers} (~{signers_per_core:.1} per core) exceeds the {baseline:.1}/core baseline; bump tail by {:+.0}% to keep queue churn sane",
+            (scale - 1.0) * 100.0
+        ));
+    } else if concurrency_ratio < 0.9 {
+        let scale = 1.0 - ((1.0 - concurrency_ratio).min(0.5)) * 0.25;
+        tail_ns = ((tail_ns as f64) * scale).round() as u64;
+        tail_ratio = (tail_ratio - 0.005).max(0.02);
+        reasons.push(format!(
+            "max_signers={max_signers} (~{signers_per_core:.1} per core) is below the {baseline:.1}/core baseline; tighten guardrail by {:+.0}%",
+            (1.0 - scale) * 100.0
+        ));
+    }
+
+    let has_pkcs11 = config_has_pkcs11_store(config);
+    let inline_sign = effective_inline_sign(config.inline_sign, has_pkcs11);
+    if has_pkcs11 {
+        tail_ns = ((tail_ns as f64) * 1.2).round() as u64;
+        tail_ratio = (tail_ratio + 0.005).min(0.15);
+        reasons.push("pkcs11 store detected; add 20% slack for token RTT churn".to_string());
+    }
+    if !inline_sign {
+        tail_ns = ((tail_ns as f64) * 1.1).round() as u64;
+        tail_ratio = (tail_ratio + 0.003).min(0.15);
+        reasons.push("inline signing disabled; account for blocking thread contention".to_string());
+    }
+
+    if config.max_connections.unwrap_or(0) >= 20_000 {
+        tail_ratio = (tail_ratio + 0.003).min(0.15);
+        reasons.push(
+            "max_connections >= 20000 implies very high fan-out; allow +0.3pp queue tail"
+                .to_string(),
+        );
+    }
+
+    tail_ns = tail_ns.clamp(1_000_000, 40_000_000);
+    tail_ratio = tail_ratio.clamp(0.02, 0.15);
+
+    QueueWaitSuggestion {
+        profile_label,
+        profile_inferred,
+        cpu_cores,
+        max_signers,
+        signers_per_core,
+        tail_ns,
+        tail_ratio,
+        inline_sign,
+        has_pkcs11,
+        max_connections: config.max_connections,
+        reasons,
+    }
+}
+
+fn emit_queue_wait_suggestion(config: &Config, max_signers: usize) {
+    let suggestion = build_queue_wait_suggestion(config, max_signers);
+    let inferred = if suggestion.profile_inferred {
+        " (inferred)"
+    } else {
+        ""
+    };
+    println!("Queue wait guardrail suggestion");
+    println!("  profile: {}{}", suggestion.profile_label, inferred);
+    println!("  cpu_cores: {}", suggestion.cpu_cores);
+    println!("  max_signers: {}", suggestion.max_signers);
+    println!("  signers_per_core: {:.1}", suggestion.signers_per_core);
+    if let Some(max_connections) = suggestion.max_connections {
+        println!("  max_connections: {}", max_connections);
+    } else {
+        println!("  max_connections: unlimited");
+    }
+    println!("  inline_sign: {}", suggestion.inline_sign);
+    println!("  pkcs11_store_present: {}", suggestion.has_pkcs11);
+    println!(
+        "  recommended tail_ns: {} (~{:.2} ms)",
+        suggestion.tail_ns,
+        suggestion.tail_ns as f64 / 1_000_000.0
+    );
+    println!("  recommended tail_ratio: {:.3}", suggestion.tail_ratio);
+    println!("  export suggestions:");
+    println!("    SLO_QUEUE_WAIT_TAIL_NS={}", suggestion.tail_ns);
+    println!(
+        "    SLO_QUEUE_WAIT_TAIL_MAX_RATIO={:.4}",
+        suggestion.tail_ratio
+    );
+    println!(
+        "    SECRETIVE_BENCH_QUEUE_WAIT_TAIL_NS={}",
+        suggestion.tail_ns
+    );
+    println!(
+        "    SECRETIVE_BENCH_QUEUE_WAIT_TAIL_MAX_RATIO={:.4}",
+        suggestion.tail_ratio
+    );
+    println!("  rationale:");
+    for reason in suggestion.reasons {
+        println!("    - {reason}");
+    }
 }
 
 fn update_atomic_max(target: &AtomicU64, value: u64) {
@@ -1964,31 +2219,7 @@ fn load_config(path_override: Option<&str>) -> Config {
             }
         }
     }
-    Config {
-        profile: None,
-        socket_path: None,
-        socket_backlog: None,
-        key_paths: None,
-        scan_default_dir: None,
-        stores: None,
-        policy: None,
-        max_signers: None,
-        max_connections: None,
-        max_blocking_threads: None,
-        worker_threads: None,
-        watch_files: None,
-        watch_debounce_ms: None,
-        metrics_every: None,
-        metrics_interval_ms: None,
-        metrics_json: None,
-        metrics_output_path: None,
-        audit_requests: None,
-        sign_timeout_ms: None,
-        pid_file: None,
-        identity_cache_ms: None,
-        idle_timeout_ms: None,
-        inline_sign: None,
-    }
+    Config::default()
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -1996,6 +2227,49 @@ fn default_config_path() -> Option<PathBuf> {
         return Some(PathBuf::from(path).join("secretive").join("agent.json"));
     }
     BaseDirs::new().map(|dirs| dirs.config_dir().join("secretive").join("agent.json"))
+}
+
+#[cfg(test)]
+mod queue_wait_suggestion_tests {
+    use super::*;
+
+    fn config_with_profile(profile: Option<&str>) -> Config {
+        let mut config = Config::default();
+        if let Some(name) = profile {
+            config.profile = Some(name.to_string());
+        }
+        config
+    }
+
+    #[test]
+    fn pssh_profile_expands_tail_for_high_concurrency() {
+        let config = config_with_profile(Some("pssh"));
+        let suggestion = build_queue_wait_suggestion_with_cores(&config, 240, 16);
+        assert!(suggestion.tail_ns > 4_000_000);
+        assert!(suggestion.tail_ratio > 0.03);
+    }
+
+    #[test]
+    fn balanced_profile_tightens_when_signers_low() {
+        let config = config_with_profile(None);
+        let suggestion = build_queue_wait_suggestion_with_cores(&config, 8, 16);
+        assert!(suggestion.tail_ns < 8_000_000);
+        assert!(suggestion.tail_ratio <= 0.05);
+    }
+
+    #[test]
+    fn pkcs11_store_adds_margin() {
+        let mut config = config_with_profile(Some("fanout"));
+        config.stores = Some(vec![StoreConfig::Pkcs11 {
+            module_path: "/tmp/libpkcs11.so".to_string(),
+            slot: None,
+            pin_env: None,
+            refresh_min_interval_ms: None,
+        }]);
+        let suggestion = build_queue_wait_suggestion_with_cores(&config, 64, 8);
+        assert!(suggestion.tail_ns > 6_000_000);
+        assert!(suggestion.has_pkcs11);
+    }
 }
 
 struct Args {
@@ -2025,6 +2299,7 @@ struct Args {
     pid: Option<u32>,
     check_config: bool,
     dump_effective_config: bool,
+    suggest_queue_wait: bool,
     help: bool,
     version: bool,
 }
@@ -2058,6 +2333,7 @@ fn parse_args() -> Args {
         pid: None,
         check_config: false,
         dump_effective_config: false,
+        suggest_queue_wait: false,
         help: false,
         version: false,
     };
@@ -2126,6 +2402,7 @@ fn parse_args() -> Args {
                     parsed.sign_timeout_ms = value.parse().ok();
                 }
             }
+            "--suggest-queue-wait" => parsed.suggest_queue_wait = true,
             "--pid-file" => parsed.pid_file = args.next(),
             "--identity-cache-ms" => {
                 if let Some(value) = args.next() {
@@ -2193,6 +2470,7 @@ fn print_help() {
     println!("  --metrics-output <path>");
     println!("  --audit-requests | --no-audit-requests");
     println!("  --sign-timeout-ms <n>");
+    println!("  --suggest-queue-wait");
     println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
     println!("  --identity-cache-ms <n>");
     println!("  --inline-sign | --no-inline-sign");

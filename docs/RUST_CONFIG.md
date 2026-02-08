@@ -19,6 +19,12 @@ Reset metrics counters without restarting (Unix only):
 
 `--pid` targets a running agent PID directly. `--pid-file` reads the PID from a file created via the runtime `pid_file` option. Both forms send `SIGUSR2`, which zeros the sign metrics counters and queue-wait histogram before emitting a `reset` snapshot line.
 
+Suggest queue-wait guardrails without rerunning benchmarks:
+- `secretive-agent --suggest-queue-wait [--profile ...] [--config ...]`
+- `secretive-agent --suggest-queue-wait --check-config --config /path/to/agent.json`
+
+The helper inspects the merged config (profile defaults + CLI/env overrides), detects hardware concurrency, and prints a recommended queue-wait tail threshold (`tail_ns`) plus a max ratio (fraction of requests exceeding the threshold). It also emits ready-to-export env vars (`SLO_QUEUE_WAIT_TAIL_NS`, `SLO_QUEUE_WAIT_TAIL_MAX_RATIO`, and the matching `SECRETIVE_BENCH_QUEUE_WAIT_*`) so CI gates can adopt the guardrail immediately. Use `--profile` or `--config` to see how different presets/hardware change the suggestion; add `--check-config` to validate the config before the helper runs.
+
 Socket path overrides:
 - `SECRETIVE_SOCK` (Unix) or `SECRETIVE_PIPE` (Windows) override the socket/pipe path when `socket_path` is unset.
 

@@ -24,6 +24,7 @@ Queue-wait envelopes are treated as strict when configured:
 - Leaving both tail knobs unset now auto-selects sane defaults for the configured profile (`pssh` uses 4ms with ≤3% tail, `fanout` 6ms/≤4%, `balanced` 8ms/≤5%, `low-memory` 12ms/≤7%); override the env vars to customize.
 - `secretive-bench` now accepts `--metrics-file` + `--queue-wait-tail-*` flags and emits a `queue_wait` block in its JSON output (also driven by `SECRETIVE_BENCH_*` env vars). `bench_slo_gate.sh` wires these flags automatically so CI artifacts always include both the configured guardrail and the observed percentile/histogram tail.
 - For quick investigations without re-running the bench, `secretive-client --metrics-file /tmp/agent.json --queue-wait-tail-profile pssh [--queue-wait-max-age-ms 5000]` enforces the same tail guardrails offline and exits non-zero (code `3`) when the snapshot is stale or violates the envelope.
+- `secretive-agent --suggest-queue-wait [--profile ... | --config ...]` inspects the merged config plus hardware concurrency and prints a recommended `tail_ns`/`tail_ratio` pair (and matching env exports) so you can align CI thresholds with whatever profile or machine you're targeting before running the gate.
 
 ## Enforcing SLOs
 

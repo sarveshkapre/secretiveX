@@ -7,9 +7,12 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Add a `secretive-agent --suggest-queue-wait` helper that inspects the current profile/hardware and prints recommended tail thresholds for operators tweaking CI or production agents.
+- [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
+- [ ] Teach `scripts/bench_slo_gate.sh` (and other gates) to call the new suggestion helper automatically and export the recommended `SLO_QUEUE_WAIT_*` env vars per host/profile.
+- [ ] Emit the recommended queue-wait guardrail in metrics snapshots (for example, `suggested_tail_ns`) so dashboards can compare observed vs recommended envelopes in real time.
 
 ## Implemented
+- 2026-02-08: Added `secretive-agent --suggest-queue-wait` to inspect the merged config + hardware concurrency and print profile-aware queue-wait guardrail recommendations plus export-ready env vars (crates/secretive-agent/src/main.rs, README.md, docs/RUST_CONFIG.md, docs/SLO.md, cargo test -p secretive-agent).
 - 2026-02-08: `secretive-client --metrics-file` can now enforce queue-wait guardrails (profiles, explicit thresholds, and freshness checks) using the new `--queue-wait-tail-*` / `--queue-wait-max-age-ms` flags, failing fast with exit code 3 when snapshots are stale or over the envelope (crates/secretive-client/src/main.rs, docs/RUST_CLIENT.md, docs/SLO.md, README.md, cargo test -p secretive-client).
 - 2026-02-08: Added SIGUSR2/`secretive-agent --reset-metrics` admin helper so operators can zero metrics counters mid-run and emit a fresh snapshot (crates/secretive-agent/src/main.rs, README.md, docs/RUST_CONFIG.md, cargo test -p secretive-agent).
 - 2026-02-08: Bench SLO gate enforces histogram-derived queue-wait tail ratios so p95/p99 regressions surface automatically (scripts/bench_slo_gate.sh, README.md, docs/SLO.md, docs/RUST_BENCH.md).
@@ -30,6 +33,7 @@
 - Tail verdicts now resolve instantly when percentiles exist, so SLO gates stay actionable even if histogram buckets are missing (or redacted) from field captures.
 - Embedding the queue-wait guardrail inputs/output straight into bench JSON gives us a clean, machine-readable audit trail for every CI run; now we can diff actual percentiles vs thresholds without parsing shell logs, which sets up future alerting in Grafana/Looker or even a `--suggest-queue-wait` CLI.
 - Offline guardrail checks plus capture/start timestamps mean ops teams can fail a run the moment a metrics snapshot looks stale or violates the envelope, without rerunning `secretive-bench` just to confirm tail pressure.
+- Guardrail tuning is opinionated enough that `--suggest-queue-wait` can unblock operators instantly, but automation needs a JSON output mode and pipeline integration so benches can adopt the recommendations without manual copy/paste.
 
 ## Notes
 - This file is maintained by the autonomous clone loop.
