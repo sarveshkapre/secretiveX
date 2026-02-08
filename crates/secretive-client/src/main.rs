@@ -700,6 +700,122 @@ struct MetricsSnapshot {
     queue_wait_histogram: Option<Vec<u64>>,
 }
 
+const QUEUE_WAIT_BUCKET_BOUNDS: [u64; 25] = [
+    500,
+    1_000,
+    2_000,
+    4_000,
+    8_000,
+    16_000,
+    32_000,
+    64_000,
+    128_000,
+    256_000,
+    512_000,
+    1_000_000,
+    2_000_000,
+    4_000_000,
+    8_000_000,
+    16_000_000,
+    32_000_000,
+    64_000_000,
+    128_000_000,
+    256_000_000,
+    512_000_000,
+    1_000_000_000,
+    2_000_000_000,
+    4_000_000_000,
+    8_000_000_000,
+];
+
+const QUEUE_WAIT_PERCENTILES: &[(f64, &str)] = &[
+    (0.50, "queue_wait_p50_ns"),
+    (0.90, "queue_wait_p90_ns"),
+    (0.95, "queue_wait_p95_ns"),
+    (0.99, "queue_wait_p99_ns"),
+];
+
+struct QueueWaitPercentile {
+    label: &'static str,
+    value_ns: u64,
+    open_ended: bool,
+}
+
+fn compute_queue_wait_percentiles(histogram: &[u64]) -> Vec<QueueWaitPercentile> {
+    let total: u64 = histogram.iter().sum();
+    if total == 0 {
+        return Vec::new();
+    }
+
+    let thresholds: Vec<(u64, &'static str)> = QUEUE_WAIT_PERCENTILES
+        .iter()
+        .map(|(fraction, label)| {
+            let threshold = ((*fraction * total as f64).ceil() as u64).max(1);
+            (threshold, *label)
+        })
+        .collect();
+
+    let mut out = Vec::with_capacity(thresholds.len());
+    let mut threshold_index = 0usize;
+    let mut cumulative = 0u64;
+
+    for (bucket_index, count) in histogram.iter().enumerate() {
+        cumulative = cumulative.saturating_add(*count);
+        while threshold_index < thresholds.len() && cumulative >= thresholds[threshold_index].0 {
+            let (value_ns, open_ended) = bucket_bound_ns(bucket_index);
+            out.push(QueueWaitPercentile {
+                label: thresholds[threshold_index].1,
+                value_ns,
+                open_ended,
+            });
+            threshold_index += 1;
+        }
+        if threshold_index >= thresholds.len() {
+            break;
+        }
+    }
+
+    out
+}
+
+fn bucket_bound_ns(bucket_index: usize) -> (u64, bool) {
+    if bucket_index < QUEUE_WAIT_BUCKET_BOUNDS.len() {
+        (QUEUE_WAIT_BUCKET_BOUNDS[bucket_index], false)
+    } else {
+        (
+            *QUEUE_WAIT_BUCKET_BOUNDS
+                .last()
+                .expect("queue wait bucket bounds should not be empty"),
+            true,
+        )
+    }
+}
+
+fn format_percentile_value(entry: &QueueWaitPercentile) -> String {
+    let approx = format_duration_ns(entry.value_ns);
+    if entry.open_ended {
+        format!(">= {} ns ({approx})", entry.value_ns)
+    } else {
+        format!("<= {} ns ({approx})", entry.value_ns)
+    }
+}
+
+fn format_duration_ns(value_ns: u64) -> String {
+    const NS_IN_US: f64 = 1_000.0;
+    const NS_IN_MS: f64 = 1_000_000.0;
+    const NS_IN_S: f64 = 1_000_000_000.0;
+
+    if value_ns as f64 >= NS_IN_S {
+        format!("{:.2} s", value_ns as f64 / NS_IN_S)
+    } else if value_ns as f64 >= NS_IN_MS {
+        format!("{:.2} ms", value_ns as f64 / NS_IN_MS)
+    } else if value_ns as f64 >= NS_IN_US {
+        format!("{:.2} us", value_ns as f64 / NS_IN_US)
+    } else {
+        format!("{value_ns} ns")
+    }
+}
+
 fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Result<()> {
     let content = std::fs::read_to_string(path)?;
     let metrics: MetricsSnapshot = serde_json::from_str(&content)?;
@@ -730,6 +846,17 @@ fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Resu
     if let Some(hist) = metrics.queue_wait_histogram.as_ref() {
         if !hist.is_empty() {
             writeln!(handle, "queue_wait_histogram: {}", format_histogram(hist))?;
+            let percentiles = compute_queue_wait_percentiles(hist);
+            if !percentiles.is_empty() {
+                for percentile in percentiles {
+                    writeln!(
+                        handle,
+                        "{}: {}",
+                        percentile.label,
+                        format_percentile_value(&percentile)
+                    )?;
+                }
+            }
         }
     }
     writeln!(handle, "in_flight: {}", metrics.in_flight)?;
@@ -1006,8 +1133,9 @@ fn parse_flags(value: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_health_report, parse_fingerprint_input, parse_flags, render_pssh_hints,
-        MetricsSnapshot,
+        build_health_report, compute_queue_wait_percentiles, format_percentile_value,
+        parse_fingerprint_input, parse_flags, render_pssh_hints, MetricsSnapshot,
+        QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
     };
     use secretive_proto::Identity;
     use std::path::PathBuf;
@@ -1102,6 +1230,24 @@ mod tests {
         assert!(out.contains("IdentitiesOnly=yes"));
         assert!(out.contains("IdentityAgent /tmp/secretive.sock"));
         assert!(out.contains("Host *"));
+    }
+
+    #[test]
+    fn queue_wait_percentiles_cover_histogram() {
+        let mut hist = vec![0u64; QUEUE_WAIT_BUCKET_BOUNDS.len() + 1];
+        hist[0] = 5;
+        hist[5] = 4;
+        *hist.last_mut().expect("hist") = 1;
+
+        let percentiles = compute_queue_wait_percentiles(&hist);
+        assert_eq!(percentiles.len(), QUEUE_WAIT_PERCENTILES.len());
+        assert_eq!(percentiles[0].label, "queue_wait_p50_ns");
+        assert_eq!(percentiles[0].value_ns, QUEUE_WAIT_BUCKET_BOUNDS[0]);
+        assert!(!percentiles[0].open_ended);
+
+        let tail = percentiles.last().expect("tail percentile");
+        assert!(tail.open_ended);
+        assert!(format_percentile_value(tail).starts_with(">="));
     }
 }
 

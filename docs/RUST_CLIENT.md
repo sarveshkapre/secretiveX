@@ -26,6 +26,7 @@
   - `secretive-client --metrics-file /path/to/metrics.json`
   - `secretive-client --metrics-file /path/to/metrics.json --json`
   - When available, the CLI prints `queue_wait_histogram` bucket counts alongside the average/max queue wait metrics.
+  - Histogram data is also converted into approximate `queue_wait_p50_ns`, `queue_wait_p90_ns`, `queue_wait_p95_ns`, and `queue_wait_p99_ns` summaries so you can scan tail pressure without external tooling.
 - Print `pssh`/OpenSSH high-fanout hints:
   - `secretive-client --pssh-hints`
   - `secretive-client --pssh-hints --socket /path/to/agent.sock`
