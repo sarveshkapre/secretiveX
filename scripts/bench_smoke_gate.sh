@@ -4,6 +4,7 @@ set -eu
 BENCH_CONCURRENCY="${BENCH_CONCURRENCY:-128}"
 BENCH_REQUESTS="${BENCH_REQUESTS:-8}"
 BENCH_PAYLOAD_SIZE="${BENCH_PAYLOAD_SIZE:-64}"
+BENCH_PROFILE="${BENCH_PROFILE:-fanout}"
 MIN_RPS="${MIN_RPS:-25}"
 
 workdir="$(pwd)"
@@ -28,6 +29,7 @@ ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null
 
 cat > "$config_path" <<JSON
 {
+  "profile": "$BENCH_PROFILE",
   "stores": [
     {
       "type": "file",

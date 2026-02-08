@@ -5,6 +5,7 @@ SLO_CONCURRENCY="${SLO_CONCURRENCY:-1000}"
 SLO_DURATION_SECS="${SLO_DURATION_SECS:-20}"
 SLO_PAYLOAD_SIZE="${SLO_PAYLOAD_SIZE:-64}"
 SLO_WORKER_START_SPREAD_MS="${SLO_WORKER_START_SPREAD_MS:-1500}"
+SLO_PROFILE="${SLO_PROFILE:-pssh}"
 SLO_MIN_RPS="${SLO_MIN_RPS:-20}"
 SLO_MAX_P95_US="${SLO_MAX_P95_US:-300000}"
 SLO_MAX_FAILURE_RATE="${SLO_MAX_FAILURE_RATE:-0.01}"
@@ -35,6 +36,7 @@ ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null
 
 cat > "$config_path" <<JSON
 {
+  "profile": "$SLO_PROFILE",
   "stores": [
     {
       "type": "file",
@@ -48,7 +50,7 @@ cat > "$config_path" <<JSON
   "metrics_output_path": "$metrics_json",
   "identity_cache_ms": 5000,
   "socket_backlog": 4096,
-  "max_connections": 4096,
+  "max_connections": 32768,
   "max_signers": 128,
   "max_blocking_threads": 128
 }

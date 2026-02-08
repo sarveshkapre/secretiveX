@@ -45,6 +45,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - CI now includes real PKCS#11 smoke (SoftHSM) for list/sign path regression coverage.
 - CI now includes Windows named-pipe list/sign smoke on hosted Windows runners.
 - CI now compiles `secretive-agent` with `pkcs11` feature to guard feature-gated integration.
+- SLO and fanout gate scripts now default to the `pssh` profile for high fan-out coverage.
 
 ## Gaps to Close for V1
 

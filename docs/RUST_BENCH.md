@@ -132,6 +132,9 @@ Tune thresholds:
 MIN_RPS=50 BENCH_CONCURRENCY=256 BENCH_REQUESTS=8 ./scripts/bench_smoke_gate.sh
 ```
 
+Profile selection:
+- `BENCH_PROFILE` controls the agent profile for smoke gate config (default: `fanout`).
+
 ## Regression gate
 
 Run consolidated regression checks (OpenSSH matrix smoke + reconnect smoke + SLO gate):
@@ -150,6 +153,7 @@ Run initial reconnect SLO checks (throughput, p95 latency, failure rate):
 
 Default SLO gate uses staggered worker start (`SLO_WORKER_START_SPREAD_MS=1500`) to model fan-out ramp while keeping load high.
 It also captures agent queue-wait metrics from `metrics_output_path` and reports `queue_wait_avg_ns` / `queue_wait_max_ns`.
+`SLO_PROFILE` controls the agent profile for gate config (default: `pssh`).
 Optional thresholds:
 - `SLO_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
 - `SLO_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
