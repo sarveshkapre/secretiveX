@@ -32,7 +32,7 @@ Current Rust milestones:
 - `max_signers` lets you override concurrency
 - `max_connections` caps concurrent client sessions
 - `max_blocking_threads` and `worker_threads` tune Tokio thread pools
-- `profile` presets (`balanced`, `fanout`, `low-memory`) set sensible defaults
+- `profile` presets (`balanced`, `fanout`, `pssh`, `low-memory`) set sensible defaults
 - `socket_backlog` tunes Unix socket listen backlog for large fan-out
 - Send `SIGUSR1` on Unix to log a metrics snapshot
 - `watch_files` controls automatic reloads
@@ -49,6 +49,7 @@ Current Rust milestones:
 - `identity_cache_ms` caches identity lists for fast fan-out
 - `idle_timeout_ms` closes idle connections to free resources
 - `inline_sign` auto mode enables async-thread signing when no PKCS#11 store is loaded
+- `pssh` profile sets high-fanout defaults tuned for thousands of short-lived sessions
 - `--check-config` validates config and exits before starting the daemon
 - `--dump-effective-config` prints merged runtime config (profile/env/CLI resolved)
 - Linux `systemd --user` service template and install/uninstall scripts

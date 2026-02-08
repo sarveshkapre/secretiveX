@@ -10,8 +10,8 @@ use secretive_proto::{
     encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, Identity, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
-use serde::Deserialize;
 use serde::ser::{SerializeSeq, Serializer};
+use serde::Deserialize;
 use serde::Serialize;
 use ssh_key::Signature;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};

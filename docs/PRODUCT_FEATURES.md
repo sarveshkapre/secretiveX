@@ -19,6 +19,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 
 - Rust crates in place: protocol, core stores, agent daemon, client CLI, bench CLI.
 - High-concurrency controls: `max_signers`, `max_connections`, `socket_backlog`, thread tuning.
+- Dedicated `pssh` profile for 1000+ short-lived session fan-out defaults.
 - Backpressure/fail-fast controls: `sign_timeout_ms`, `idle_timeout_ms`.
 - Watch/reload controls: `watch_files`, `watch_debounce_ms`, `SIGHUP` reload.
 - List caching and low-allocation protocol paths for fan-out scenarios.
@@ -71,7 +72,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - [ ] Harden PKCS#11 behavior under contention and token/session churn.
 - [x] Add per-store metrics (file vs PKCS#11 vs Secure Enclave) in agent logs/JSON.
 - [x] Add optional structured metrics endpoint/output format for scraping.
-- [x] Add config profile presets (`balanced`, `fanout`, `low-memory`) with documented defaults.
+- [x] Add config profile presets (`balanced`, `fanout`, `pssh`, `low-memory`) with documented defaults.
 - [x] Add graceful startup validation (`--check-config`) with actionable errors.
 - [x] Add end-to-end soak test script for multi-minute and multi-hour runs.
 

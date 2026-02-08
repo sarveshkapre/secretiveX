@@ -1063,8 +1063,7 @@ fn parse_flags(value: &str) -> Option<u32> {
 mod tests {
     use super::{
         compute_latency_stats, csv_data_row, csv_escape, csv_header_row, parse_flags,
-        worker_start_delay_ms,
-        BenchMetadata, BenchOutput, LatencyStats,
+        worker_start_delay_ms, BenchMetadata, BenchOutput, LatencyStats,
     };
 
     #[test]

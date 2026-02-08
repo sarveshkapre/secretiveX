@@ -18,7 +18,7 @@ Socket path overrides:
 
 ## Top-level fields
 
-- `profile` (string): optional preset (`balanced`, `fanout`, `low-memory`) applied to unset fields.
+- `profile` (string): optional preset (`balanced`, `fanout`, `pssh`, `low-memory`) applied to unset fields.
 - `socket_path` (string): override the Unix socket path or Windows named pipe.
 - `socket_backlog` (number): override the Unix socket listen backlog (0 or omitted uses system default).
 - `stores` (array): ordered list of key stores to load.
@@ -69,6 +69,7 @@ Profiles only set fields that are still unset after CLI/config/env overrides.
 
 - `balanced`: general-purpose defaults (`max_connections=1024`, `sign_timeout_ms=500`, `identity_cache_ms=1000`).
 - `fanout`: aggressive concurrency (`max_connections=8192`, `socket_backlog=2048`, low sign timeout).
+- `pssh`: very high fan-out defaults for thousands of short-lived sessions (`max_connections=32768`, `socket_backlog=4096`, `identity_cache_ms=10000`, `sign_timeout_ms=150`).
 - `low-memory`: conservative resource use (`max_connections=256`, lower cache, higher sign timeout).
 
 ## Store definitions

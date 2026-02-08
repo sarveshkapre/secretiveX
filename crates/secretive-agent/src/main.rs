@@ -807,7 +807,10 @@ async fn run_async(mut config: Config, max_signers: usize) {
         }
     });
     if let Some(interval) = metrics_interval {
-        info!(metrics_interval_ms = interval.as_millis(), "periodic metrics");
+        info!(
+            metrics_interval_ms = interval.as_millis(),
+            "periodic metrics"
+        );
     } else {
         info!("periodic metrics disabled");
     }
@@ -947,6 +950,7 @@ fn update_atomic_max(target: &AtomicU64, value: u64) {
 enum ConfigProfile {
     Balanced,
     Fanout,
+    Pssh,
     LowMemory,
 }
 
@@ -957,6 +961,13 @@ impl ConfigProfile {
         }
         if value.eq_ignore_ascii_case("fanout") {
             return Some(Self::Fanout);
+        }
+        if value.eq_ignore_ascii_case("pssh")
+            || value.eq_ignore_ascii_case("high-fanout")
+            || value.eq_ignore_ascii_case("high_fanout")
+            || value.eq_ignore_ascii_case("highfanout")
+        {
+            return Some(Self::Pssh);
         }
         if value.eq_ignore_ascii_case("low-memory")
             || value.eq_ignore_ascii_case("low_memory")
@@ -1026,6 +1037,35 @@ fn apply_profile_defaults(config: &mut Config) {
             }
             if config.idle_timeout_ms.is_none() {
                 config.idle_timeout_ms = Some(10000);
+            }
+        }
+        ConfigProfile::Pssh => {
+            if config.max_signers.is_none() {
+                config.max_signers = Some(cores.saturating_mul(12).max(32));
+            }
+            if config.max_blocking_threads.is_none() {
+                config.max_blocking_threads = config.max_signers;
+            }
+            if config.max_connections.is_none() {
+                config.max_connections = Some(32768);
+            }
+            if config.worker_threads.is_none() {
+                config.worker_threads = Some(cores.max(2));
+            }
+            if config.identity_cache_ms.is_none() {
+                config.identity_cache_ms = Some(10000);
+            }
+            if config.sign_timeout_ms.is_none() {
+                config.sign_timeout_ms = Some(150);
+            }
+            if config.socket_backlog.is_none() {
+                config.socket_backlog = Some(4096);
+            }
+            if config.idle_timeout_ms.is_none() {
+                config.idle_timeout_ms = Some(5000);
+            }
+            if config.watch_debounce_ms.is_none() {
+                config.watch_debounce_ms = Some(500);
             }
         }
         ConfigProfile::LowMemory => {
@@ -1852,7 +1892,7 @@ fn parse_bool_env(value: &str) -> Option<bool> {
 
 fn print_help() {
     println!("secretive-agent usage:\n");
-    println!("  --profile <balanced|fanout|low-memory>");
+    println!("  --profile <balanced|fanout|pssh|low-memory>");
     println!("  --config <path> --socket <path> --key <path>");
     println!("  --socket-backlog <n>");
     println!("  --default-scan | --no-default-scan");
@@ -2857,6 +2897,21 @@ mod tests {
     }
 
     #[test]
+    fn profile_pssh_sets_expected_defaults() {
+        let mut config = empty_config();
+        config.profile = Some("pssh".to_string());
+        apply_profile_defaults(&mut config);
+
+        assert_eq!(config.max_connections, Some(32768));
+        assert_eq!(config.socket_backlog, Some(4096));
+        assert_eq!(config.sign_timeout_ms, Some(150));
+        assert_eq!(config.identity_cache_ms, Some(10000));
+        assert_eq!(config.idle_timeout_ms, Some(5000));
+        assert_eq!(config.watch_debounce_ms, Some(500));
+        assert!(config.max_signers.unwrap_or(0) >= 32);
+    }
+
+    #[test]
     fn profile_does_not_override_explicit_values() {
         let mut config = empty_config();
         config.profile = Some("low-memory".to_string());
@@ -2933,7 +2988,9 @@ mod tests {
             now_ms()
         ));
         {
-            let mut guard = METRICS_OUTPUT_PATH.lock().expect("metrics output path lock");
+            let mut guard = METRICS_OUTPUT_PATH
+                .lock()
+                .expect("metrics output path lock");
             *guard = Some(path.clone());
         }
 
@@ -2968,7 +3025,9 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         {
-            let mut guard = METRICS_OUTPUT_PATH.lock().expect("metrics output path lock");
+            let mut guard = METRICS_OUTPUT_PATH
+                .lock()
+                .expect("metrics output path lock");
             *guard = None;
         }
     }
@@ -3062,9 +3121,10 @@ mod tests {
         let mut config = empty_config();
         config.metrics_every = Some(0);
         let validation = validate_config(&config);
-        assert!(validation.warnings.iter().any(|entry| {
-            entry.contains("disable automatic metrics emission")
-        }));
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|entry| { entry.contains("disable automatic metrics emission") }));
     }
 
     #[test]
@@ -3074,9 +3134,7 @@ mod tests {
         config.metrics_interval_ms = Some(0);
         config.metrics_output_path = Some("/tmp/metrics.json".to_string());
         let validation = validate_config(&config);
-        assert!(validation
-            .warnings
-            .iter()
-            .any(|entry| entry.contains("metrics_output_path is set but automatic metrics emission is disabled")));
+        assert!(validation.warnings.iter().any(|entry| entry
+            .contains("metrics_output_path is set but automatic metrics emission is disabled")));
     }
 }
