@@ -11,6 +11,8 @@ SLO_MAX_P95_US="${SLO_MAX_P95_US:-300000}"
 SLO_MAX_FAILURE_RATE="${SLO_MAX_FAILURE_RATE:-0.01}"
 SLO_MAX_QUEUE_WAIT_AVG_NS="${SLO_MAX_QUEUE_WAIT_AVG_NS:-0}"
 SLO_MAX_QUEUE_WAIT_MAX_NS="${SLO_MAX_QUEUE_WAIT_MAX_NS:-0}"
+SLO_QUEUE_WAIT_TAIL_NS="${SLO_QUEUE_WAIT_TAIL_NS:-0}"
+SLO_QUEUE_WAIT_TAIL_MAX_RATIO="${SLO_QUEUE_WAIT_TAIL_MAX_RATIO:-0}"
 
 tmpdir="$(mktemp -d)"
 agent_pid=""
@@ -125,9 +127,86 @@ fi
 
 queue_wait_avg_ns=""
 queue_wait_max_ns=""
+queue_wait_tail_ratio=""
+queue_wait_tail_count=""
+queue_wait_tail_total=""
 if [ -f "$metrics_json" ]; then
   queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$metrics_json" | head -n1 | cut -d: -f2)"
   queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$metrics_json" | head -n1 | cut -d: -f2)"
+  if [ "$SLO_QUEUE_WAIT_TAIL_NS" != "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" != "0" ]; then
+    tail_output="$(python3 <<'PY' "$metrics_json" "$SLO_QUEUE_WAIT_TAIL_NS"
+import json
+import sys
+
+BOUNDS = [
+    500,
+    1000,
+    2000,
+    4000,
+    8000,
+    16000,
+    32000,
+    64000,
+    128000,
+    256000,
+    512000,
+    1000000,
+    2000000,
+    4000000,
+    8000000,
+    16000000,
+    32000000,
+    64000000,
+    128000000,
+    256000000,
+    512000000,
+    1000000000,
+    2000000000,
+    4000000000,
+    8000000000,
+]
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: script <metrics_json> <threshold_ns>")
+    metrics_path = sys.argv[1]
+    threshold_ns = float(sys.argv[2])
+    with open(metrics_path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    histogram = data.get("queue_wait_histogram")
+    if not isinstance(histogram, list) or not histogram:
+        raise SystemExit("missing queue_wait_histogram")
+    if len(histogram) != len(BOUNDS) + 1:
+        raise SystemExit("unexpected bucket count")
+    total = sum(int(value) for value in histogram)
+    if total == 0:
+        total = int(data.get("count") or 0)
+    tail_started = threshold_ns <= 0
+    tail = 0
+    for idx, value in enumerate(histogram):
+        upper = BOUNDS[idx] if idx < len(BOUNDS) else None
+        if not tail_started:
+            if upper is None or threshold_ns <= upper:
+                tail_started = True
+        if tail_started:
+            tail += int(value)
+    ratio = 0.0 if total == 0 else tail / total
+    print(f"{ratio:.10f} {tail} {total}")
+
+
+if __name__ == "__main__":
+    main()
+PY
+)"
+    if [ -z "$tail_output" ]; then
+      echo "failed to compute queue wait tail ratio" >&2
+      cat "$metrics_json" >&2
+      exit 1
+    fi
+    queue_wait_tail_ratio="$(printf '%s' "$tail_output" | awk '{print $1}')"
+    queue_wait_tail_count="$(printf '%s' "$tail_output" | awk '{print $2}')"
+    queue_wait_tail_total="$(printf '%s' "$tail_output" | awk '{print $3}')"
+  fi
 fi
 
 if [ -n "$queue_wait_avg_ns" ] && [ "$SLO_MAX_QUEUE_WAIT_AVG_NS" != "0" ]; then
@@ -148,4 +227,18 @@ if [ -n "$queue_wait_max_ns" ] && [ "$SLO_MAX_QUEUE_WAIT_MAX_NS" != "0" ]; then
   fi
 fi
 
-echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a}"
+if [ "$SLO_QUEUE_WAIT_TAIL_NS" != "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" != "0" ]; then
+  if [ -z "$queue_wait_tail_ratio" ] || [ -z "$queue_wait_tail_total" ]; then
+    echo "SLO failure: queue wait tail thresholds require metrics histogram" >&2
+    [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
+    exit 1
+  fi
+  if ! awk -v ratio="$queue_wait_tail_ratio" -v max="$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" 'BEGIN { exit (ratio + 0 <= max + 0 ? 0 : 1) }'; then
+    echo "SLO failure: queue wait tail ratio above maximum (threshold_ns=$SLO_QUEUE_WAIT_TAIL_NS tail_ratio=$queue_wait_tail_ratio count=$queue_wait_tail_count total=$queue_wait_tail_total max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO)" >&2
+    cat "$bench_json" >&2
+    cat "$metrics_json" >&2
+    exit 1
+  fi
+fi
+
+echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a} queue_wait_tail_ratio=${queue_wait_tail_ratio:-n/a}"

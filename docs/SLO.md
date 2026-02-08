@@ -19,6 +19,7 @@ These are baseline guardrails and should tighten as implementation matures.
 Queue-wait envelopes are treated as strict when configured:
 - Non-zero queue-wait thresholds require queue-wait metrics to be present.
 - Missing queue-wait metrics with strict envelopes fails the gate.
+- Tail thresholds are available when both `SLO_QUEUE_WAIT_TAIL_NS` and `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` are non-zero. The gate sums histogram buckets whose upper bound is greater than or equal to the tail threshold and fails when their ratio exceeds the configured maximum.
 
 ## Enforcing SLOs
 

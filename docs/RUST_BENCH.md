@@ -157,6 +157,7 @@ It also captures agent queue-wait metrics from `metrics_output_path` and reports
 Optional thresholds:
 - `SLO_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
 - `SLO_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
+- `SLO_QUEUE_WAIT_TAIL_NS` + `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` (defaults `0`): fail if more than the allowed ratio of requests land in histogram buckets whose upper bound is >= the tail threshold. Example: `SLO_QUEUE_WAIT_TAIL_NS=5000000 SLO_QUEUE_WAIT_TAIL_MAX_RATIO=0.05` alerts when >5% of signs wait ≥5ms in the queue.
 - CI jobs set conservative non-zero defaults for queue-wait sanity checks.
 
 ## Dedicated 1000-session gate
