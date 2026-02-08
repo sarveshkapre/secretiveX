@@ -25,6 +25,9 @@
 - Metrics snapshot inspection (from agent `metrics_output_path`):
   - `secretive-client --metrics-file /path/to/metrics.json`
   - `secretive-client --metrics-file /path/to/metrics.json --json`
+- Print `pssh`/OpenSSH high-fanout hints:
+  - `secretive-client --pssh-hints`
+  - `secretive-client --pssh-hints --socket /path/to/agent.sock`
 
 ## Health report fields
 
@@ -43,3 +46,4 @@
 - `--socket <path>` overrides socket/pipe path.
 - `--response-timeout-ms <n>` sets per-request timeout.
 - `--response-timeout-ms 0` disables timeout.
+- `--pssh-hints` prints recommended OpenSSH/pssh options for large fan-out runs.

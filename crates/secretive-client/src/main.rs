@@ -35,6 +35,11 @@ async fn main() -> Result<()> {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if args.pssh_hints {
+        let socket_path = resolve_socket_path(args.socket_path.clone());
+        print_pssh_hints(&socket_path)?;
+        return Ok(());
+    }
     if let Some(path) = args.metrics_file.as_deref() {
         print_metrics_file(path, args.json, args.json_compact)?;
         return Ok(());
@@ -769,6 +774,28 @@ fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Resu
     Ok(())
 }
 
+fn print_pssh_hints(socket_path: &Path) -> Result<()> {
+    let message = render_pssh_hints(socket_path);
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    write!(handle, "{}", message)?;
+    Ok(())
+}
+
+fn render_pssh_hints(socket_path: &Path) -> String {
+    let socket = socket_path.to_string_lossy();
+    format!(
+        "Recommended pssh options for high fan-out:\n\n\
+export SECRETIVE_SOCK='{socket}'\n\
+pssh -h hosts.txt -P -p 1000 -x \"-o IdentitiesOnly=yes -o IdentityAgent=$SECRETIVE_SOCK -o PreferredAuthentications=publickey\"\n\n\
+Optional ~/.ssh/config baseline:\n\n\
+Host *\n\
+  IdentitiesOnly yes\n\
+  IdentityAgent {socket}\n\
+  PreferredAuthentications publickey\n"
+    )
+}
+
 #[derive(Serialize)]
 struct JsonIdentity<'a> {
     key_blob_hex: String,
@@ -834,6 +861,7 @@ fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
 struct Args {
     socket_path: Option<String>,
     metrics_file: Option<String>,
+    pssh_hints: bool,
     list: bool,
     health: bool,
     show_openssh: bool,
@@ -856,6 +884,7 @@ fn parse_args() -> Args {
     let mut parsed = Args {
         socket_path: None,
         metrics_file: None,
+        pssh_hints: false,
         list: false,
         health: false,
         show_openssh: false,
@@ -877,6 +906,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--socket" => parsed.socket_path = args.next(),
             "--metrics-file" => parsed.metrics_file = args.next(),
+            "--pssh-hints" => parsed.pssh_hints = true,
             "--list" => parsed.list = true,
             "--health" => parsed.health = true,
             "--openssh" => parsed.show_openssh = true,
@@ -917,6 +947,7 @@ fn print_help() {
     println!("  --list [--json|--json-compact] [--openssh] [--raw] [--filter <substring>]");
     println!("  --health [--json|--json-compact] [--filter <substring>]");
     println!("  --metrics-file <path> [--json|--json-compact]");
+    println!("  --pssh-hints [--socket <path>]");
     println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!(
@@ -929,6 +960,7 @@ fn print_help() {
     println!("  If --data is omitted, stdin is used for signing.");
     println!("  --health reports identity quality and duplicate diagnostics.");
     println!("  --metrics-file reads a metrics JSON snapshot file (no socket required).");
+    println!("  --pssh-hints prints OpenSSH/pssh options for high-fanout runs.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
     println!("  --json-compact emits compact JSON (no pretty formatting).");
@@ -953,8 +985,12 @@ fn parse_flags(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_health_report, parse_fingerprint_input, parse_flags, MetricsSnapshot};
+    use super::{
+        build_health_report, parse_fingerprint_input, parse_flags, render_pssh_hints,
+        MetricsSnapshot,
+    };
     use secretive_proto::Identity;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_flags_names() {
@@ -1037,6 +1073,15 @@ mod tests {
         assert_eq!(snapshot.store_sign_file, Some(80));
         assert_eq!(snapshot.store_sign_pkcs11, Some(20));
         assert_eq!(snapshot.store_sign_other, None);
+    }
+
+    #[test]
+    fn pssh_hints_prints_expected_shape() {
+        let path = PathBuf::from("/tmp/secretive.sock");
+        let out = render_pssh_hints(&path);
+        assert!(out.contains("IdentitiesOnly=yes"));
+        assert!(out.contains("IdentityAgent /tmp/secretive.sock"));
+        assert!(out.contains("Host *"));
     }
 }
 

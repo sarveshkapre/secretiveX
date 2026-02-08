@@ -77,6 +77,7 @@ Current Rust milestones:
 - Debug CLI (`secretive-client`) for listing identities and signing test payloads
 - Client `--health` diagnostics for invalid keys, duplicates, and algorithm mix
 - Client `--metrics-file` inspects structured metrics snapshots without agent socket access
+- Client `--pssh-hints` prints recommended OpenSSH/pssh options for high fan-out runs
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
 
