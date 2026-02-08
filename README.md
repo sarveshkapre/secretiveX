@@ -83,6 +83,13 @@ Current Rust milestones:
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
 
+## Pending Features
+
+Current pending items (from the V1 gap list):
+- PKCS#11 production hardening coverage and wider integration tests on real tokens.
+- Windows named-pipe ACL hardening validation on real-host environments.
+- Expanded stress coverage and additional flake resistance beyond current regression gates.
+
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
 Client usage: see `docs/RUST_CLIENT.md`.
