@@ -48,6 +48,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - CI now compiles `secretive-agent` with `pkcs11` feature to guard feature-gated integration.
 - SLO and fanout gate scripts now default to the `pssh` profile for high fan-out coverage.
 - macOS Secure Enclave store now supports key discovery and signing in Rust agent mode.
+- Added long-duration multi-host stress gate with strict queue-wait SLO envelope enforcement.
 
 ## Gaps to Close for V1
 

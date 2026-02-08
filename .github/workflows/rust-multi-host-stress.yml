@@ -1,0 +1,43 @@
+name: Rust Multi-Host Stress
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 0"
+
+jobs:
+  multi-host-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - host512
+          - host1024
+          - host1536
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run multi-host stress case
+        env:
+          STRESS_CASES: "${{ matrix.case }}"
+          STRESS_OUTPUT_DIR: "${{ runner.temp }}/multi-host-stress"
+        run: ./scripts/ci_retry.sh 2 ./scripts/multi_host_stress_gate.sh
+
+      - name: Upload stress artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-multi-host-stress-${{ matrix.case }}
+          path: |
+            ${{ runner.temp }}/multi-host-stress/${{ matrix.case }}-soak.json
+            ${{ runner.temp }}/multi-host-stress/${{ matrix.case }}-metrics.json
+            ${{ runner.temp }}/multi-host-stress/summary.txt
+          if-no-files-found: warn

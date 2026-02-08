@@ -16,6 +16,10 @@ This document defines initial performance and reliability SLOs for reconnect fan
 
 These are baseline guardrails and should tighten as implementation matures.
 
+Queue-wait envelopes are treated as strict when configured:
+- Non-zero queue-wait thresholds require queue-wait metrics to be present.
+- Missing queue-wait metrics with strict envelopes fails the gate.
+
 ## Enforcing SLOs
 
 Run gate locally:

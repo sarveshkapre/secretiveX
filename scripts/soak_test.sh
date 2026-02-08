@@ -5,12 +5,17 @@ SOAK_DURATION_SECS="${SOAK_DURATION_SECS:-1800}"
 SOAK_CONCURRENCY="${SOAK_CONCURRENCY:-256}"
 SOAK_PAYLOAD_SIZE="${SOAK_PAYLOAD_SIZE:-64}"
 SOAK_RECONNECT="${SOAK_RECONNECT:-1}"
+SOAK_PROFILE="${SOAK_PROFILE:-pssh}"
+SOAK_WORKER_START_SPREAD_MS="${SOAK_WORKER_START_SPREAD_MS:-2000}"
 SOAK_MIN_RPS="${SOAK_MIN_RPS:-0}"
+SOAK_MAX_P95_US="${SOAK_MAX_P95_US:-0}"
 SOAK_MAX_FAILURE_RATE="${SOAK_MAX_FAILURE_RATE:-0.01}"
 SOAK_OUTPUT_JSON="${SOAK_OUTPUT_JSON:-}"
 SOAK_OUTPUT_METRICS="${SOAK_OUTPUT_METRICS:-}"
 SOAK_MAX_QUEUE_WAIT_AVG_NS="${SOAK_MAX_QUEUE_WAIT_AVG_NS:-0}"
 SOAK_MAX_QUEUE_WAIT_MAX_NS="${SOAK_MAX_QUEUE_WAIT_MAX_NS:-0}"
+SOAK_REQUIRE_QUEUE_WAIT_METRICS="${SOAK_REQUIRE_QUEUE_WAIT_METRICS:-0}"
+SOAK_METRICS_FILE="${SOAK_METRICS_FILE:-}"
 
 EXTERNAL_SOCKET="${SOAK_SOCKET:-}"
 
@@ -39,6 +44,7 @@ else
 
   cat > "$config_path" <<JSON
 {
+  "profile": "$SOAK_PROFILE",
   "stores": [
     {
       "type": "file",
@@ -83,7 +89,7 @@ fi
 
 bench_json="$tmpdir/soak.json"
 
-bench_args="--socket $socket_path --concurrency $SOAK_CONCURRENCY --duration $SOAK_DURATION_SECS --payload-size $SOAK_PAYLOAD_SIZE --fixed --latency --latency-max-samples 200000 --json-compact"
+bench_args="--socket $socket_path --concurrency $SOAK_CONCURRENCY --duration $SOAK_DURATION_SECS --payload-size $SOAK_PAYLOAD_SIZE --worker-start-spread-ms $SOAK_WORKER_START_SPREAD_MS --fixed --latency --latency-max-samples 200000 --json-compact"
 if [ "$SOAK_RECONNECT" = "1" ]; then
   bench_args="$bench_args --reconnect"
 fi
@@ -117,9 +123,16 @@ total="$(awk -v ok="$ok" -v failures="$failures" 'BEGIN { print ok + failures }'
 failure_rate="$(awk -v failures="$failures" -v total="$total" 'BEGIN { if (total == 0) print 1; else print failures / total }')"
 queue_wait_avg_ns=""
 queue_wait_max_ns=""
+
+metrics_source=""
 if [ -f "$agent_metrics_json" ]; then
-  queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$agent_metrics_json" | head -n1 | cut -d: -f2)"
-  queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$agent_metrics_json" | head -n1 | cut -d: -f2)"
+  metrics_source="$agent_metrics_json"
+elif [ -n "$SOAK_METRICS_FILE" ] && [ -f "$SOAK_METRICS_FILE" ]; then
+  metrics_source="$SOAK_METRICS_FILE"
+fi
+if [ -n "$metrics_source" ]; then
+  queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$metrics_source" | head -n1 | cut -d: -f2)"
+  queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$metrics_source" | head -n1 | cut -d: -f2)"
 fi
 
 if ! awk -v rps="$rps" -v min="$SOAK_MIN_RPS" 'BEGIN { exit (rps + 0 >= min + 0 ? 0 : 1) }'; then
@@ -134,11 +147,28 @@ if ! awk -v rate="$failure_rate" -v max="$SOAK_MAX_FAILURE_RATE" 'BEGIN { exit (
   exit 1
 fi
 
+if [ "$SOAK_MAX_P95_US" != "0" ]; then
+  if ! awk -v p95="$p95_us" -v max="$SOAK_MAX_P95_US" 'BEGIN { exit (p95 + 0 <= max + 0 ? 0 : 1) }'; then
+    echo "soak gate failed: p95 latency above max (p95_us=$p95_us max=$SOAK_MAX_P95_US)" >&2
+    cat "$bench_json" >&2
+    exit 1
+  fi
+fi
+
+if [ "$SOAK_REQUIRE_QUEUE_WAIT_METRICS" = "1" ] || [ "$SOAK_MAX_QUEUE_WAIT_AVG_NS" != "0" ] || [ "$SOAK_MAX_QUEUE_WAIT_MAX_NS" != "0" ]; then
+  if [ -z "$queue_wait_avg_ns" ] || [ -z "$queue_wait_max_ns" ]; then
+    echo "soak gate failed: queue wait metrics are required but missing" >&2
+    cat "$bench_json" >&2
+    [ -n "$metrics_source" ] && cat "$metrics_source" >&2 || true
+    exit 1
+  fi
+fi
+
 if [ -n "$queue_wait_avg_ns" ] && [ "$SOAK_MAX_QUEUE_WAIT_AVG_NS" != "0" ]; then
   if ! awk -v value="$queue_wait_avg_ns" -v max="$SOAK_MAX_QUEUE_WAIT_AVG_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
     echo "soak gate failed: queue wait avg above max (queue_wait_avg_ns=$queue_wait_avg_ns max=$SOAK_MAX_QUEUE_WAIT_AVG_NS)" >&2
     cat "$bench_json" >&2
-    [ -f "$agent_metrics_json" ] && cat "$agent_metrics_json" >&2 || true
+    [ -n "$metrics_source" ] && cat "$metrics_source" >&2 || true
     exit 1
   fi
 fi
@@ -147,12 +177,12 @@ if [ -n "$queue_wait_max_ns" ] && [ "$SOAK_MAX_QUEUE_WAIT_MAX_NS" != "0" ]; then
   if ! awk -v value="$queue_wait_max_ns" -v max="$SOAK_MAX_QUEUE_WAIT_MAX_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
     echo "soak gate failed: queue wait max above max (queue_wait_max_ns=$queue_wait_max_ns max=$SOAK_MAX_QUEUE_WAIT_MAX_NS)" >&2
     cat "$bench_json" >&2
-    [ -f "$agent_metrics_json" ] && cat "$agent_metrics_json" >&2 || true
+    [ -n "$metrics_source" ] && cat "$metrics_source" >&2 || true
     exit 1
   fi
 fi
 
-echo "soak passed: duration=${SOAK_DURATION_SECS}s reconnect=$SOAK_RECONNECT concurrency=$SOAK_CONCURRENCY rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a}"
+echo "soak passed: duration=${SOAK_DURATION_SECS}s reconnect=$SOAK_RECONNECT concurrency=$SOAK_CONCURRENCY spread_ms=$SOAK_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a}"
 
 echo "full benchmark result:"
 cat "$bench_json"

@@ -71,6 +71,7 @@ Current Rust milestones:
 - CI includes shell script syntax sanity checks (`scripts/*.sh`)
 - SLO/soak gates report agent queue-wait metrics (`queue_wait_avg_ns`, `queue_wait_max_ns`)
 - SLO/fanout/soak CI gates enforce conservative queue-wait threshold checks
+- CI includes long-duration multi-host stress matrix with strict queue-wait SLO envelopes
 - CI includes SoftHSM-backed PKCS#11 list/sign smoke coverage on Linux
 - CI includes Windows named-pipe list/sign smoke coverage
 - Initial SLO gate script and scheduled CI job for reconnect workloads

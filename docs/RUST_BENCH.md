@@ -204,6 +204,9 @@ SOAK_OUTPUT_METRICS=/tmp/secretive-soak-metrics.json ./scripts/soak_test.sh
 Optional queue-wait thresholds for soak:
 - `SOAK_MAX_QUEUE_WAIT_AVG_NS` (default `0`, disabled)
 - `SOAK_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
+- `SOAK_REQUIRE_QUEUE_WAIT_METRICS` (default `0`): fail if queue-wait metrics are missing.
+- `SOAK_MAX_P95_US` (default `0`, disabled): enforce p95 latency envelope.
+- `SOAK_WORKER_START_SPREAD_MS` (default `2000`): stagger long-run start ramps.
 
 ## PKCS#11 smoke
 
@@ -218,3 +221,19 @@ Force failure when required tools are missing:
 ```bash
 PKCS11_SMOKE_REQUIRE_TOOLS=1 ./scripts/pkcs11_smoke.sh
 ```
+
+## Multi-host stress gate
+
+Run strict long-duration host-tier stress envelopes:
+
+```bash
+./scripts/multi_host_stress_gate.sh
+```
+
+Run one specific case:
+
+```bash
+STRESS_CASES=host1024 ./scripts/multi_host_stress_gate.sh
+```
+
+Artifacts are written under `target/multi-host-stress` by default.

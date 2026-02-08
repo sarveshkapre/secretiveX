@@ -20,14 +20,18 @@ jobs:
 
       - name: Run soak gate
         env:
-          SOAK_DURATION_SECS: "600"
-          SOAK_CONCURRENCY: "384"
+          SOAK_PROFILE: "pssh"
+          SOAK_DURATION_SECS: "1200"
+          SOAK_CONCURRENCY: "512"
           SOAK_PAYLOAD_SIZE: "64"
           SOAK_RECONNECT: "1"
+          SOAK_WORKER_START_SPREAD_MS: "3000"
           SOAK_MIN_RPS: "15"
+          SOAK_MAX_P95_US: "320000"
           SOAK_MAX_FAILURE_RATE: "0.02"
-          SOAK_MAX_QUEUE_WAIT_AVG_NS: "100000000"
-          SOAK_MAX_QUEUE_WAIT_MAX_NS: "1000000000"
+          SOAK_MAX_QUEUE_WAIT_AVG_NS: "40000000"
+          SOAK_MAX_QUEUE_WAIT_MAX_NS: "400000000"
+          SOAK_REQUIRE_QUEUE_WAIT_METRICS: "1"
           SOAK_OUTPUT_JSON: "${{ runner.temp }}/soak.json"
           SOAK_OUTPUT_METRICS: "${{ runner.temp }}/soak-metrics.json"
         run: ./scripts/ci_retry.sh 2 ./scripts/soak_test.sh
