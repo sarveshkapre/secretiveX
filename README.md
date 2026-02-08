@@ -23,6 +23,7 @@ Current Rust milestones:
 - PKCS#11 key refresh is serialized to reduce contention under concurrent load
 - PKCS#11 signing resolves private key handles per session with one-shot refresh retry
 - PKCS#11 supports `refresh_min_interval_ms` to throttle refresh scans under fan-out
+- PKCS#11 now uses pooled authenticated sessions plus transient retry/backoff for token churn
 - File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
 - Secure Enclave store implementation on macOS (key discovery + signing)
 - Config supports `secure_enclave` store type (macOS)

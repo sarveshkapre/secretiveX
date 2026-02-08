@@ -109,6 +109,7 @@ The Rust store discovers Secure Enclave-backed private keys from Keychain and ex
 
 Note: PKCS#11 support is behind the `pkcs11` feature in `secretive-core`.
 `refresh_min_interval_ms` throttles non-forced key refresh scans to reduce contention (default: `250`; use `0` to disable throttling).
+The runtime also applies session pooling and transient retry/backoff for common token/session churn errors.
 
 ## Policy controls
 
