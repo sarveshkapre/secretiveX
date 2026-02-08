@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,9 +13,9 @@ use secretive_proto::{
     encode_request_frame, read_response_type_with_buffer, write_request_with_buffer, AgentRequest,
     AgentResponse, MessageType, SSH_AGENT_RSA_SHA2_256, SSH_AGENT_RSA_SHA2_512,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
@@ -22,6 +23,39 @@ use tokio::net::windows::named_pipe::NamedPipeClient as AgentStream;
 use tokio::net::UnixStream as AgentStream;
 
 static LIST_FRAME: OnceLock<Bytes> = OnceLock::new();
+const QUEUE_WAIT_BUCKET_BOUNDS: [u64; 25] = [
+    500,
+    1_000,
+    2_000,
+    4_000,
+    8_000,
+    16_000,
+    32_000,
+    64_000,
+    128_000,
+    256_000,
+    512_000,
+    1_000_000,
+    2_000_000,
+    4_000_000,
+    8_000_000,
+    16_000_000,
+    32_000_000,
+    64_000_000,
+    128_000_000,
+    256_000_000,
+    512_000_000,
+    1_000_000_000,
+    2_000_000_000,
+    4_000_000_000,
+    8_000_000_000,
+];
+const QUEUE_WAIT_PERCENTILE_LABELS: [(&str, f64); 4] =
+    [("p50", 0.50), ("p90", 0.90), ("p95", 0.95), ("p99", 0.99)];
+const METRICS_FILE_ENV: &str = "SECRETIVE_BENCH_METRICS";
+const QUEUE_WAIT_TAIL_NS_ENV: &str = "SECRETIVE_BENCH_QUEUE_WAIT_TAIL_NS";
+const QUEUE_WAIT_TAIL_RATIO_ENV: &str = "SECRETIVE_BENCH_QUEUE_WAIT_TAIL_MAX_RATIO";
+const QUEUE_WAIT_PROFILE_ENV: &str = "SECRETIVE_BENCH_QUEUE_WAIT_PROFILE";
 
 #[derive(Debug)]
 struct Args {
@@ -43,6 +77,10 @@ struct Args {
     latency: bool,
     latency_max_samples: usize,
     worker_start_spread_ms: u64,
+    metrics_file: Option<String>,
+    queue_wait_tail_ns: Option<u64>,
+    queue_wait_tail_max_ratio: Option<f64>,
+    queue_wait_tail_profile: Option<String>,
     help: bool,
     version: bool,
     duration_secs: Option<u64>,
@@ -239,6 +277,7 @@ async fn main() -> Result<()> {
             target_os: std::env::consts::OS,
             target_arch: std::env::consts::ARCH,
         },
+        queue_wait: queue_wait_report(&args),
     };
 
     if args.csv {
@@ -297,6 +336,7 @@ struct BenchOutput {
     worker_start_spread_ms: u64,
     latency: Option<LatencyStats>,
     meta: BenchMetadata,
+    queue_wait: Option<QueueWaitReport>,
 }
 
 #[derive(Serialize)]
@@ -319,6 +359,79 @@ struct BenchMetadata {
     hostname: Option<String>,
     target_os: &'static str,
     target_arch: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct QueueWaitReport {
+    metrics_path: Option<String>,
+    metrics_loaded: bool,
+    metrics_error: Option<String>,
+    tail_threshold_ns: Option<u64>,
+    tail_max_ratio: Option<f64>,
+    tail_target_percentile: Option<f64>,
+    auto_profile: Option<String>,
+    auto_profile_applied: bool,
+    tail_mode: Option<QueueWaitTailMode>,
+    tail_percentile: Option<QueueWaitPercentileSample>,
+    tail_histogram: Option<QueueWaitHistogramSample>,
+    percentiles: Option<QueueWaitPercentiles>,
+    queue_wait_avg_ns: Option<f64>,
+    queue_wait_max_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+struct QueueWaitPercentiles {
+    #[serde(default)]
+    p50: Option<QueueWaitPercentileValue>,
+    #[serde(default)]
+    p90: Option<QueueWaitPercentileValue>,
+    #[serde(default)]
+    p95: Option<QueueWaitPercentileValue>,
+    #[serde(default)]
+    p99: Option<QueueWaitPercentileValue>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+struct QueueWaitPercentileValue {
+    ns: Option<u64>,
+    #[serde(default)]
+    open_ended: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct QueueWaitPercentileSample {
+    label: String,
+    percentile: f64,
+    ns: u64,
+    derived_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct QueueWaitHistogramSample {
+    ratio: f64,
+    tail_count: u64,
+    total: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum QueueWaitTailMode {
+    Percentile,
+    Histogram,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentMetricsSnapshot {
+    #[serde(default)]
+    count: Option<u64>,
+    #[serde(default)]
+    queue_wait_avg_ns: Option<f64>,
+    #[serde(default)]
+    queue_wait_max_ns: Option<u64>,
+    #[serde(default)]
+    queue_wait_histogram: Option<Vec<u64>>,
+    #[serde(default)]
+    queue_wait_percentiles: Option<QueueWaitPercentiles>,
 }
 
 fn compute_latency_stats(mut latencies_us: Vec<u64>) -> Option<LatencyStats> {
@@ -480,6 +593,194 @@ fn write_csv_output<W: Write>(
     }
     writeln!(writer, "{}", csv_data_row(payload))?;
     Ok(())
+}
+
+fn queue_wait_report(args: &Args) -> Option<QueueWaitReport> {
+    let should_emit = args.metrics_file.is_some()
+        || args.queue_wait_tail_ns.is_some()
+        || args.queue_wait_tail_max_ratio.is_some()
+        || args.queue_wait_tail_profile.is_some();
+    if !should_emit {
+        return None;
+    }
+
+    let mut tail_threshold_ns = args.queue_wait_tail_ns;
+    let mut tail_max_ratio = args.queue_wait_tail_max_ratio;
+    let mut auto_profile_applied = false;
+    let mut auto_profile = args.queue_wait_tail_profile.clone();
+
+    if let Some(profile) = auto_profile.clone() {
+        if tail_threshold_ns.is_none() || tail_max_ratio.is_none() {
+            if let Some((default_threshold, default_ratio)) = queue_wait_profile_defaults(&profile)
+            {
+                if tail_threshold_ns.is_none() {
+                    tail_threshold_ns = Some(default_threshold);
+                    auto_profile_applied = true;
+                }
+                if tail_max_ratio.is_none() {
+                    tail_max_ratio = Some(default_ratio);
+                    auto_profile_applied = true;
+                }
+            } else {
+                warn!(%profile, "unknown queue wait profile override");
+                auto_profile = None;
+            }
+        }
+    }
+
+    let tail_target_percentile = tail_max_ratio.map(|ratio| (1.0 - ratio).clamp(0.0, 1.0));
+
+    let mut metrics_loaded = false;
+    let mut metrics_error = None;
+    let mut percentiles = None;
+    let mut queue_wait_avg_ns = None;
+    let mut queue_wait_max_ns = None;
+    let mut tail_mode = None;
+    let mut tail_percentile = None;
+    let mut tail_histogram = None;
+    let metrics_path = args.metrics_file.clone();
+
+    if let Some(path) = metrics_path.clone() {
+        match load_agent_metrics(&path) {
+            Ok(snapshot) => {
+                metrics_loaded = true;
+                percentiles = snapshot.queue_wait_percentiles;
+                queue_wait_avg_ns = snapshot.queue_wait_avg_ns;
+                queue_wait_max_ns = snapshot.queue_wait_max_ns;
+                if let (Some(threshold_ns), Some(max_ratio)) = (tail_threshold_ns, tail_max_ratio) {
+                    let target_percentile = (1.0 - max_ratio).clamp(0.0, 1.0);
+                    if let Some(percentile_values) = snapshot.queue_wait_percentiles {
+                        if let Some(sample) =
+                            choose_queue_wait_percentile(&percentile_values, target_percentile)
+                        {
+                            tail_mode = Some(QueueWaitTailMode::Percentile);
+                            tail_percentile = Some(sample);
+                        }
+                    }
+                    if tail_percentile.is_none() {
+                        if let Some(histogram) = snapshot.queue_wait_histogram.as_deref() {
+                            if let Some((tail_count, total)) =
+                                histogram_tail_ratio(histogram, threshold_ns, snapshot.count)
+                            {
+                                tail_mode = Some(QueueWaitTailMode::Histogram);
+                                let ratio = if total == 0 {
+                                    0.0
+                                } else {
+                                    tail_count as f64 / total as f64
+                                };
+                                tail_histogram = Some(QueueWaitHistogramSample {
+                                    ratio,
+                                    tail_count,
+                                    total,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                metrics_error = Some(err.to_string());
+            }
+        }
+    } else if tail_threshold_ns.is_some() || tail_max_ratio.is_some() {
+        metrics_error = Some("metrics file not provided".to_string());
+    }
+
+    Some(QueueWaitReport {
+        metrics_path,
+        metrics_loaded,
+        metrics_error,
+        tail_threshold_ns,
+        tail_max_ratio,
+        tail_target_percentile,
+        auto_profile,
+        auto_profile_applied,
+        tail_mode,
+        tail_percentile,
+        tail_histogram,
+        percentiles,
+        queue_wait_avg_ns,
+        queue_wait_max_ns,
+    })
+}
+
+fn load_agent_metrics(path: &str) -> Result<AgentMetricsSnapshot> {
+    let data = fs::read(path)?;
+    let snapshot = serde_json::from_slice::<AgentMetricsSnapshot>(&data)?;
+    Ok(snapshot)
+}
+
+fn queue_wait_profile_defaults(profile: &str) -> Option<(u64, f64)> {
+    let normalized = profile.to_ascii_lowercase();
+    match normalized.as_str() {
+        "pssh" => Some((4_000_000, 0.03)),
+        "fanout" => Some((6_000_000, 0.04)),
+        "balanced" => Some((8_000_000, 0.05)),
+        "low-memory" => Some((12_000_000, 0.07)),
+        _ => None,
+    }
+}
+
+fn choose_queue_wait_percentile(
+    percentiles: &QueueWaitPercentiles,
+    target_percentile: f64,
+) -> Option<QueueWaitPercentileSample> {
+    for (label, percentile_value) in QUEUE_WAIT_PERCENTILE_LABELS {
+        let entry = match label {
+            "p50" => percentiles.p50,
+            "p90" => percentiles.p90,
+            "p95" => percentiles.p95,
+            "p99" => percentiles.p99,
+            _ => None,
+        };
+        let Some(entry) = entry else {
+            continue;
+        };
+        let Some(ns) = entry.ns else {
+            continue;
+        };
+        if entry.open_ended {
+            continue;
+        }
+        if percentile_value + f64::EPSILON >= target_percentile {
+            let derived_ratio = (1.0 - percentile_value).clamp(0.0, 1.0);
+            return Some(QueueWaitPercentileSample {
+                label: label.to_string(),
+                percentile: percentile_value,
+                ns,
+                derived_ratio,
+            });
+        }
+    }
+    None
+}
+
+fn histogram_tail_ratio(
+    histogram: &[u64],
+    threshold_ns: u64,
+    fallback_total: Option<u64>,
+) -> Option<(u64, u64)> {
+    if histogram.len() != QUEUE_WAIT_BUCKET_BOUNDS.len() + 1 {
+        return None;
+    }
+    let mut total = histogram.iter().copied().sum::<u64>();
+    if total == 0 {
+        total = fallback_total.unwrap_or(0);
+    }
+    let mut tail = 0u64;
+    let mut tail_started = threshold_ns == 0;
+    for (idx, &value) in histogram.iter().enumerate() {
+        if !tail_started {
+            let upper = QUEUE_WAIT_BUCKET_BOUNDS.get(idx).copied();
+            if upper.map(|bound| threshold_ns <= bound).unwrap_or(true) {
+                tail_started = true;
+            }
+        }
+        if tail_started {
+            tail = tail.saturating_add(value);
+        }
+    }
+    Some((tail, total))
 }
 
 async fn run_worker(
@@ -940,10 +1241,35 @@ fn parse_args() -> Args {
         latency: false,
         latency_max_samples: 100_000,
         worker_start_spread_ms: 0,
+        metrics_file: None,
+        queue_wait_tail_ns: None,
+        queue_wait_tail_max_ratio: None,
+        queue_wait_tail_profile: None,
         help: false,
         version: false,
         duration_secs: None,
     };
+
+    if let Ok(value) = std::env::var(METRICS_FILE_ENV) {
+        if !value.trim().is_empty() {
+            parsed.metrics_file = Some(value);
+        }
+    }
+    if let Ok(value) = std::env::var(QUEUE_WAIT_TAIL_NS_ENV) {
+        if let Ok(parsed_value) = value.parse() {
+            parsed.queue_wait_tail_ns = Some(parsed_value);
+        }
+    }
+    if let Ok(value) = std::env::var(QUEUE_WAIT_TAIL_RATIO_ENV) {
+        if let Ok(parsed_value) = value.parse() {
+            parsed.queue_wait_tail_max_ratio = Some(parsed_value);
+        }
+    }
+    if let Ok(value) = std::env::var(QUEUE_WAIT_PROFILE_ENV) {
+        if !value.trim().is_empty() {
+            parsed.queue_wait_tail_profile = Some(value);
+        }
+    }
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -1007,12 +1333,25 @@ fn parse_args() -> Args {
                         value.parse().unwrap_or(parsed.worker_start_spread_ms);
                 }
             }
+            "--metrics-file" => parsed.metrics_file = args.next(),
+            "--queue-wait-tail-ns" => {
+                if let Some(value) = args.next() {
+                    parsed.queue_wait_tail_ns = value.parse().ok();
+                }
+            }
+            "--queue-wait-tail-max-ratio" => {
+                if let Some(value) = args.next() {
+                    parsed.queue_wait_tail_max_ratio = value.parse().ok();
+                }
+            }
+            "--queue-wait-tail-profile" => parsed.queue_wait_tail_profile = args.next(),
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
         }
     }
 
+    normalize_queue_wait_args(&mut parsed);
     parsed
 }
 
@@ -1023,7 +1362,9 @@ fn print_help() {
     println!("  --worker-start-spread-ms <n>");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json --json-compact --csv [--no-csv-header] --reconnect --list --fixed");
-    println!("  --response-timeout-ms <n> --latency --latency-max-samples <n>\n");
+    println!("  --response-timeout-ms <n> --latency --latency-max-samples <n>");
+    println!("  --metrics-file <path> --queue-wait-tail-profile <profile>");
+    println!("  --queue-wait-tail-ns <ns> --queue-wait-tail-max-ratio <ratio>\n");
     println!("  --version\n");
     println!("Notes:");
     println!("  Use --key to reuse a specific identity from secretive-client.");
@@ -1033,6 +1374,27 @@ fn print_help() {
     println!("  --latency records request latencies and reports p50/p95/p99/max/avg.");
     println!("  --csv emits a single CSV row (header included by default).");
     println!("  --worker-start-spread-ms staggers worker start over N milliseconds.");
+}
+
+fn normalize_queue_wait_args(args: &mut Args) {
+    if let Some(value) = args.metrics_file.as_ref() {
+        if value.trim().is_empty() {
+            args.metrics_file = None;
+        }
+    }
+    if matches!(args.queue_wait_tail_ns, Some(0)) {
+        args.queue_wait_tail_ns = None;
+    }
+    if let Some(ratio) = args.queue_wait_tail_max_ratio {
+        if ratio <= 0.0 {
+            args.queue_wait_tail_max_ratio = None;
+        }
+    }
+    if let Some(profile) = args.queue_wait_tail_profile.as_ref() {
+        if profile.trim().is_empty() {
+            args.queue_wait_tail_profile = None;
+        }
+    }
 }
 
 fn worker_start_delay_ms(worker_id: usize, concurrency: usize, spread_ms: u64) -> u64 {
@@ -1062,8 +1424,10 @@ fn parse_flags(value: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_latency_stats, csv_data_row, csv_escape, csv_header_row, parse_flags,
-        worker_start_delay_ms, BenchMetadata, BenchOutput, LatencyStats,
+        choose_queue_wait_percentile, compute_latency_stats, csv_data_row, csv_escape,
+        csv_header_row, histogram_tail_ratio, parse_flags, queue_wait_profile_defaults,
+        worker_start_delay_ms, BenchMetadata, BenchOutput, LatencyStats, QueueWaitPercentileValue,
+        QueueWaitPercentiles, QUEUE_WAIT_BUCKET_BOUNDS,
     };
 
     #[test]
@@ -1136,6 +1500,7 @@ mod tests {
                 target_os: "linux",
                 target_arch: "x86_64",
             },
+            queue_wait: None,
         };
         let header = csv_header_row();
         let row = csv_data_row(&payload);
@@ -1150,6 +1515,59 @@ mod tests {
         assert_eq!(worker_start_delay_ms(3, 4, 120), 120);
         assert_eq!(worker_start_delay_ms(0, 1, 120), 0);
         assert_eq!(worker_start_delay_ms(2, 4, 0), 0);
+    }
+
+    #[test]
+    fn queue_wait_profile_defaults_match_expected() {
+        assert_eq!(queue_wait_profile_defaults("pssh"), Some((4_000_000, 0.03)));
+        assert_eq!(
+            queue_wait_profile_defaults("FANOUT"),
+            Some((6_000_000, 0.04))
+        );
+        assert_eq!(
+            queue_wait_profile_defaults("balanced"),
+            Some((8_000_000, 0.05))
+        );
+        assert_eq!(
+            queue_wait_profile_defaults("low-memory"),
+            Some((12_000_000, 0.07))
+        );
+        assert!(queue_wait_profile_defaults("unknown").is_none());
+    }
+
+    #[test]
+    fn choose_queue_wait_percentile_selects_first_target() {
+        let percentiles = QueueWaitPercentiles {
+            p50: Some(QueueWaitPercentileValue {
+                ns: Some(500),
+                open_ended: false,
+            }),
+            p90: Some(QueueWaitPercentileValue {
+                ns: Some(5_000),
+                open_ended: false,
+            }),
+            p95: Some(QueueWaitPercentileValue {
+                ns: Some(7_500),
+                open_ended: false,
+            }),
+            p99: Some(QueueWaitPercentileValue {
+                ns: Some(9_000),
+                open_ended: false,
+            }),
+        };
+        let sample = choose_queue_wait_percentile(&percentiles, 0.9).expect("sample");
+        assert_eq!(sample.label, "p90");
+        assert_eq!(sample.ns, 5_000);
+    }
+
+    #[test]
+    fn histogram_tail_ratio_counts_expected_buckets() {
+        let mut histogram = vec![0u64; QUEUE_WAIT_BUCKET_BOUNDS.len() + 1];
+        histogram[5] = 5;
+        histogram[6] = 10;
+        let result = histogram_tail_ratio(&histogram, 16_000, Some(15)).expect("ratio");
+        assert_eq!(result.0, 15);
+        assert_eq!(result.1, 15);
     }
 }
 

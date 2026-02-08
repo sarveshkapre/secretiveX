@@ -128,6 +128,10 @@ cargo run -p secretive-bench -- \
   --fixed \
   --latency \
   --latency-max-samples 200000 \
+  --metrics-file "$metrics_json" \
+  --queue-wait-tail-profile "$SLO_PROFILE" \
+  --queue-wait-tail-ns "$SLO_QUEUE_WAIT_TAIL_NS" \
+  --queue-wait-tail-max-ratio "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" \
   --json-compact > "$bench_json"
 
 rps="$(grep -o '"rps":[0-9.]*' "$bench_json" | head -n1 | cut -d: -f2)"

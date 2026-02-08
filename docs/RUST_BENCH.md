@@ -30,6 +30,58 @@ JSON now includes metadata fields for dashboards and traceability:
 - `meta.hostname`, `meta.pid`
 - `meta.target_os`, `meta.target_arch`
 
+## Queue-wait guardrails
+
+Point `secretive-bench` at the agent's live metrics snapshot to capture queue-wait guardrail data alongside throughput/latency:
+
+```bash
+cargo run -p secretive-bench -- \
+  --concurrency 512 \
+  --duration 30 \
+  --metrics-file /tmp/agent-metrics.json \
+  --queue-wait-tail-profile pssh \
+  --queue-wait-tail-ns 4000000 \
+  --queue-wait-tail-max-ratio 0.03 \
+  --json-compact
+```
+
+Flags and matching environment variables:
+
+| Flag | Env var | Description |
+| --- | --- | --- |
+| `--metrics-file <path>` | `SECRETIVE_BENCH_METRICS` | Load the agent's JSON snapshot emitted via `metrics_output_path`. |
+| `--queue-wait-tail-profile <pssh|fanout|balanced|low-memory>` | `SECRETIVE_BENCH_QUEUE_WAIT_PROFILE` | Auto-fill thresholds that match the agent profile guardrails (4/6/8/12 ms with ≤3%/4%/5%/7% tail). |
+| `--queue-wait-tail-ns <ns>` | `SECRETIVE_BENCH_QUEUE_WAIT_TAIL_NS` | Manually set the queue-wait tail threshold in nanoseconds. |
+| `--queue-wait-tail-max-ratio <ratio>` | `SECRETIVE_BENCH_QUEUE_WAIT_TAIL_MAX_RATIO` | Maximum fraction of requests allowed at or beyond the threshold. |
+
+When those inputs are provided, the JSON payload gains a `queue_wait` block that records both the configured guardrail and the measured queue-wait percentiles/histogram tail so dashboards no longer need to scrape shell output. Example:
+
+```json
+{
+  "queue_wait": {
+    "tail_threshold_ns": 4000000,
+    "tail_max_ratio": 0.03,
+    "auto_profile": "pssh",
+    "tail_mode": "percentile",
+    "tail_percentile": {
+      "label": "p95",
+      "percentile": 0.95,
+      "ns": 3100000,
+      "derived_ratio": 0.05
+    },
+    "queue_wait_avg_ns": 820000.0,
+    "percentiles": {
+      "p50": {"ns": 210000, "open_ended": false},
+      "p90": {"ns": 2400000, "open_ended": false},
+      "p95": {"ns": 3100000, "open_ended": false},
+      "p99": {"ns": 5500000, "open_ended": false}
+    }
+  }
+}
+```
+
+This keeps the raw histogram/percentile story close to the throughput numbers, matching recent observability guidance that recommends pairing histogram buckets with P50/P95/P99 tail tracking when reviewing latency guardrails.¹
+
 ## CSV output
 
 Emit a single CSV row for spreadsheet or ingestion pipelines:
@@ -223,6 +275,10 @@ Force failure when required tools are missing:
 ```bash
 PKCS11_SMOKE_REQUIRE_TOOLS=1 ./scripts/pkcs11_smoke.sh
 ```
+
+---
+
+¹ See [OneUptime's 2025 guide on OpenTelemetry histograms](https://oneuptime.com/blog/post/2025-08-26-what-are-metrics-in-opentelemetry/view) for more context on why histograms plus percentiles are the recommended backbone for latency guardrails, especially when tracking queue-wait distributions.
 
 ## Multi-host stress gate
 

@@ -90,6 +90,11 @@ fi
 bench_json="$tmpdir/soak.json"
 
 bench_args="--socket $socket_path --concurrency $SOAK_CONCURRENCY --duration $SOAK_DURATION_SECS --payload-size $SOAK_PAYLOAD_SIZE --worker-start-spread-ms $SOAK_WORKER_START_SPREAD_MS --fixed --latency --latency-max-samples 200000 --json-compact"
+if [ -n "$agent_pid" ] && [ -n "$agent_metrics_json" ]; then
+  bench_args="$bench_args --metrics-file $agent_metrics_json"
+elif [ -n "$SOAK_METRICS_FILE" ]; then
+  bench_args="$bench_args --metrics-file $SOAK_METRICS_FILE"
+fi
 if [ "$SOAK_RECONNECT" = "1" ]; then
   bench_args="$bench_args --reconnect"
 fi
