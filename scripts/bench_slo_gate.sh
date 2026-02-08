@@ -14,6 +14,43 @@ SLO_MAX_QUEUE_WAIT_MAX_NS="${SLO_MAX_QUEUE_WAIT_MAX_NS:-0}"
 SLO_QUEUE_WAIT_TAIL_NS="${SLO_QUEUE_WAIT_TAIL_NS:-0}"
 SLO_QUEUE_WAIT_TAIL_MAX_RATIO="${SLO_QUEUE_WAIT_TAIL_MAX_RATIO:-0}"
 
+auto_queue_wait_profile=""
+
+set_queue_wait_defaults() {
+  profile="$1"
+  case "$profile" in
+    pssh)
+      SLO_QUEUE_WAIT_TAIL_NS="4000000"
+      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="0.03"
+      ;;
+    fanout)
+      SLO_QUEUE_WAIT_TAIL_NS="6000000"
+      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="0.04"
+      ;;
+    balanced)
+      SLO_QUEUE_WAIT_TAIL_NS="8000000"
+      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="0.05"
+      ;;
+    low-memory)
+      SLO_QUEUE_WAIT_TAIL_NS="12000000"
+      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="0.07"
+      ;;
+    *)
+      SLO_QUEUE_WAIT_TAIL_NS="8000000"
+      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="0.05"
+      ;;
+  esac
+  auto_queue_wait_profile="$profile"
+}
+
+if [ "$SLO_QUEUE_WAIT_TAIL_NS" = "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" = "0" ]; then
+  set_queue_wait_defaults "$SLO_PROFILE"
+fi
+
+if [ -n "$auto_queue_wait_profile" ]; then
+  echo "auto queue-wait guardrail: profile=$auto_queue_wait_profile tail_ns=$SLO_QUEUE_WAIT_TAIL_NS max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" >&2
+fi
+
 tmpdir="$(mktemp -d)"
 agent_pid=""
 

@@ -159,6 +159,7 @@ Optional thresholds:
 - `SLO_MAX_QUEUE_WAIT_MAX_NS` (default `0`, disabled)
 - `SLO_QUEUE_WAIT_TAIL_NS` + `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` (defaults `0`): fail if more than the allowed ratio of requests land in histogram buckets whose upper bound is >= the tail threshold. Example: `SLO_QUEUE_WAIT_TAIL_NS=5000000 SLO_QUEUE_WAIT_TAIL_MAX_RATIO=0.05` alerts when >5% of signs wait ≥5ms in the queue.
 - CI jobs set conservative non-zero defaults for queue-wait sanity checks.
+- Leaving both tail knobs unset now auto-selects a guardrail for the chosen profile (`pssh` uses 4ms <=3% tail, `fanout` 6ms <=4%, `balanced` 8ms <=5%, `low-memory` 12ms <=7%). Override the environment variables to customize these values.
 
 ## Dedicated 1000-session gate
 
@@ -187,7 +188,7 @@ SOAK_DURATION_SECS=3600 SOAK_CONCURRENCY=512 SOAK_RECONNECT=1 ./scripts/soak_tes
 Run soak test against an already-running agent:
 
 ```bash
-SOAK_SOCKET=\"$XDG_RUNTIME_DIR/secretive/agent.sock\" ./scripts/soak_test.sh
+SOAK_SOCKET="$XDG_RUNTIME_DIR/secretive/agent.sock" ./scripts/soak_test.sh
 ```
 
 Persist soak JSON result to a specific path:
