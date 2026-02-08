@@ -84,13 +84,16 @@ Profiles only set fields that are still unset after CLI/config/env overrides.
 }
 ```
 
-### Secure Enclave store (macOS, planned)
+### Secure Enclave store (macOS)
 
 ```json
 {
   "type": "secure_enclave"
 }
 ```
+
+Note: `secure_enclave` is validated and supported only on macOS.
+The Rust store discovers Secure Enclave-backed private keys from Keychain and exposes ECDSA identities/signing via the SSH agent protocol.
 
 ### PKCS#11 store (planned)
 

@@ -20,7 +20,13 @@ rsa = "0.9"
 sha1 = { version = "0.10", features = ["oid"] }
 sha2 = { version = "0.10", features = ["oid"] }
 zeroize = "1.8"
+hex = "0.4"
 cryptoki = { version = "0.7", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+security-framework = "3.5"
+security-framework-sys = "2.15"
 
 [features]
 default = []

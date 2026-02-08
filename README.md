@@ -24,8 +24,8 @@ Current Rust milestones:
 - PKCS#11 signing resolves private key handles per session with one-shot refresh retry
 - PKCS#11 supports `refresh_min_interval_ms` to throttle refresh scans under fan-out
 - File-store auto reload via filesystem watchers (plus SIGHUP on Unix)
-- Secure Enclave store stub (macOS implementation next)
-- Config supports `secure_enclave` store type (stub)
+- Secure Enclave store implementation on macOS (key discovery + signing)
+- Config supports `secure_enclave` store type (macOS)
 - Agent exposes simple sign latency metrics in logs
 - `sign_timeout_ms` caps how long sign requests wait for a worker
 - Concurrent sign requests are bounded by CPU-aware semaphore

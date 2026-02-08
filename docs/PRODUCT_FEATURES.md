@@ -46,10 +46,10 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - CI now includes Windows named-pipe list/sign smoke on hosted Windows runners.
 - CI now compiles `secretive-agent` with `pkcs11` feature to guard feature-gated integration.
 - SLO and fanout gate scripts now default to the `pssh` profile for high fan-out coverage.
+- macOS Secure Enclave store now supports key discovery and signing in Rust agent mode.
 
 ## Gaps to Close for V1
 
-- Secure Enclave backend is still a stub (no production implementation yet).
 - PKCS#11 needs production hardening coverage and wider integration tests.
 - Windows packaging is in place; pipe ACL hardening still needs real-host validation coverage.
 - CI regression gate exists; stress coverage and flake resistance need expansion.
@@ -58,7 +58,7 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 
 ## P0 (Critical)
 
-- [ ] Implement macOS Secure Enclave store end-to-end (key discovery + sign + policy hooks).
+- [x] Implement macOS Secure Enclave store end-to-end (key discovery + sign + policy hooks).
 - [x] Add Linux service packaging (`systemd` service/unit + install flow).
 - [x] Add Windows service packaging and named-pipe ACL hardening.
 - [x] Add protocol compatibility tests against OpenSSH client flows (list/sign/error paths).

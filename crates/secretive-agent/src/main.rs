@@ -1545,9 +1545,13 @@ fn validate_config(config: &Config) -> ConfigValidation {
                     }
                 }
                 StoreConfig::SecureEnclave => {
-                    out.errors.push(format!(
-                        "stores[{idx}] secure_enclave is not implemented yet"
-                    ));
+                    if cfg!(target_os = "macos") {
+                        has_key_source = true;
+                    } else {
+                        out.errors.push(format!(
+                            "stores[{idx}] secure_enclave is only supported on macOS"
+                        ));
+                    }
                 }
                 StoreConfig::Pkcs11 {
                     module_path,
@@ -2856,15 +2860,18 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_secure_enclave_store() {
+    fn validate_config_validates_secure_enclave_store_for_platform() {
         let mut config = empty_config();
         config.stores = Some(vec![StoreConfig::SecureEnclave]);
         let validation = validate_config(&config);
-        assert!(!validation.errors.is_empty());
-        assert!(validation
-            .errors
-            .iter()
-            .any(|entry| entry.contains("secure_enclave is not implemented yet")));
+        if cfg!(target_os = "macos") {
+            assert!(validation.errors.is_empty());
+        } else {
+            assert!(validation
+                .errors
+                .iter()
+                .any(|entry| entry.contains("secure_enclave is only supported on macOS")));
+        }
     }
 
     #[test]
