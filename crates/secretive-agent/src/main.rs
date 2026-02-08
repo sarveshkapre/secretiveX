@@ -1,5 +1,6 @@
 use arc_swap::ArcSwap;
 use std::collections::HashSet;
+use std::io::{self, ErrorKind};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
@@ -286,6 +287,43 @@ fn main() {
     if args.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return;
+    }
+    if args.pid.is_some() && !args.reset_metrics {
+        eprintln!("--pid is only valid with --reset-metrics");
+        std::process::exit(2);
+    }
+    if args.reset_metrics {
+        #[cfg(unix)]
+        {
+            let target_pid = if let Some(pid) = args.pid {
+                Some(pid)
+            } else if let Some(path) = args.pid_file.as_deref() {
+                match read_pid_file(path) {
+                    Ok(pid) => Some(pid),
+                    Err(err) => {
+                        eprintln!("failed to read pid file {path}: {err}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let Some(pid) = target_pid else {
+                eprintln!("--reset-metrics requires --pid or --pid-file on Unix");
+                std::process::exit(2);
+            };
+            if let Err(err) = send_reset_metrics_signal(pid) {
+                eprintln!("failed to send reset-metrics signal to pid {pid}: {err}");
+                std::process::exit(2);
+            }
+            println!("sent reset-metrics signal to pid {pid}");
+            return;
+        }
+        #[cfg(not(unix))]
+        {
+            eprintln!("--reset-metrics is only supported on Unix builds");
+            std::process::exit(2);
+        }
     }
     let check_config = args.check_config;
     let mut config = load_config(args.config_path.as_deref());
@@ -908,6 +946,23 @@ async fn run_async(mut config: Config, max_signers: usize) {
 
     #[cfg(unix)]
     {
+        let sign_semaphore = sign_semaphore.clone();
+        let max_signers = max_signers as u64;
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut stream) = signal(SignalKind::user_defined2()) {
+                while stream.recv().await.is_some() {
+                    reset_sign_metrics();
+                    info!("sign metrics reset via SIGUSR2");
+                    let snapshot = build_metrics_snapshot(&sign_semaphore, max_signers);
+                    emit_sign_metrics("reset", &snapshot);
+                }
+            }
+        });
+    }
+
+    #[cfg(unix)]
+    {
         let socket_path = resolve_socket_path(config.socket_path);
         let socket_backlog = config.socket_backlog;
         if let Err(err) = run_unix(
@@ -982,6 +1037,68 @@ fn record_queue_wait_bucket(wait_ns: u64) {
         .position(|&bound| wait_ns <= bound)
         .unwrap_or(QUEUE_WAIT_BUCKET_COUNT - 1);
     QUEUE_WAIT_BUCKETS[bucket].fetch_add(1, Ordering::Relaxed);
+}
+
+fn reset_sign_metrics() {
+    SIGN_COUNT.store(0, Ordering::Relaxed);
+    SIGN_TIME_NS.store(0, Ordering::Relaxed);
+    SIGN_QUEUE_WAIT_NS.store(0, Ordering::Relaxed);
+    SIGN_QUEUE_WAIT_MAX_NS.store(0, Ordering::Relaxed);
+    SIGN_ERRORS.store(0, Ordering::Relaxed);
+    SIGN_TIMEOUTS.store(0, Ordering::Relaxed);
+    CONNECTION_COUNT.store(0, Ordering::Relaxed);
+    CONNECTION_REJECTED.store(0, Ordering::Relaxed);
+    let active = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
+    MAX_ACTIVE_CONNECTIONS.store(active, Ordering::Relaxed);
+    LIST_COUNT.store(0, Ordering::Relaxed);
+    LIST_CACHE_HIT.store(0, Ordering::Relaxed);
+    LIST_CACHE_STALE.store(0, Ordering::Relaxed);
+    LIST_REFRESH.store(0, Ordering::Relaxed);
+    LIST_ERRORS.store(0, Ordering::Relaxed);
+    STORE_SIGN_FILE.store(0, Ordering::Relaxed);
+    STORE_SIGN_PKCS11.store(0, Ordering::Relaxed);
+    STORE_SIGN_SECURE_ENCLAVE.store(0, Ordering::Relaxed);
+    STORE_SIGN_OTHER.store(0, Ordering::Relaxed);
+    for bucket in &QUEUE_WAIT_BUCKETS {
+        bucket.store(0, Ordering::Relaxed);
+    }
+}
+
+#[cfg(unix)]
+fn read_pid_file(path: &str) -> io::Result<u32> {
+    let contents = std::fs::read_to_string(path)?;
+    let trimmed = contents.trim();
+    if trimmed.is_empty() {
+        return Err(io::Error::new(ErrorKind::InvalidData, "pid file is empty"));
+    }
+    trimmed.parse::<u32>().map_err(|err| {
+        io::Error::new(
+            ErrorKind::InvalidData,
+            format!("failed to parse pid file {path}: {err}"),
+        )
+    })
+}
+
+#[cfg(unix)]
+fn send_reset_metrics_signal(pid: u32) -> io::Result<()> {
+    let pid = i32::try_from(pid).map_err(|_| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            "pid is too large for target platform",
+        )
+    })?;
+    if pid <= 0 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "pid must be positive",
+        ));
+    }
+    let rc = unsafe { libc::kill(pid, libc::SIGUSR2) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1793,6 +1910,8 @@ struct Args {
     idle_timeout_ms: Option<u64>,
     inline_sign: Option<bool>,
     sign_timeout_ms: Option<u64>,
+    reset_metrics: bool,
+    pid: Option<u32>,
     check_config: bool,
     dump_effective_config: bool,
     help: bool,
@@ -1824,6 +1943,8 @@ fn parse_args() -> Args {
         idle_timeout_ms: None,
         inline_sign: None,
         sign_timeout_ms: None,
+        reset_metrics: false,
+        pid: None,
         check_config: false,
         dump_effective_config: false,
         help: false,
@@ -1907,6 +2028,12 @@ fn parse_args() -> Args {
             }
             "--inline-sign" => parsed.inline_sign = Some(true),
             "--no-inline-sign" => parsed.inline_sign = Some(false),
+            "--reset-metrics" => parsed.reset_metrics = true,
+            "--pid" => {
+                if let Some(value) = args.next() {
+                    parsed.pid = value.parse().ok();
+                }
+            }
             "--check-config" => parsed.check_config = true,
             "--dump-effective-config" => parsed.dump_effective_config = true,
             "-h" | "--help" => parsed.help = true,
@@ -1958,10 +2085,12 @@ fn print_help() {
     println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
     println!("  --identity-cache-ms <n>");
     println!("  --inline-sign | --no-inline-sign");
-    println!("  --idle-timeout-ms <n>\n");
+    println!("  --idle-timeout-ms <n>");
     println!("  --check-config");
     println!("  --dump-effective-config");
-    println!("  --version\n");
+    println!("  --version");
+    println!("  --reset-metrics (admin helper; requires --pid or --pid-file on Unix)");
+    println!("  --pid <pid> (admin helper used with --reset-metrics)\n");
     println!("Notes:");
     println!("  Use JSON config for store definitions (see docs/RUST_CONFIG.md).");
     println!("  identity_cache_ms controls caching of list-identity responses.");
@@ -2797,6 +2926,11 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
 
+    fn metrics_test_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     fn empty_config() -> Config {
         Config {
             profile: None,
@@ -2996,6 +3130,50 @@ mod tests {
         assert_eq!(value.load(Ordering::Relaxed), 10);
         update_atomic_max(&value, 12);
         assert_eq!(value.load(Ordering::Relaxed), 12);
+    }
+
+    #[test]
+    fn reset_sign_metrics_zeroes_counters() {
+        let _guard = metrics_test_lock().lock().expect("metrics test lock");
+        SIGN_COUNT.store(9, Ordering::Relaxed);
+        SIGN_TIME_NS.store(123, Ordering::Relaxed);
+        SIGN_QUEUE_WAIT_NS.store(456, Ordering::Relaxed);
+        SIGN_QUEUE_WAIT_MAX_NS.store(789, Ordering::Relaxed);
+        SIGN_ERRORS.store(3, Ordering::Relaxed);
+        SIGN_TIMEOUTS.store(4, Ordering::Relaxed);
+        CONNECTION_COUNT.store(5, Ordering::Relaxed);
+        CONNECTION_REJECTED.store(6, Ordering::Relaxed);
+        LIST_COUNT.store(7, Ordering::Relaxed);
+        LIST_CACHE_HIT.store(8, Ordering::Relaxed);
+        LIST_CACHE_STALE.store(9, Ordering::Relaxed);
+        LIST_REFRESH.store(10, Ordering::Relaxed);
+        LIST_ERRORS.store(11, Ordering::Relaxed);
+        STORE_SIGN_FILE.store(12, Ordering::Relaxed);
+        STORE_SIGN_PKCS11.store(13, Ordering::Relaxed);
+        STORE_SIGN_SECURE_ENCLAVE.store(14, Ordering::Relaxed);
+        STORE_SIGN_OTHER.store(15, Ordering::Relaxed);
+        ACTIVE_CONNECTIONS.store(4, Ordering::Relaxed);
+        MAX_ACTIVE_CONNECTIONS.store(99, Ordering::Relaxed);
+        QUEUE_WAIT_BUCKETS[0].store(2, Ordering::Relaxed);
+        QUEUE_WAIT_BUCKETS[QUEUE_WAIT_BUCKET_COUNT - 1].store(3, Ordering::Relaxed);
+
+        reset_sign_metrics();
+
+        assert_eq!(SIGN_COUNT.load(Ordering::Relaxed), 0);
+        assert_eq!(SIGN_ERRORS.load(Ordering::Relaxed), 0);
+        assert_eq!(CONNECTION_COUNT.load(Ordering::Relaxed), 0);
+        assert_eq!(LIST_REFRESH.load(Ordering::Relaxed), 0);
+        assert_eq!(STORE_SIGN_FILE.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed),
+            ACTIVE_CONNECTIONS.load(Ordering::Relaxed)
+        );
+        assert!(QUEUE_WAIT_BUCKETS
+            .iter()
+            .all(|bucket| bucket.load(Ordering::Relaxed) == 0));
+
+        ACTIVE_CONNECTIONS.store(0, Ordering::Relaxed);
+        reset_sign_metrics();
     }
 
     #[test]

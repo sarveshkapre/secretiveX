@@ -13,6 +13,12 @@ If no path is provided, the agent looks for:
 - `$XDG_CONFIG_HOME/secretive/agent.json`
 - `<config_dir>/secretive/agent.json` (from `directories::BaseDirs`)
 
+Reset metrics counters without restarting (Unix only):
+- `secretive-agent --reset-metrics --pid <pid>`
+- `secretive-agent --reset-metrics --pid-file /path/to/agent.pid`
+
+`--pid` targets a running agent PID directly. `--pid-file` reads the PID from a file created via the runtime `pid_file` option. Both forms send `SIGUSR2`, which zeros the sign metrics counters and queue-wait histogram before emitting a `reset` snapshot line.
+
 Socket path overrides:
 - `SECRETIVE_SOCK` (Unix) or `SECRETIVE_PIPE` (Windows) override the socket/pipe path when `socket_path` is unset.
 

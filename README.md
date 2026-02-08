@@ -36,6 +36,7 @@ Current Rust milestones:
 - `profile` presets (`balanced`, `fanout`, `pssh`, `low-memory`) set sensible defaults
 - `socket_backlog` tunes Unix socket listen backlog for large fan-out
 - Send `SIGUSR1` on Unix to log a metrics snapshot
+- Send `SIGUSR2` (or `secretive-agent --reset-metrics`) on Unix to zero sign metrics counters for clean intervals
 - `watch_files` controls automatic reloads
 - `watch_debounce_ms` tunes reload debounce for file watchers
 - `metrics_every` controls logging frequency
