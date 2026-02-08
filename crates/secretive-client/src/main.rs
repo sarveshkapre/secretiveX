@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::{Bytes, BytesMut};
 use secretive_proto::{
     encode_request_frame, read_response_with_buffer, write_request_with_buffer, AgentRequest,
@@ -35,13 +36,27 @@ async fn main() -> Result<()> {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    let guardrail = build_queue_wait_guardrail(&args)?;
     if args.pssh_hints {
         let socket_path = resolve_socket_path(args.socket_path.clone());
         print_pssh_hints(&socket_path)?;
         return Ok(());
     }
+    if guardrail.is_some() && args.metrics_file.is_none() {
+        return Err(anyhow::anyhow!(
+            "queue wait guardrail flags require --metrics-file"
+        ));
+    }
     if let Some(path) = args.metrics_file.as_deref() {
-        print_metrics_file(path, args.json, args.json_compact)?;
+        let snapshot = load_metrics_snapshot(path)?;
+        render_metrics_snapshot(&snapshot, args.json, args.json_compact)?;
+        if let Some(guardrail) = guardrail.as_ref() {
+            let verdict = evaluate_queue_wait_guardrail(&snapshot, guardrail);
+            emit_guardrail_verdict(&verdict, args.json)?;
+            if !verdict.passed {
+                std::process::exit(3);
+            }
+        }
         return Ok(());
     }
     let socket_path = resolve_socket_path(args.socket_path.clone());
@@ -679,6 +694,8 @@ struct MetricsSnapshot {
     errors: u64,
     timeouts: u64,
     avg_ns: f64,
+    captured_unix_ms: Option<u64>,
+    started_unix_ms: Option<u64>,
     queue_wait_avg_ns: Option<f64>,
     queue_wait_max_ns: Option<u64>,
     in_flight: u64,
@@ -835,17 +852,391 @@ fn format_percentile_value_from_parts(value_ns: u64, open_ended: bool) -> String
     }
 }
 
-fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Result<()> {
-    let content = std::fs::read_to_string(path)?;
-    let metrics: MetricsSnapshot = serde_json::from_str(&content)?;
+const GUARDRAIL_PERCENTILE_FIELDS: [(&str, f64); 4] =
+    [("p50", 0.50), ("p90", 0.90), ("p95", 0.95), ("p99", 0.99)];
 
+#[derive(Debug, Clone)]
+struct QueueWaitGuardrail {
+    tail_threshold_ns: Option<u64>,
+    tail_max_ratio: Option<f64>,
+    target_percentile: Option<f64>,
+    max_age_ms: Option<u64>,
+    auto_profile: Option<String>,
+    auto_profile_applied: bool,
+}
+
+#[derive(Debug, Default)]
+struct QueueWaitGuardrailVerdict {
+    passed: bool,
+    messages: Vec<String>,
+    failures: Vec<String>,
+}
+
+impl QueueWaitGuardrailVerdict {
+    fn new() -> Self {
+        Self {
+            passed: true,
+            messages: Vec::new(),
+            failures: Vec::new(),
+        }
+    }
+
+    fn fail(&mut self, message: String) {
+        self.passed = false;
+        self.failures.push(message);
+    }
+
+    fn record(&mut self, message: String) {
+        self.messages.push(message);
+    }
+}
+
+struct GuardrailPercentileSample {
+    label: &'static str,
+    percentile: f64,
+    ns: u64,
+}
+
+fn emit_guardrail_verdict(verdict: &QueueWaitGuardrailVerdict, json_output: bool) -> Result<()> {
+    if verdict.messages.is_empty() && verdict.failures.is_empty() {
+        return Ok(());
+    }
+    if json_output {
+        for line in &verdict.messages {
+            eprintln!("{line}");
+        }
+    } else {
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        for line in &verdict.messages {
+            writeln!(handle, "{line}")?;
+        }
+    }
+    for line in &verdict.failures {
+        eprintln!("{line}");
+    }
+    Ok(())
+}
+
+fn build_queue_wait_guardrail(args: &Args) -> Result<Option<QueueWaitGuardrail>> {
+    if args.queue_wait_tail_ns.is_none()
+        && args.queue_wait_tail_max_ratio.is_none()
+        && args.queue_wait_tail_profile.is_none()
+        && args.queue_wait_max_age_ms.is_none()
+    {
+        return Ok(None);
+    }
+
+    let mut tail_threshold_ns = parse_u64_flag(&args.queue_wait_tail_ns, "--queue-wait-tail-ns")?;
+    if matches!(tail_threshold_ns, Some(0)) {
+        anyhow::bail!("--queue-wait-tail-ns must be greater than 0");
+    }
+    let mut tail_max_ratio = parse_ratio_flag(
+        &args.queue_wait_tail_max_ratio,
+        "--queue-wait-tail-max-ratio",
+    )?;
+    if let Some(ratio) = tail_max_ratio {
+        if !(ratio.is_finite() && ratio > 0.0 && ratio < 1.0) {
+            anyhow::bail!("--queue-wait-tail-max-ratio must be between 0 and 1 (exclusive)");
+        }
+    }
+
+    let mut auto_profile_applied = false;
+    let auto_profile = args.queue_wait_tail_profile.clone();
+    if let Some(profile) = auto_profile.clone() {
+        if tail_threshold_ns.is_none() || tail_max_ratio.is_none() {
+            if let Some((default_ns, default_ratio)) = queue_wait_profile_defaults(&profile) {
+                if tail_threshold_ns.is_none() {
+                    tail_threshold_ns = Some(default_ns);
+                    auto_profile_applied = true;
+                }
+                if tail_max_ratio.is_none() {
+                    tail_max_ratio = Some(default_ratio);
+                    auto_profile_applied = true;
+                }
+            } else {
+                anyhow::bail!("unknown queue-wait profile '{profile}'");
+            }
+        }
+    }
+
+    if tail_threshold_ns.is_some() ^ tail_max_ratio.is_some() {
+        anyhow::bail!(
+            "queue wait tail checks require both --queue-wait-tail-ns and --queue-wait-tail-max-ratio (or a profile)"
+        );
+    }
+
+    let max_age_ms = parse_u64_flag(&args.queue_wait_max_age_ms, "--queue-wait-max-age-ms")?
+        .filter(|value| *value > 0);
+
+    if tail_threshold_ns.is_none() && max_age_ms.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(QueueWaitGuardrail {
+        tail_threshold_ns,
+        tail_max_ratio,
+        target_percentile: tail_max_ratio.map(|ratio| (1.0 - ratio).clamp(0.0, 1.0)),
+        max_age_ms,
+        auto_profile,
+        auto_profile_applied,
+    }))
+}
+
+fn parse_u64_flag(raw: &Option<String>, flag: &str) -> Result<Option<u64>> {
+    match raw.as_deref() {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("{flag} requires a numeric value");
+            }
+            let parsed = trimmed
+                .parse::<u64>()
+                .with_context(|| format!("{flag} expects an integer value: {value}"))?;
+            Ok(Some(parsed))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_ratio_flag(raw: &Option<String>, flag: &str) -> Result<Option<f64>> {
+    match raw.as_deref() {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("{flag} requires a numeric value");
+            }
+            let parsed = trimmed
+                .parse::<f64>()
+                .with_context(|| format!("{flag} expects a numeric value: {value}"))?;
+            Ok(Some(parsed))
+        }
+        None => Ok(None),
+    }
+}
+
+fn queue_wait_profile_defaults(profile: &str) -> Option<(u64, f64)> {
+    let normalized = profile.to_ascii_lowercase();
+    match normalized.as_str() {
+        "pssh" => Some((4_000_000, 0.03)),
+        "fanout" => Some((6_000_000, 0.04)),
+        "balanced" => Some((8_000_000, 0.05)),
+        "low-memory" => Some((12_000_000, 0.07)),
+        _ => None,
+    }
+}
+
+fn evaluate_queue_wait_guardrail(
+    snapshot: &MetricsSnapshot,
+    guardrail: &QueueWaitGuardrail,
+) -> QueueWaitGuardrailVerdict {
+    let mut verdict = QueueWaitGuardrailVerdict::new();
+    if let Some(profile) = guardrail.auto_profile.as_deref() {
+        if guardrail.auto_profile_applied {
+            verdict.record(format!(
+                "queue_wait guardrail profile '{profile}' applied defaults"
+            ));
+        } else {
+            verdict.record(format!(
+                "queue_wait guardrail profile override '{profile}' in effect"
+            ));
+        }
+    }
+    if let (Some(threshold_ns), Some(max_ratio)) =
+        (guardrail.tail_threshold_ns, guardrail.tail_max_ratio)
+    {
+        verdict.record(format!(
+            "queue_wait guardrail thresholds: tail_ns={threshold_ns}ns max_ratio={max_ratio:.4}"
+        ));
+        let target_percentile = guardrail.target_percentile.unwrap_or(1.0);
+        if let Some(percentiles) = snapshot.queue_wait_percentiles.as_ref() {
+            if let Some(sample) = choose_guardrail_percentile(percentiles, target_percentile) {
+                let pass = sample.ns <= threshold_ns;
+                let derived_ratio = (1.0 - sample.percentile).clamp(0.0, 1.0);
+                let message = format!(
+                    "queue_wait percentile {label}={ns}ns (derived ratio {ratio:.4}) vs tail_ns {threshold_ns}ns",
+                    label = sample.label,
+                    ns = sample.ns,
+                    ratio = derived_ratio
+                );
+                if pass {
+                    verdict.record(format!("{message} ✅"));
+                } else {
+                    verdict.fail(format!("{message} ❌"));
+                }
+            } else if let Some(histogram) = snapshot.queue_wait_histogram.as_deref() {
+                verdict.record(
+                    "queue_wait percentiles unavailable for target; using histogram fallback"
+                        .into(),
+                );
+                evaluate_histogram_tail(
+                    histogram,
+                    threshold_ns,
+                    max_ratio,
+                    snapshot.count,
+                    &mut verdict,
+                );
+            } else {
+                verdict.fail(
+                    "queue_wait guardrail FAILED: percentiles missing and histogram unavailable"
+                        .into(),
+                );
+            }
+        } else if let Some(histogram) = snapshot.queue_wait_histogram.as_deref() {
+            verdict.record("queue_wait percentiles missing; using histogram fallback".into());
+            evaluate_histogram_tail(
+                histogram,
+                threshold_ns,
+                max_ratio,
+                snapshot.count,
+                &mut verdict,
+            );
+        } else {
+            verdict.fail(
+                "queue_wait guardrail FAILED: queue-wait percentiles and histogram unavailable"
+                    .into(),
+            );
+        }
+    }
+
+    if let Some(max_age_ms) = guardrail.max_age_ms {
+        if let Some(captured_unix_ms) = snapshot.captured_unix_ms {
+            let age_ms = unix_now_ms().saturating_sub(captured_unix_ms);
+            if age_ms <= max_age_ms {
+                verdict.record(format!(
+                    "queue_wait metrics age {age_ms}ms ≤ max {max_age_ms}ms ✅"
+                ));
+            } else {
+                verdict.fail(format!(
+                    "queue_wait metrics age {age_ms}ms exceeded max {max_age_ms}ms ❌"
+                ));
+            }
+        } else {
+            verdict.fail(
+                "queue_wait guardrail FAILED: metrics snapshot missing captured_unix_ms".into(),
+            );
+        }
+    }
+
+    if verdict.passed {
+        verdict.record("queue_wait guardrail PASS".into());
+    } else {
+        verdict.failures.push("queue_wait guardrail FAILED".into());
+    }
+
+    verdict
+}
+
+fn evaluate_histogram_tail(
+    histogram: &[u64],
+    threshold_ns: u64,
+    max_ratio: f64,
+    fallback_total: u64,
+    verdict: &mut QueueWaitGuardrailVerdict,
+) {
+    if let Some((tail_count, total)) =
+        histogram_tail_ratio_guardrail(histogram, threshold_ns, fallback_total)
+    {
+        let ratio = if total == 0 {
+            0.0
+        } else {
+            tail_count as f64 / total as f64
+        };
+        let message = format!(
+            "queue_wait histogram tail ratio={ratio:.4} (tail={tail_count} total={total}) vs max_ratio={max_ratio:.4}"
+        );
+        if ratio <= max_ratio {
+            verdict.record(format!("{message} ✅"));
+        } else {
+            verdict.fail(format!("{message} ❌"));
+        }
+    } else {
+        verdict.fail("queue_wait guardrail FAILED: histogram missing or malformed".into());
+    }
+}
+
+fn choose_guardrail_percentile(
+    percentiles: &MetricsQueueWaitPercentiles,
+    target_percentile: f64,
+) -> Option<GuardrailPercentileSample> {
+    let target = target_percentile.clamp(0.0, 1.0);
+    for (field, percentile_value) in GUARDRAIL_PERCENTILE_FIELDS {
+        let entry = match field {
+            "p50" => percentiles.p50?,
+            "p90" => percentiles.p90?,
+            "p95" => percentiles.p95?,
+            "p99" => percentiles.p99?,
+            _ => continue,
+        };
+        if entry.open_ended {
+            continue;
+        }
+        if percentile_value + f64::EPSILON >= target {
+            return Some(GuardrailPercentileSample {
+                label: field,
+                percentile: percentile_value,
+                ns: entry.ns,
+            });
+        }
+    }
+    None
+}
+
+fn histogram_tail_ratio_guardrail(
+    histogram: &[u64],
+    threshold_ns: u64,
+    fallback_total: u64,
+) -> Option<(u64, u64)> {
+    if histogram.len() != QUEUE_WAIT_BUCKET_BOUNDS.len() + 1 {
+        return None;
+    }
+    let mut total = histogram.iter().copied().sum::<u64>();
+    if total == 0 {
+        total = fallback_total;
+    }
+    let mut tail = 0u64;
+    let mut tail_started = threshold_ns == 0;
+    for (idx, &value) in histogram.iter().enumerate() {
+        if !tail_started {
+            let upper = QUEUE_WAIT_BUCKET_BOUNDS.get(idx).copied();
+            if upper.map(|bound| threshold_ns <= bound).unwrap_or(true) {
+                tail_started = true;
+            }
+        }
+        if tail_started {
+            tail = tail.saturating_add(value);
+        }
+    }
+    Some((tail, total))
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn load_metrics_snapshot(path: &str) -> Result<MetricsSnapshot> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("failed to read metrics {path}"))?;
+    let metrics: MetricsSnapshot =
+        serde_json::from_str(&content).with_context(|| format!("invalid metrics JSON {path}"))?;
+    Ok(metrics)
+}
+
+fn render_metrics_snapshot(
+    metrics: &MetricsSnapshot,
+    json_output: bool,
+    json_compact: bool,
+) -> Result<()> {
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
     if json_output {
         if json_compact {
-            serde_json::to_writer(&mut handle, &metrics)?;
+            serde_json::to_writer(&mut handle, metrics)?;
         } else {
-            serde_json::to_writer_pretty(&mut handle, &metrics)?;
+            serde_json::to_writer_pretty(&mut handle, metrics)?;
         }
         writeln!(handle)?;
         return Ok(());
@@ -856,6 +1247,19 @@ fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Resu
     writeln!(handle, "errors: {}", metrics.errors)?;
     writeln!(handle, "timeouts: {}", metrics.timeouts)?;
     writeln!(handle, "avg_ns: {:.2}", metrics.avg_ns)?;
+    if let Some(value) = metrics.captured_unix_ms {
+        writeln!(handle, "captured_unix_ms: {}", value)?;
+        let age_ms = unix_now_ms().saturating_sub(value);
+        writeln!(handle, "captured_age_ms: {}", age_ms)?;
+    }
+    if let Some(value) = metrics.started_unix_ms {
+        writeln!(handle, "started_unix_ms: {}", value)?;
+        if let Some(captured) = metrics.captured_unix_ms {
+            if captured >= value {
+                writeln!(handle, "agent_uptime_ms: {}", captured - value)?;
+            }
+        }
+    }
     if let Some(value) = metrics.queue_wait_avg_ns {
         writeln!(handle, "queue_wait_avg_ns: {:.2}", value)?;
     }
@@ -1078,6 +1482,10 @@ struct Args {
     response_timeout_ms: Option<u64>,
     help: bool,
     version: bool,
+    queue_wait_tail_ns: Option<String>,
+    queue_wait_tail_max_ratio: Option<String>,
+    queue_wait_tail_profile: Option<String>,
+    queue_wait_max_age_ms: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -1101,12 +1509,20 @@ fn parse_args() -> Args {
         response_timeout_ms: None,
         help: false,
         version: false,
+        queue_wait_tail_ns: None,
+        queue_wait_tail_max_ratio: None,
+        queue_wait_tail_profile: None,
+        queue_wait_max_age_ms: None,
     };
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--socket" => parsed.socket_path = args.next(),
             "--metrics-file" => parsed.metrics_file = args.next(),
+            "--queue-wait-tail-ns" => parsed.queue_wait_tail_ns = args.next(),
+            "--queue-wait-tail-max-ratio" => parsed.queue_wait_tail_max_ratio = args.next(),
+            "--queue-wait-tail-profile" => parsed.queue_wait_tail_profile = args.next(),
+            "--queue-wait-max-age-ms" => parsed.queue_wait_max_age_ms = args.next(),
             "--pssh-hints" => parsed.pssh_hints = true,
             "--list" => parsed.list = true,
             "--health" => parsed.health = true,
@@ -1148,6 +1564,10 @@ fn print_help() {
     println!("  --list [--json|--json-compact] [--openssh] [--raw] [--filter <substring>]");
     println!("  --health [--json|--json-compact] [--filter <substring>]");
     println!("  --metrics-file <path> [--json|--json-compact]");
+    println!("    [--queue-wait-tail-profile <name>]");
+    println!("    [--queue-wait-tail-ns <nanoseconds>]");
+    println!("    [--queue-wait-tail-max-ratio <0.0-1.0>]");
+    println!("    [--queue-wait-max-age-ms <milliseconds>]");
     println!("  --pssh-hints [--socket <path>]");
     println!("  --sign <key_blob_hex> [--data <path>] [--flags <u32>] [--json|--json-compact]");
     println!("  --comment <comment> [--data <path>] [--flags <u32>] [--json|--json-compact]");
@@ -1165,6 +1585,7 @@ fn print_help() {
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
     println!("  --json-compact emits compact JSON (no pretty formatting).");
+    println!("  Queue-wait guardrail flags require --metrics-file and exit non-zero on failure.");
 }
 
 fn parse_flags(value: &str) -> Option<u32> {
@@ -1187,10 +1608,11 @@ fn parse_flags(value: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_health_report, compute_queue_wait_percentiles, format_percentile_value,
-        parse_fingerprint_input, parse_flags, render_pssh_hints,
+        build_health_report, choose_guardrail_percentile, compute_queue_wait_percentiles,
+        evaluate_queue_wait_guardrail, format_percentile_value, histogram_tail_ratio_guardrail,
+        parse_fingerprint_input, parse_flags, queue_wait_profile_defaults, render_pssh_hints,
         write_metrics_queue_wait_percentiles, MetricsPercentileValue, MetricsQueueWaitPercentiles,
-        MetricsSnapshot, QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
+        MetricsSnapshot, QueueWaitGuardrail, QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
     };
     use secretive_proto::Identity;
     use std::path::PathBuf;
@@ -1262,6 +1684,8 @@ mod tests {
             "errors":2,
             "timeouts":1,
             "avg_ns":42.0,
+            "captured_unix_ms":1700000000000,
+            "started_unix_ms":1699999999000,
             "queue_wait_avg_ns":7.5,
             "queue_wait_max_ns":900,
             "in_flight":3,
@@ -1277,6 +1701,8 @@ mod tests {
         assert_eq!(snapshot.kind, "snapshot");
         assert_eq!(snapshot.count, 100);
         assert_eq!(snapshot.queue_wait_max_ns, Some(900));
+        assert_eq!(snapshot.captured_unix_ms, Some(1_700_000_000_000));
+        assert_eq!(snapshot.started_unix_ms, Some(1_699_999_999_000));
         assert_eq!(snapshot.store_sign_file, Some(80));
         assert_eq!(snapshot.store_sign_pkcs11, Some(20));
         assert_eq!(snapshot.store_sign_other, None);
@@ -1338,6 +1764,141 @@ mod tests {
         assert!(output.contains("queue_wait_p50_ns: <="));
         assert!(output.contains("queue_wait_p95_ns: <="));
         assert!(output.contains("queue_wait_p99_ns: >="));
+    }
+
+    #[test]
+    fn queue_wait_profile_defaults_match_expected() {
+        assert_eq!(queue_wait_profile_defaults("pssh"), Some((4_000_000, 0.03)));
+        assert_eq!(
+            queue_wait_profile_defaults("fanout"),
+            Some((6_000_000, 0.04))
+        );
+        assert_eq!(
+            queue_wait_profile_defaults("balanced"),
+            Some((8_000_000, 0.05))
+        );
+        assert_eq!(
+            queue_wait_profile_defaults("LOW-MEMORY"),
+            Some((12_000_000, 0.07))
+        );
+        assert!(queue_wait_profile_defaults("custom").is_none());
+    }
+
+    #[test]
+    fn choose_guardrail_percentile_selects_expected_label() {
+        let percentiles = MetricsQueueWaitPercentiles {
+            p50: Some(MetricsPercentileValue {
+                ns: 1_000,
+                open_ended: false,
+            }),
+            p90: Some(MetricsPercentileValue {
+                ns: 2_000,
+                open_ended: false,
+            }),
+            p95: Some(MetricsPercentileValue {
+                ns: 4_000,
+                open_ended: false,
+            }),
+            p99: Some(MetricsPercentileValue {
+                ns: 8_000,
+                open_ended: false,
+            }),
+        };
+        let sample = choose_guardrail_percentile(&percentiles, 0.9).expect("sample");
+        assert_eq!(sample.label, "p90");
+        assert_eq!(sample.ns, 2_000);
+    }
+
+    #[test]
+    fn histogram_tail_ratio_guardrail_counts_tail() {
+        let mut hist = vec![0u64; QUEUE_WAIT_BUCKET_BOUNDS.len() + 1];
+        hist[0] = 50;
+        hist[6] = 25;
+        hist[10] = 25;
+        let (tail, total) =
+            histogram_tail_ratio_guardrail(&hist, 32_000, 0).expect("hist ratio available");
+        assert_eq!(total, 100);
+        // threshold 32_000ns means tail should include bucket index >=6
+        assert_eq!(tail, 25 + 25);
+    }
+
+    #[test]
+    fn guardrail_evaluation_passes_with_percentile() {
+        let mut snapshot = sample_metrics_snapshot();
+        snapshot.queue_wait_percentiles = Some(MetricsQueueWaitPercentiles {
+            p50: None,
+            p90: Some(MetricsPercentileValue {
+                ns: 2_000,
+                open_ended: false,
+            }),
+            p95: Some(MetricsPercentileValue {
+                ns: 3_000,
+                open_ended: false,
+            }),
+            p99: None,
+        });
+        let guardrail = QueueWaitGuardrail {
+            tail_threshold_ns: Some(5_000),
+            tail_max_ratio: Some(0.05),
+            target_percentile: Some(0.95),
+            max_age_ms: None,
+            auto_profile: None,
+            auto_profile_applied: false,
+        };
+        let verdict = evaluate_queue_wait_guardrail(&snapshot, &guardrail);
+        assert!(verdict.passed);
+    }
+
+    #[test]
+    fn guardrail_evaluation_fails_with_histogram_ratio() {
+        let mut snapshot = sample_metrics_snapshot();
+        snapshot.queue_wait_percentiles = None;
+        let mut hist = vec![0u64; QUEUE_WAIT_BUCKET_BOUNDS.len() + 1];
+        hist[0] = 94;
+        hist[10] = 6; // bucket >= 512_000ns
+        snapshot.queue_wait_histogram = Some(hist);
+        let guardrail = QueueWaitGuardrail {
+            tail_threshold_ns: Some(400_000),
+            tail_max_ratio: Some(0.05),
+            target_percentile: Some(0.95),
+            max_age_ms: None,
+            auto_profile: None,
+            auto_profile_applied: false,
+        };
+        let verdict = evaluate_queue_wait_guardrail(&snapshot, &guardrail);
+        assert!(!verdict.passed);
+    }
+
+    fn sample_metrics_snapshot() -> MetricsSnapshot {
+        MetricsSnapshot {
+            kind: "snapshot".to_string(),
+            count: 100,
+            errors: 0,
+            timeouts: 0,
+            avg_ns: 0.0,
+            captured_unix_ms: Some(1_700_000_000_000),
+            started_unix_ms: Some(1_699_999_999_000),
+            queue_wait_avg_ns: Some(0.0),
+            queue_wait_max_ns: Some(0),
+            in_flight: 0,
+            max_signers: 0,
+            connections: Some(0),
+            active_connections: Some(0),
+            max_active_connections: Some(0),
+            max_connections: Some(0),
+            connection_rejected: Some(0),
+            list_count: Some(0),
+            list_hit: Some(0),
+            list_stale: Some(0),
+            list_refresh: Some(0),
+            list_errors: Some(0),
+            store_sign_file: Some(0),
+            store_sign_pkcs11: Some(0),
+            store_sign_secure_enclave: Some(0),
+            store_sign_other: Some(0),
+            queue_wait_histogram: Some(vec![0; QUEUE_WAIT_BUCKET_BOUNDS.len() + 1]),
+            queue_wait_percentiles: None,
+        }
     }
 }
 

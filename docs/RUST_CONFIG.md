@@ -37,7 +37,7 @@ Socket path overrides:
 - `watch_debounce_ms` (number): debounce interval for file watcher reloads (default: 200).
 - `metrics_every` (number): log metrics every N sign operations (default: 1000). Use `0` to disable.
 - `metrics_interval_ms` (number): emit periodic metrics snapshots every N milliseconds (default: disabled). Use `0` to disable.
-- `metrics_json` (bool): emit sign metrics as JSON lines in logs (default: false). Includes per-store counters (`store_sign_file`, `store_sign_pkcs11`, `store_sign_secure_enclave`, `store_sign_other`) and queue wait telemetry (`queue_wait_avg_ns`, `queue_wait_max_ns`, `queue_wait_histogram` buckets) plus derived percentile summaries (`queue_wait_percentiles` with p50/p90/p95/p99 bounds).
+- `metrics_json` (bool): emit sign metrics as JSON lines in logs (default: false). Includes per-store counters (`store_sign_file`, `store_sign_pkcs11`, `store_sign_secure_enclave`, `store_sign_other`) and queue wait telemetry (`queue_wait_avg_ns`, `queue_wait_max_ns`, `queue_wait_histogram` buckets) plus derived percentile summaries (`queue_wait_percentiles` with p50/p90/p95/p99 bounds). Snapshots also embed `captured_unix_ms` (wall-clock when the snapshot was recorded) and `started_unix_ms` (agent start time) so scrapers and CLIs can enforce freshness and compute uptime without extra bookkeeping.
 - `metrics_output_path` (string): write the latest metrics snapshot JSON to this path (atomically via temp+rename) for scrape/file collection.
 - `audit_requests` (bool): emit privacy-safe structured audit logs for list/sign requests (default: false).
 - `sign_timeout_ms` (number): fail sign requests if a permit isn't acquired in N milliseconds (default: disabled). Use `0` to disable.

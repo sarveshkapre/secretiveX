@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
 
 use directories::BaseDirs;
@@ -139,6 +139,7 @@ static STORE_SIGN_PKCS11: AtomicU64 = AtomicU64::new(0);
 static STORE_SIGN_SECURE_ENCLAVE: AtomicU64 = AtomicU64::new(0);
 static STORE_SIGN_OTHER: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
+static AGENT_STARTED_UNIX_MS: OnceLock<u64> = OnceLock::new();
 static FAILURE_FRAME: OnceLock<Bytes> = OnceLock::new();
 
 #[derive(Debug)]
@@ -306,6 +307,7 @@ fn main() {
         version = env!("CARGO_PKG_VERSION"),
         "secretive-agent starting"
     );
+    AGENT_STARTED_UNIX_MS.get_or_init(unix_now_ms);
 
     let args = parse_args();
     if args.help {
@@ -1526,6 +1528,8 @@ fn key_blob_fingerprint(key_blob: &[u8]) -> Option<String> {
 
 #[derive(Debug, Clone, Copy)]
 struct SignMetricsSnapshot {
+    captured_unix_ms: u64,
+    started_unix_ms: u64,
     count: u64,
     errors: u64,
     timeouts: u64,
@@ -1553,6 +1557,8 @@ struct SignMetricsSnapshot {
 }
 
 fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignMetricsSnapshot {
+    let captured_unix_ms = unix_now_ms();
+    let started_unix_ms = *AGENT_STARTED_UNIX_MS.get_or_init(unix_now_ms);
     let count = SIGN_COUNT.load(Ordering::Relaxed);
     let errors = SIGN_ERRORS.load(Ordering::Relaxed);
     let timeouts = SIGN_TIMEOUTS.load(Ordering::Relaxed);
@@ -1588,6 +1594,8 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
     let queue_wait_percentiles =
         compute_queue_wait_percentiles_from_histogram(&queue_wait_histogram);
     SignMetricsSnapshot {
+        captured_unix_ms,
+        started_unix_ms,
         count,
         errors,
         timeouts,
@@ -1618,6 +1626,8 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
 fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
     serde_json::json!({
         "kind": kind,
+        "captured_unix_ms": metrics.captured_unix_ms,
+        "started_unix_ms": metrics.started_unix_ms,
         "count": metrics.count,
         "errors": metrics.errors,
         "timeouts": metrics.timeouts,
@@ -1671,6 +1681,7 @@ fn emit_metrics_output(kind: &str, metrics: &SignMetricsSnapshot) {
     };
 
     let payload = format_metrics_json(kind, metrics);
+    tracing::debug!(kind, path = %path.display(), "writing metrics snapshot");
     if let Some(parent) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
             note_metrics_write_error(&path, &err);
@@ -1729,6 +1740,8 @@ fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
         store_sign_other = metrics.store_sign_other,
         queue_wait_histogram = ?metrics.queue_wait_histogram,
         queue_wait_percentiles = ?metrics.queue_wait_percentiles,
+        captured_unix_ms = metrics.captured_unix_ms,
+        started_unix_ms = metrics.started_unix_ms,
         "{}",
         message
     );
@@ -3019,6 +3032,13 @@ fn now_ms() -> u64 {
     start.elapsed().as_millis() as u64
 }
 
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3295,6 +3315,8 @@ mod tests {
     #[test]
     fn metrics_json_contains_expected_fields() {
         let snapshot = SignMetricsSnapshot {
+            captured_unix_ms: 1,
+            started_unix_ms: 2,
             count: 1,
             errors: 2,
             timeouts: 3,
@@ -3329,6 +3351,8 @@ mod tests {
         assert!(payload.contains("\"list_errors\":16"));
         assert!(payload.contains("\"store_sign_file\":17"));
         assert!(payload.contains("\"queue_wait_histogram\""));
+        assert!(payload.contains("\"captured_unix_ms\":1"));
+        assert!(payload.contains("\"started_unix_ms\":2"));
     }
 
     #[test]
@@ -3346,6 +3370,8 @@ mod tests {
         }
 
         let snapshot = SignMetricsSnapshot {
+            captured_unix_ms: 100,
+            started_unix_ms: 50,
             count: 1,
             errors: 0,
             timeouts: 0,
@@ -3376,6 +3402,8 @@ mod tests {
         assert!(content.contains("\"kind\":\"snapshot\""));
         assert!(content.contains("\"queue_wait_max_ns\":3"));
         assert!(content.contains("\"queue_wait_histogram\""));
+        assert!(content.contains("\"captured_unix_ms\":100"));
+        assert!(content.contains("\"started_unix_ms\":50"));
 
         let _ = std::fs::remove_file(&path);
         {

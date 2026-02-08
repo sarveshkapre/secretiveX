@@ -8,9 +8,9 @@
 
 ## Candidate Features To Do
 - [ ] Add a `secretive-agent --suggest-queue-wait` helper that inspects the current profile/hardware and prints recommended tail thresholds for operators tweaking CI or production agents.
-- [ ] Teach `secretive-client --metrics-file` to flag when the most recent snapshot exceeds the profile's guardrail so humans can spot tail pressure without rerunning the gate script.
 
 ## Implemented
+- 2026-02-08: `secretive-client --metrics-file` can now enforce queue-wait guardrails (profiles, explicit thresholds, and freshness checks) using the new `--queue-wait-tail-*` / `--queue-wait-max-age-ms` flags, failing fast with exit code 3 when snapshots are stale or over the envelope (crates/secretive-client/src/main.rs, docs/RUST_CLIENT.md, docs/SLO.md, README.md, cargo test -p secretive-client).
 - 2026-02-08: Added SIGUSR2/`secretive-agent --reset-metrics` admin helper so operators can zero metrics counters mid-run and emit a fresh snapshot (crates/secretive-agent/src/main.rs, README.md, docs/RUST_CONFIG.md, cargo test -p secretive-agent).
 - 2026-02-08: Bench SLO gate enforces histogram-derived queue-wait tail ratios so p95/p99 regressions surface automatically (scripts/bench_slo_gate.sh, README.md, docs/SLO.md, docs/RUST_BENCH.md).
 - 2026-02-08: Bench SLO gate now auto-picks queue-wait tail thresholds per profile so developers/CI get sensible guardrails out of the box (scripts/bench_slo_gate.sh, README.md, docs/SLO.md, docs/RUST_BENCH.md).
@@ -29,6 +29,7 @@
 - Precomputing percentiles in the agent keeps us aligned with modern observability guidance (for example, [Anyscale's latest latency benchmarking guide](https://docs.anyscale.com/llm/serving/benchmarking/metrics) and [Google SRE's "Metrics That Matter"](https://cacm.acm.org/practice/metrics-that-matter/) both insist on monitoring p50/p95/p99), reducing toil for both humans and scripts inspecting queue pressure.
 - Tail verdicts now resolve instantly when percentiles exist, so SLO gates stay actionable even if histogram buckets are missing (or redacted) from field captures.
 - Embedding the queue-wait guardrail inputs/output straight into bench JSON gives us a clean, machine-readable audit trail for every CI run; now we can diff actual percentiles vs thresholds without parsing shell logs, which sets up future alerting in Grafana/Looker or even a `--suggest-queue-wait` CLI.
+- Offline guardrail checks plus capture/start timestamps mean ops teams can fail a run the moment a metrics snapshot looks stale or violates the envelope, without rerunning `secretive-bench` just to confirm tail pressure.
 
 ## Notes
 - This file is maintained by the autonomous clone loop.
