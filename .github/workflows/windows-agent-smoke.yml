@@ -21,12 +21,17 @@ jobs:
 
       - name: Run Windows named-pipe smoke test
         shell: pwsh
+        env:
+          AGENT_STARTUP_TIMEOUT_SECS: "180"
         run: |
           $ErrorActionPreference = 'Stop'
           $tmp = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "secretive-win-smoke-$env:GITHUB_RUN_ID")
           $keyPath = Join-Path $tmp.FullName "id_ed25519"
           $configPath = Join-Path $tmp.FullName "agent.json"
           $payloadPath = Join-Path $tmp.FullName "payload.bin"
+          $agentStdout = Join-Path $tmp.FullName "agent.stdout.log"
+          $agentStderr = Join-Path $tmp.FullName "agent.stderr.log"
+          $startupTimeoutSecs = [int]$env:AGENT_STARTUP_TIMEOUT_SECS
           $pipeName = "\\.\pipe\secretive-smoke-$env:GITHUB_RUN_ID"
 
           ssh-keygen -t ed25519 -N "" -f $keyPath | Out-Null
@@ -46,24 +51,46 @@ jobs:
           }
           "@ | Set-Content -Path $configPath -Encoding UTF8
 
-          $agent = Start-Process -FilePath cargo -ArgumentList @("run","-p","secretive-agent","--","--config",$configPath,"--socket",$pipeName,"--no-watch","--metrics-every","0") -PassThru -WindowStyle Hidden
+          cargo build -p secretive-agent -p secretive-client
+          if ($LASTEXITCODE -ne 0) {
+            throw "cargo build failed before Windows smoke run"
+          }
+
+          $agentExe = Join-Path (Join-Path $PWD "target\debug") "secretive-agent.exe"
+          $clientExe = Join-Path (Join-Path $PWD "target\debug") "secretive-client.exe"
+          if (-not (Test-Path $agentExe)) {
+            throw "secretive-agent binary not found at $agentExe"
+          }
+          if (-not (Test-Path $clientExe)) {
+            throw "secretive-client binary not found at $clientExe"
+          }
+
+          $agent = Start-Process -FilePath $agentExe -ArgumentList @("--config",$configPath,"--socket",$pipeName,"--no-watch","--metrics-every","0") -PassThru -WindowStyle Hidden -RedirectStandardOutput $agentStdout -RedirectStandardError $agentStderr
 
           try {
             $ready = $false
-            for ($i = 0; $i -lt 120; $i++) {
-              try {
-                cargo run -p secretive-client -- --socket $pipeName --list --raw | Out-Null
+            $deadline = (Get-Date).AddSeconds($startupTimeoutSecs)
+            while ((Get-Date) -lt $deadline) {
+              if ($agent.HasExited) {
+                throw "agent exited before readiness check passed (exit=$($agent.ExitCode))"
+              }
+
+              & $clientExe --socket $pipeName --list --raw | Out-Null
+              if ($LASTEXITCODE -eq 0) {
                 $ready = $true
                 break
-              } catch {
-                Start-Sleep -Milliseconds 200
               }
-            }
-            if (-not $ready) {
-              throw "agent failed to become ready"
+              Start-Sleep -Milliseconds 500
             }
 
-            $listJson = cargo run -p secretive-client -- --socket $pipeName --list --json-compact
+            if (-not $ready) {
+              throw "agent failed to become ready within ${startupTimeoutSecs}s"
+            }
+
+            $listJson = & $clientExe --socket $pipeName --list --json-compact
+            if ($LASTEXITCODE -ne 0) {
+              throw "list identities failed"
+            }
             $identities = $listJson | ConvertFrom-Json
             if (-not $identities -or $identities.Count -lt 1) {
               throw "expected at least one identity in list output"
@@ -71,9 +98,22 @@ jobs:
             $keyBlob = $identities[0].key_blob_hex
 
             [System.IO.File]::WriteAllText($payloadPath, "windows-smoke-payload")
-            cargo run -p secretive-client -- --socket $pipeName --sign $keyBlob --data $payloadPath --flags sha256 | Out-Null
+            & $clientExe --socket $pipeName --sign $keyBlob --data $payloadPath --flags sha256 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "sign request failed"
+            }
 
             Write-Host "windows named-pipe smoke passed"
+          } catch {
+            if (Test-Path $agentStdout) {
+              Write-Host "---- agent stdout tail ----"
+              Get-Content -Path $agentStdout -Tail 80
+            }
+            if (Test-Path $agentStderr) {
+              Write-Host "---- agent stderr tail ----"
+              Get-Content -Path $agentStderr -Tail 80
+            }
+            throw
           } finally {
             if (-not $agent.HasExited) {
               Stop-Process -Id $agent.Id -Force
