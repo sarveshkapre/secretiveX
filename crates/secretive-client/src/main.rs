@@ -698,6 +698,21 @@ struct MetricsSnapshot {
     store_sign_secure_enclave: Option<u64>,
     store_sign_other: Option<u64>,
     queue_wait_histogram: Option<Vec<u64>>,
+    queue_wait_percentiles: Option<MetricsQueueWaitPercentiles>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+struct MetricsQueueWaitPercentiles {
+    p50: Option<MetricsPercentileValue>,
+    p90: Option<MetricsPercentileValue>,
+    p95: Option<MetricsPercentileValue>,
+    p99: Option<MetricsPercentileValue>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+struct MetricsPercentileValue {
+    ns: u64,
+    open_ended: bool,
 }
 
 const QUEUE_WAIT_BUCKET_BOUNDS: [u64; 25] = [
@@ -792,12 +807,7 @@ fn bucket_bound_ns(bucket_index: usize) -> (u64, bool) {
 }
 
 fn format_percentile_value(entry: &QueueWaitPercentile) -> String {
-    let approx = format_duration_ns(entry.value_ns);
-    if entry.open_ended {
-        format!(">= {} ns ({approx})", entry.value_ns)
-    } else {
-        format!("<= {} ns ({approx})", entry.value_ns)
-    }
+    format_percentile_value_from_parts(entry.value_ns, entry.open_ended)
 }
 
 fn format_duration_ns(value_ns: u64) -> String {
@@ -813,6 +823,15 @@ fn format_duration_ns(value_ns: u64) -> String {
         format!("{:.2} us", value_ns as f64 / NS_IN_US)
     } else {
         format!("{value_ns} ns")
+    }
+}
+
+fn format_percentile_value_from_parts(value_ns: u64, open_ended: bool) -> String {
+    let approx = format_duration_ns(value_ns);
+    if open_ended {
+        format!(">= {value_ns} ns ({approx})")
+    } else {
+        format!("<= {value_ns} ns ({approx})")
     }
 }
 
@@ -846,15 +865,25 @@ fn print_metrics_file(path: &str, json_output: bool, json_compact: bool) -> Resu
     if let Some(hist) = metrics.queue_wait_histogram.as_ref() {
         if !hist.is_empty() {
             writeln!(handle, "queue_wait_histogram: {}", format_histogram(hist))?;
-            let percentiles = compute_queue_wait_percentiles(hist);
-            if !percentiles.is_empty() {
-                for percentile in percentiles {
-                    writeln!(
-                        handle,
-                        "{}: {}",
-                        percentile.label,
-                        format_percentile_value(&percentile)
-                    )?;
+        }
+    }
+    let mut percentiles_written = false;
+    if let Some(percentiles) = metrics.queue_wait_percentiles.as_ref() {
+        percentiles_written = write_metrics_queue_wait_percentiles(&mut handle, percentiles)?;
+    }
+    if !percentiles_written {
+        if let Some(hist) = metrics.queue_wait_histogram.as_ref() {
+            if !hist.is_empty() {
+                let percentiles = compute_queue_wait_percentiles(hist);
+                if !percentiles.is_empty() {
+                    for percentile in percentiles {
+                        writeln!(
+                            handle,
+                            "{}: {}",
+                            percentile.label,
+                            format_percentile_value(&percentile)
+                        )?;
+                    }
                 }
             }
         }
@@ -919,6 +948,31 @@ fn format_histogram(hist: &[u64]) -> String {
     head.push("...".to_string());
     head.push(hist.last().copied().unwrap_or_default().to_string());
     format!("[{}]", head.join(", "))
+}
+
+fn write_metrics_queue_wait_percentiles<W: Write>(
+    handle: &mut W,
+    percentiles: &MetricsQueueWaitPercentiles,
+) -> std::io::Result<bool> {
+    let mut wrote = false;
+    let entries = [
+        ("queue_wait_p50_ns", percentiles.p50),
+        ("queue_wait_p90_ns", percentiles.p90),
+        ("queue_wait_p95_ns", percentiles.p95),
+        ("queue_wait_p99_ns", percentiles.p99),
+    ];
+    for (label, value) in entries {
+        if let Some(value) = value {
+            writeln!(
+                handle,
+                "{}: {}",
+                label,
+                format_percentile_value_from_parts(value.ns, value.open_ended)
+            )?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
 }
 
 fn print_pssh_hints(socket_path: &Path) -> Result<()> {
@@ -1134,8 +1188,9 @@ fn parse_flags(value: &str) -> Option<u32> {
 mod tests {
     use super::{
         build_health_report, compute_queue_wait_percentiles, format_percentile_value,
-        parse_fingerprint_input, parse_flags, render_pssh_hints, MetricsSnapshot,
-        QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
+        parse_fingerprint_input, parse_flags, render_pssh_hints,
+        write_metrics_queue_wait_percentiles, MetricsPercentileValue, MetricsQueueWaitPercentiles,
+        MetricsSnapshot, QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
     };
     use secretive_proto::Identity;
     use std::path::PathBuf;
@@ -1212,7 +1267,11 @@ mod tests {
             "in_flight":3,
             "max_signers":64,
             "store_sign_file":80,
-            "store_sign_pkcs11":20
+            "store_sign_pkcs11":20,
+            "queue_wait_percentiles":{
+                "p50":{"ns":512,"open_ended":false},
+                "p99":{"ns":8000000000,"open_ended":true}
+            }
         }"#;
         let snapshot: MetricsSnapshot = serde_json::from_str(raw).expect("metrics json");
         assert_eq!(snapshot.kind, "snapshot");
@@ -1221,6 +1280,10 @@ mod tests {
         assert_eq!(snapshot.store_sign_file, Some(80));
         assert_eq!(snapshot.store_sign_pkcs11, Some(20));
         assert_eq!(snapshot.store_sign_other, None);
+        let percentiles = snapshot.queue_wait_percentiles.expect("percentiles");
+        assert_eq!(percentiles.p50.unwrap().ns, 512);
+        assert!(!percentiles.p50.unwrap().open_ended);
+        assert!(percentiles.p99.unwrap().open_ended);
     }
 
     #[test]
@@ -1248,6 +1311,33 @@ mod tests {
         let tail = percentiles.last().expect("tail percentile");
         assert!(tail.open_ended);
         assert!(format_percentile_value(tail).starts_with(">="));
+    }
+
+    #[test]
+    fn write_metrics_queue_wait_percentiles_prefers_snapshot_values() {
+        let percentiles = MetricsQueueWaitPercentiles {
+            p50: Some(MetricsPercentileValue {
+                ns: 512,
+                open_ended: false,
+            }),
+            p90: None,
+            p95: Some(MetricsPercentileValue {
+                ns: 16_000_000,
+                open_ended: false,
+            }),
+            p99: Some(MetricsPercentileValue {
+                ns: 8_000_000_000,
+                open_ended: true,
+            }),
+        };
+        let mut buf = Vec::new();
+        let wrote =
+            write_metrics_queue_wait_percentiles(&mut buf, &percentiles).expect("write percentiles");
+        assert!(wrote);
+        let output = String::from_utf8(buf).expect("utf8");
+        assert!(output.contains("queue_wait_p50_ns: <="));
+        assert!(output.contains("queue_wait_p95_ns: <="));
+        assert!(output.contains("queue_wait_p99_ns: >="));
     }
 }
 

@@ -88,6 +88,34 @@ const QUEUE_WAIT_BUCKET_BOUNDS: [u64; 25] = [
 const QUEUE_WAIT_BUCKET_COUNT: usize = QUEUE_WAIT_BUCKET_BOUNDS.len() + 1;
 static QUEUE_WAIT_BUCKETS: [AtomicU64; QUEUE_WAIT_BUCKET_COUNT] =
     [const { AtomicU64::new(0) }; QUEUE_WAIT_BUCKET_COUNT];
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+struct QueueWaitPercentileValue {
+    ns: u64,
+    open_ended: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+struct QueueWaitPercentiles {
+    p50: Option<QueueWaitPercentileValue>,
+    p90: Option<QueueWaitPercentileValue>,
+    p95: Option<QueueWaitPercentileValue>,
+    p99: Option<QueueWaitPercentileValue>,
+}
+
+#[derive(Clone, Copy)]
+enum QueueWaitPercentileLabel {
+    P50,
+    P90,
+    P95,
+    P99,
+}
+
+const QUEUE_WAIT_PERCENTILE_TARGETS: &[(f64, QueueWaitPercentileLabel)] = &[
+    (0.50, QueueWaitPercentileLabel::P50),
+    (0.90, QueueWaitPercentileLabel::P90),
+    (0.95, QueueWaitPercentileLabel::P95),
+    (0.99, QueueWaitPercentileLabel::P99),
+];
 static SIGN_ERRORS: AtomicU64 = AtomicU64::new(0);
 static SIGN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 static METRICS_WRITE_ERRORS: AtomicU64 = AtomicU64::new(0);
@@ -1039,6 +1067,70 @@ fn record_queue_wait_bucket(wait_ns: u64) {
     QUEUE_WAIT_BUCKETS[bucket].fetch_add(1, Ordering::Relaxed);
 }
 
+fn bucket_bound_ns(bucket_index: usize) -> (u64, bool) {
+    if bucket_index < QUEUE_WAIT_BUCKET_BOUNDS.len() {
+        (QUEUE_WAIT_BUCKET_BOUNDS[bucket_index], false)
+    } else {
+        (
+            *QUEUE_WAIT_BUCKET_BOUNDS
+                .last()
+                .expect("queue wait bucket bounds should not be empty"),
+            true,
+        )
+    }
+}
+
+fn assign_queue_wait_percentile(
+    percentiles: &mut QueueWaitPercentiles,
+    label: QueueWaitPercentileLabel,
+    value: QueueWaitPercentileValue,
+) {
+    match label {
+        QueueWaitPercentileLabel::P50 => percentiles.p50 = Some(value),
+        QueueWaitPercentileLabel::P90 => percentiles.p90 = Some(value),
+        QueueWaitPercentileLabel::P95 => percentiles.p95 = Some(value),
+        QueueWaitPercentileLabel::P99 => percentiles.p99 = Some(value),
+    }
+}
+
+fn compute_queue_wait_percentiles_from_histogram(
+    histogram: &[u64; QUEUE_WAIT_BUCKET_COUNT],
+) -> QueueWaitPercentiles {
+    let total: u64 = histogram.iter().sum();
+    if total == 0 {
+        return QueueWaitPercentiles::default();
+    }
+
+    let mut thresholds = [0u64; QUEUE_WAIT_PERCENTILE_TARGETS.len()];
+    let mut labels = [QueueWaitPercentileLabel::P50; QUEUE_WAIT_PERCENTILE_TARGETS.len()];
+    for (idx, (fraction, label)) in QUEUE_WAIT_PERCENTILE_TARGETS.iter().enumerate() {
+        let threshold = ((*fraction * total as f64).ceil() as u64).max(1);
+        thresholds[idx] = threshold;
+        labels[idx] = *label;
+    }
+
+    let mut percentiles = QueueWaitPercentiles::default();
+    let mut threshold_index = 0usize;
+    let mut cumulative = 0u64;
+    for (bucket_index, count) in histogram.iter().enumerate() {
+        cumulative = cumulative.saturating_add(*count);
+        while threshold_index < thresholds.len() && cumulative >= thresholds[threshold_index] {
+            let (ns, open_ended) = bucket_bound_ns(bucket_index);
+            assign_queue_wait_percentile(
+                &mut percentiles,
+                labels[threshold_index],
+                QueueWaitPercentileValue { ns, open_ended },
+            );
+            threshold_index += 1;
+        }
+        if threshold_index >= thresholds.len() {
+            break;
+        }
+    }
+
+    percentiles
+}
+
 fn reset_sign_metrics() {
     SIGN_COUNT.store(0, Ordering::Relaxed);
     SIGN_TIME_NS.store(0, Ordering::Relaxed);
@@ -1457,6 +1549,7 @@ struct SignMetricsSnapshot {
     store_sign_secure_enclave: u64,
     store_sign_other: u64,
     queue_wait_histogram: [u64; QUEUE_WAIT_BUCKET_COUNT],
+    queue_wait_percentiles: QueueWaitPercentiles,
 }
 
 fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignMetricsSnapshot {
@@ -1492,6 +1585,8 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
     for (idx, bucket) in QUEUE_WAIT_BUCKETS.iter().enumerate() {
         queue_wait_histogram[idx] = bucket.load(Ordering::Relaxed);
     }
+    let queue_wait_percentiles =
+        compute_queue_wait_percentiles_from_histogram(&queue_wait_histogram);
     SignMetricsSnapshot {
         count,
         errors,
@@ -1516,6 +1611,7 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
         store_sign_secure_enclave,
         store_sign_other,
         queue_wait_histogram,
+        queue_wait_percentiles,
     }
 }
 
@@ -1545,6 +1641,7 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
         "store_sign_secure_enclave": metrics.store_sign_secure_enclave,
         "store_sign_other": metrics.store_sign_other,
         "queue_wait_histogram": metrics.queue_wait_histogram,
+        "queue_wait_percentiles": metrics.queue_wait_percentiles,
     })
     .to_string()
 }
@@ -1631,6 +1728,7 @@ fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
         store_sign_secure_enclave = metrics.store_sign_secure_enclave,
         store_sign_other = metrics.store_sign_other,
         queue_wait_histogram = ?metrics.queue_wait_histogram,
+        queue_wait_percentiles = ?metrics.queue_wait_percentiles,
         "{}",
         message
     );
@@ -3177,6 +3275,24 @@ mod tests {
     }
 
     #[test]
+    fn compute_queue_wait_percentiles_from_histogram_assigns_expected_bounds() {
+        let mut histogram = [0u64; QUEUE_WAIT_BUCKET_COUNT];
+        histogram[0] = 50;
+        histogram[5] = 40;
+        histogram[QUEUE_WAIT_BUCKET_COUNT - 1] = 10;
+        let percentiles = compute_queue_wait_percentiles_from_histogram(&histogram);
+        let p50 = percentiles.p50.expect("p50");
+        assert_eq!(p50.ns, QUEUE_WAIT_BUCKET_BOUNDS[0]);
+        assert!(!p50.open_ended);
+        let p90 = percentiles.p90.expect("p90");
+        assert_eq!(p90.ns, QUEUE_WAIT_BUCKET_BOUNDS[5]);
+        assert!(!p90.open_ended);
+        let p99 = percentiles.p99.expect("p99");
+        assert_eq!(p99.ns, *QUEUE_WAIT_BUCKET_BOUNDS.last().unwrap());
+        assert!(p99.open_ended);
+    }
+
+    #[test]
     fn metrics_json_contains_expected_fields() {
         let snapshot = SignMetricsSnapshot {
             count: 1,
@@ -3202,6 +3318,7 @@ mod tests {
             store_sign_secure_enclave: 19,
             store_sign_other: 20,
             queue_wait_histogram: [0; QUEUE_WAIT_BUCKET_COUNT],
+            queue_wait_percentiles: QueueWaitPercentiles::default(),
         };
         let payload = format_metrics_json("snapshot", &snapshot);
         assert!(payload.contains("\"kind\":\"snapshot\""));
@@ -3252,6 +3369,7 @@ mod tests {
             store_sign_secure_enclave: 0,
             store_sign_other: 0,
             queue_wait_histogram: [0; QUEUE_WAIT_BUCKET_COUNT],
+            queue_wait_percentiles: QueueWaitPercentiles::default(),
         };
         emit_metrics_output("snapshot", &snapshot);
         let content = std::fs::read_to_string(&path).expect("read metrics output");
