@@ -88,7 +88,10 @@ struct Args {
 
 #[derive(Debug, Default)]
 struct WorkerResult {
-    completed: usize,
+    ok: usize,
+    request_failures: usize,
+    request_timeouts: usize,
+    connect_failures: usize,
     latencies_us: Vec<u64>,
 }
 
@@ -193,12 +196,18 @@ async fn main() -> Result<()> {
     }
 
     let mut ok = 0usize;
-    let mut failures = 0usize;
+    let mut request_failures = 0usize;
+    let mut request_timeouts = 0usize;
+    let mut connect_failures = 0usize;
+    let mut worker_failures = 0usize;
     let mut latencies_us = Vec::new();
     for handle in handles {
         match handle.await {
             Ok(Ok(worker)) => {
-                ok += worker.completed;
+                ok += worker.ok;
+                request_failures += worker.request_failures;
+                request_timeouts += worker.request_timeouts;
+                connect_failures += worker.connect_failures;
                 if args.latency {
                     for sample in worker.latencies_us {
                         if latencies_us.len() >= args.latency_max_samples {
@@ -210,15 +219,16 @@ async fn main() -> Result<()> {
             }
             Ok(Err(err)) => {
                 error!(?err, "worker failed");
-                failures += 1;
+                worker_failures += 1;
             }
             Err(err) => {
                 error!(?err, "worker join failed");
-                failures += 1;
+                worker_failures += 1;
             }
         }
     }
 
+    let failures = request_failures + request_timeouts + connect_failures;
     let elapsed = start.elapsed();
     let rps = if elapsed.as_secs_f64() > 0.0 {
         ok as f64 / elapsed.as_secs_f64()
@@ -244,6 +254,10 @@ async fn main() -> Result<()> {
     let payload = BenchOutput {
         ok,
         failures,
+        request_failures,
+        request_timeouts,
+        connect_failures,
+        worker_failures,
         attempted,
         success_rate,
         failure_rate,
@@ -269,7 +283,7 @@ async fn main() -> Result<()> {
         worker_start_spread_ms: args.worker_start_spread_ms,
         latency,
         meta: BenchMetadata {
-            schema_version: 2,
+            schema_version: 3,
             bench_version: env!("CARGO_PKG_VERSION"),
             started_unix_ms,
             finished_unix_ms,
@@ -295,7 +309,9 @@ async fn main() -> Result<()> {
         }
         writeln!(handle)?;
     } else {
-        println!("Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures}");
+        println!(
+            "Completed {ok} requests in {elapsed:?} ({rps:.2} req/s). Failures: {failures} (request_failures={request_failures} timeouts={request_timeouts} connect_failures={connect_failures} worker_failures={worker_failures})"
+        );
         if let Some(latency) = payload.latency.as_ref() {
             println!(
                 "Latency(us): p50={} p95={} p99={} max={} avg={:.2} samples={}",
@@ -316,6 +332,10 @@ async fn main() -> Result<()> {
 struct BenchOutput {
     ok: usize,
     failures: usize,
+    request_failures: usize,
+    request_timeouts: usize,
+    connect_failures: usize,
+    worker_failures: usize,
     attempted: usize,
     success_rate: f64,
     failure_rate: f64,
@@ -470,6 +490,41 @@ fn maybe_record_latency(
     }
 }
 
+fn is_response_timeout(err: &anyhow::Error) -> bool {
+    err.to_string().contains("response timeout")
+}
+
+fn is_unexpected_eof(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("unexpected end of frame") || msg.contains("UnexpectedEof")
+}
+
+async fn write_sign_request(
+    stream: &mut AgentStream,
+    sign_frame: Option<&Bytes>,
+    rng: &mut Option<rand::rngs::SmallRng>,
+    request: &mut Option<AgentRequest>,
+    request_buffer: &mut BytesMut,
+) -> Result<()> {
+    if let Some(frame) = sign_frame {
+        stream.write_all(frame).await?;
+        return Ok(());
+    }
+
+    if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
+        (rng.as_mut(), request.as_mut())
+    {
+        rng.fill_bytes(data);
+    }
+    write_request_with_buffer(
+        stream,
+        request.as_ref().expect("sign request"),
+        request_buffer,
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!(err))
+}
+
 fn unix_now_ms() -> u64 {
     let now = SystemTime::now();
     now.duration_since(UNIX_EPOCH)
@@ -501,12 +556,12 @@ fn csv_escape(value: &str) -> String {
 }
 
 fn csv_header_row() -> &'static str {
-    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,worker_start_spread_ms,ok,failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
+    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,worker_start_spread_ms,ok,failures,request_failures,request_timeouts,connect_failures,worker_failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
 }
 
 fn csv_data_row(payload: &BenchOutput) -> String {
     let latency = payload.latency.as_ref();
-    let mut fields = Vec::with_capacity(35);
+    let mut fields = Vec::with_capacity(39);
     fields.push(payload.meta.finished_unix_ms.to_string());
     fields.push(payload.meta.started_unix_ms.to_string());
     fields.push(payload.meta.finished_unix_ms.to_string());
@@ -545,6 +600,10 @@ fn csv_data_row(payload: &BenchOutput) -> String {
     fields.push(payload.worker_start_spread_ms.to_string());
     fields.push(payload.ok.to_string());
     fields.push(payload.failures.to_string());
+    fields.push(payload.request_failures.to_string());
+    fields.push(payload.request_timeouts.to_string());
+    fields.push(payload.connect_failures.to_string());
+    fields.push(payload.worker_failures.to_string());
     fields.push(payload.attempted.to_string());
     fields.push(format!("{:.6}", payload.success_rate));
     fields.push(format!("{:.6}", payload.failure_rate));
@@ -849,202 +908,195 @@ async fn run_worker(
         Some(encode_request_frame(&request)?)
     };
 
-    if reconnect {
-        let mut buffer = BytesMut::with_capacity(4096);
-        for _ in 0..warmup {
-            let mut stream = connect(socket_path.as_ref()).await?;
-            if let Some(frame) = &sign_frame {
-                stream.write_all(frame).await?;
-            } else {
-                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
-                    (&mut rng, request.as_mut())
-                {
-                    rng.fill_bytes(data);
-                }
-                write_request_with_buffer(
-                    &mut stream,
-                    request.as_ref().expect("sign request"),
-                    &mut request_buffer,
-                )
-                .await?;
-            }
-            let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
-            if response_type != MessageType::SignResponse as u8 {
-                return Err(anyhow::anyhow!("unexpected sign response"));
-            }
-        }
-    } else {
-        let mut stream = connect(socket_path.as_ref()).await?;
-        let mut buffer = BytesMut::with_capacity(4096);
-        for _ in 0..warmup {
-            if let Some(frame) = &sign_frame {
-                stream.write_all(frame).await?;
-            } else {
-                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
-                    (&mut rng, request.as_mut())
-                {
-                    rng.fill_bytes(data);
-                }
-                write_request_with_buffer(
-                    &mut stream,
-                    request.as_ref().expect("sign request"),
-                    &mut request_buffer,
-                )
-                .await?;
-            }
-            let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
-            if response_type != MessageType::SignResponse as u8 {
-                return Err(anyhow::anyhow!("unexpected sign response"));
-            }
-        }
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut ok = 0usize;
+    let mut request_failures = 0usize;
+    let mut request_timeouts = 0usize;
+    let mut connect_failures = 0usize;
 
-        let mut completed = 0usize;
-        if let Some(deadline) = deadline {
-            while Instant::now() < deadline {
-                let started_at = if latency_max_samples > 0 {
-                    Some(Instant::now())
-                } else {
-                    None
-                };
-                if let Some(frame) = &sign_frame {
-                    stream.write_all(frame).await?;
-                } else {
-                    if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
-                        (&mut rng, request.as_mut())
-                    {
-                        rng.fill_bytes(data);
-                    }
-                    write_request_with_buffer(
-                        &mut stream,
-                        request.as_ref().expect("sign request"),
-                        &mut request_buffer,
-                    )
-                    .await?;
-                }
-                let response_type =
-                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                        .await?;
-                if response_type == MessageType::SignResponse as u8 {
-                    completed += 1;
-                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
-                } else {
-                    return Err(anyhow::anyhow!("unexpected sign response"));
-                }
-            }
-        } else {
-            for _ in 0..requests {
-                let started_at = if latency_max_samples > 0 {
-                    Some(Instant::now())
-                } else {
-                    None
-                };
-                if let Some(frame) = &sign_frame {
-                    stream.write_all(frame).await?;
-                } else {
-                    if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
-                        (&mut rng, request.as_mut())
-                    {
-                        rng.fill_bytes(data);
-                    }
-                    write_request_with_buffer(
-                        &mut stream,
-                        request.as_ref().expect("sign request"),
-                        &mut request_buffer,
-                    )
-                    .await?;
-                }
-                let response_type =
-                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                        .await?;
-                if response_type == MessageType::SignResponse as u8 {
-                    completed += 1;
-                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
-                } else {
-                    return Err(anyhow::anyhow!("unexpected sign response"));
-                }
+    let mut stream: Option<AgentStream> = None;
+    if !reconnect {
+        match connect(socket_path.as_ref()).await {
+            Ok(s) => stream = Some(s),
+            Err(err) => {
+                warn!(worker_id, ?err, "initial connect failed");
+                connect_failures += 1;
             }
         }
-
-        debug!(worker_id, completed, "worker done");
-        return Ok(WorkerResult {
-            completed,
-            latencies_us,
-        });
     }
 
-    let mut buffer = BytesMut::with_capacity(4096);
-    let mut completed = 0usize;
-    if let Some(deadline) = deadline {
-        while Instant::now() < deadline {
+    // Warmup: ignore outcome but keep connections fresh.
+    for _ in 0..warmup {
+        if reconnect {
+            let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                connect_failures += 1;
+                continue;
+            };
+            if write_sign_request(
+                &mut s,
+                sign_frame.as_ref(),
+                &mut rng,
+                &mut request,
+                &mut request_buffer,
+            )
+            .await
+            .is_err()
+            {
+                connect_failures += 1;
+                continue;
+            }
+            let _ = read_response_type_with_timeout(&mut s, &mut buffer, response_timeout).await;
+        } else {
+            if stream.is_none() {
+                stream = connect(socket_path.as_ref()).await.ok();
+                if stream.is_none() {
+                    connect_failures += 1;
+                    continue;
+                }
+            }
+            if let Some(s) = stream.as_mut() {
+                if write_sign_request(
+                    s,
+                    sign_frame.as_ref(),
+                    &mut rng,
+                    &mut request,
+                    &mut request_buffer,
+                )
+                .await
+                .is_err()
+                {
+                    connect_failures += 1;
+                    stream = None;
+                    continue;
+                }
+                if read_response_type_with_timeout(s, &mut buffer, response_timeout)
+                    .await
+                    .is_err()
+                {
+                    // Any read/write/timeout error leaves the stream state ambiguous.
+                    stream = None;
+                }
+            }
+        }
+    }
+
+    macro_rules! run_one_sign {
+        ($s:expr) => {{
             let started_at = if latency_max_samples > 0 {
                 Some(Instant::now())
             } else {
                 None
             };
-            let mut stream = connect(socket_path.as_ref()).await?;
-            if let Some(frame) = &sign_frame {
-                stream.write_all(frame).await?;
+            if let Err(err) = write_sign_request(
+                $s,
+                sign_frame.as_ref(),
+                &mut rng,
+                &mut request,
+                &mut request_buffer,
+            )
+            .await
+            {
+                debug!(worker_id, ?err, "write sign request failed");
+                connect_failures += 1;
+                false
             } else {
-                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
-                    (&mut rng, request.as_mut())
-                {
-                    rng.fill_bytes(data);
+                match read_response_type_with_timeout($s, &mut buffer, response_timeout).await {
+                    Ok(response_type) => {
+                        if response_type == MessageType::SignResponse as u8 {
+                            ok += 1;
+                            maybe_record_latency(
+                                started_at,
+                                &mut latencies_us,
+                                latency_max_samples,
+                            );
+                        } else {
+                            if response_type != MessageType::Failure as u8 {
+                                warn!(worker_id, response_type, "unexpected sign response type");
+                            }
+                            request_failures += 1;
+                        }
+                        true
+                    }
+                    Err(err) => {
+                        if is_response_timeout(&err) {
+                            request_timeouts += 1;
+                        } else if is_unexpected_eof(&err) {
+                            connect_failures += 1;
+                        } else {
+                            request_failures += 1;
+                        }
+                        false
+                    }
                 }
-                write_request_with_buffer(
-                    &mut stream,
-                    request.as_ref().expect("sign request"),
-                    &mut request_buffer,
-                )
-                .await?;
             }
-            let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
-            if response_type == MessageType::SignResponse as u8 {
-                completed += 1;
-                maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+        }};
+    }
+
+    if let Some(deadline) = deadline {
+        while Instant::now() < deadline {
+            if reconnect {
+                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                    connect_failures += 1;
+                    continue;
+                };
+                let _ = run_one_sign!(&mut s);
             } else {
-                return Err(anyhow::anyhow!("unexpected sign response"));
+                if stream.is_none() {
+                    stream = connect(socket_path.as_ref()).await.ok();
+                    if stream.is_none() {
+                        connect_failures += 1;
+                        continue;
+                    }
+                }
+                let mut drop_stream = false;
+                if let Some(s) = stream.as_mut() {
+                    if !run_one_sign!(s) {
+                        drop_stream = true;
+                    }
+                }
+                if drop_stream {
+                    stream = None;
+                }
             }
         }
     } else {
         for _ in 0..requests {
-            let started_at = if latency_max_samples > 0 {
-                Some(Instant::now())
+            if reconnect {
+                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                    connect_failures += 1;
+                    continue;
+                };
+                let _ = run_one_sign!(&mut s);
             } else {
-                None
-            };
-            let mut stream = connect(socket_path.as_ref()).await?;
-            if let Some(frame) = &sign_frame {
-                stream.write_all(frame).await?;
-            } else {
-                if let (Some(rng), Some(AgentRequest::SignRequest { data, .. })) =
-                    (&mut rng, request.as_mut())
-                {
-                    rng.fill_bytes(data);
+                if stream.is_none() {
+                    stream = connect(socket_path.as_ref()).await.ok();
+                    if stream.is_none() {
+                        connect_failures += 1;
+                        continue;
+                    }
                 }
-                write_request_with_buffer(
-                    &mut stream,
-                    request.as_ref().expect("sign request"),
-                    &mut request_buffer,
-                )
-                .await?;
-            }
-            let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
-            if response_type == MessageType::SignResponse as u8 {
-                completed += 1;
-                maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
-            } else {
-                return Err(anyhow::anyhow!("unexpected sign response"));
+                let mut drop_stream = false;
+                if let Some(s) = stream.as_mut() {
+                    if !run_one_sign!(s) {
+                        drop_stream = true;
+                    }
+                }
+                if drop_stream {
+                    stream = None;
+                }
             }
         }
     }
 
-    debug!(worker_id, completed, "worker done");
+    debug!(
+        worker_id,
+        ok, request_failures, request_timeouts, connect_failures, "worker done"
+    );
     Ok(WorkerResult {
-        completed,
+        ok,
+        request_failures,
+        request_timeouts,
+        connect_failures,
         latencies_us,
     })
 }
@@ -1061,114 +1113,162 @@ async fn run_list_worker(
     let list_frame = list_request_frame();
     let mut latencies_us = Vec::with_capacity(latency_max_samples.min(4096));
 
-    if reconnect {
-        let mut buffer = BytesMut::with_capacity(4096);
-        for _ in 0..warmup {
-            list_once(
-                socket_path.as_ref(),
-                &list_frame,
-                &mut buffer,
-                response_timeout,
-            )
-            .await?;
-        }
-    } else {
-        let mut stream = connect(socket_path.as_ref()).await?;
-        let mut buffer = BytesMut::with_capacity(4096);
-        for _ in 0..warmup {
-            stream.write_all(&list_frame).await?;
-            let response_type =
-                read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout).await?;
-            if response_type != MessageType::IdentitiesAnswer as u8 {
-                return Err(anyhow::anyhow!("unexpected identities response"));
-            }
-        }
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut ok = 0usize;
+    let mut request_failures = 0usize;
+    let mut request_timeouts = 0usize;
+    let mut connect_failures = 0usize;
 
-        let mut completed = 0usize;
-        if let Some(deadline) = deadline {
-            while Instant::now() < deadline {
-                let started_at = if latency_max_samples > 0 {
-                    Some(Instant::now())
-                } else {
-                    None
-                };
-                stream.write_all(&list_frame).await?;
-                let response_type =
-                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                        .await?;
-                if response_type == MessageType::IdentitiesAnswer as u8 {
-                    completed += 1;
-                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
-                } else {
-                    return Err(anyhow::anyhow!("unexpected identities response"));
-                }
-            }
-        } else {
-            for _ in 0..requests {
-                let started_at = if latency_max_samples > 0 {
-                    Some(Instant::now())
-                } else {
-                    None
-                };
-                stream.write_all(&list_frame).await?;
-                let response_type =
-                    read_response_type_with_timeout(&mut stream, &mut buffer, response_timeout)
-                        .await?;
-                if response_type == MessageType::IdentitiesAnswer as u8 {
-                    completed += 1;
-                    maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
-                } else {
-                    return Err(anyhow::anyhow!("unexpected identities response"));
-                }
+    let mut stream: Option<AgentStream> = None;
+    if !reconnect {
+        match connect(socket_path.as_ref()).await {
+            Ok(s) => stream = Some(s),
+            Err(err) => {
+                warn!(?err, "initial connect failed");
+                connect_failures += 1;
             }
         }
-
-        return Ok(WorkerResult {
-            completed,
-            latencies_us,
-        });
     }
 
-    let mut buffer = BytesMut::with_capacity(4096);
-    let mut completed = 0usize;
-    if let Some(deadline) = deadline {
-        while Instant::now() < deadline {
+    for _ in 0..warmup {
+        if reconnect {
+            let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                connect_failures += 1;
+                continue;
+            };
+            if s.write_all(&list_frame).await.is_err() {
+                connect_failures += 1;
+                continue;
+            }
+            let _ = read_response_type_with_timeout(&mut s, &mut buffer, response_timeout).await;
+        } else {
+            if stream.is_none() {
+                stream = connect(socket_path.as_ref()).await.ok();
+                if stream.is_none() {
+                    connect_failures += 1;
+                    continue;
+                }
+            }
+            if let Some(s) = stream.as_mut() {
+                if s.write_all(&list_frame).await.is_err() {
+                    connect_failures += 1;
+                    stream = None;
+                    continue;
+                }
+                if read_response_type_with_timeout(s, &mut buffer, response_timeout)
+                    .await
+                    .is_err()
+                {
+                    stream = None;
+                }
+            }
+        }
+    }
+
+    macro_rules! run_one_list {
+        ($s:expr) => {{
             let started_at = if latency_max_samples > 0 {
                 Some(Instant::now())
             } else {
                 None
             };
-            list_once(
-                socket_path.as_ref(),
-                &list_frame,
-                &mut buffer,
-                response_timeout,
-            )
-            .await?;
-            completed += 1;
-            maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+            if $s.write_all(&list_frame).await.is_err() {
+                connect_failures += 1;
+                false
+            } else {
+                match read_response_type_with_timeout($s, &mut buffer, response_timeout).await {
+                    Ok(response_type) => {
+                        if response_type == MessageType::IdentitiesAnswer as u8 {
+                            ok += 1;
+                            maybe_record_latency(
+                                started_at,
+                                &mut latencies_us,
+                                latency_max_samples,
+                            );
+                        } else {
+                            if response_type != MessageType::Failure as u8 {
+                                warn!(response_type, "unexpected identities response type");
+                            }
+                            request_failures += 1;
+                        }
+                        true
+                    }
+                    Err(err) => {
+                        if is_response_timeout(&err) {
+                            request_timeouts += 1;
+                        } else if is_unexpected_eof(&err) {
+                            connect_failures += 1;
+                        } else {
+                            request_failures += 1;
+                        }
+                        false
+                    }
+                }
+            }
+        }};
+    }
+
+    if let Some(deadline) = deadline {
+        while Instant::now() < deadline {
+            if reconnect {
+                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                    connect_failures += 1;
+                    continue;
+                };
+                let _ = run_one_list!(&mut s);
+            } else {
+                if stream.is_none() {
+                    stream = connect(socket_path.as_ref()).await.ok();
+                    if stream.is_none() {
+                        connect_failures += 1;
+                        continue;
+                    }
+                }
+                let mut drop_stream = false;
+                if let Some(s) = stream.as_mut() {
+                    if !run_one_list!(s) {
+                        drop_stream = true;
+                    }
+                }
+                if drop_stream {
+                    stream = None;
+                }
+            }
         }
     } else {
         for _ in 0..requests {
-            let started_at = if latency_max_samples > 0 {
-                Some(Instant::now())
+            if reconnect {
+                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                    connect_failures += 1;
+                    continue;
+                };
+                let _ = run_one_list!(&mut s);
             } else {
-                None
-            };
-            list_once(
-                socket_path.as_ref(),
-                &list_frame,
-                &mut buffer,
-                response_timeout,
-            )
-            .await?;
-            completed += 1;
-            maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+                if stream.is_none() {
+                    stream = connect(socket_path.as_ref()).await.ok();
+                    if stream.is_none() {
+                        connect_failures += 1;
+                        continue;
+                    }
+                }
+                let mut drop_stream = false;
+                if let Some(s) = stream.as_mut() {
+                    if !run_one_list!(s) {
+                        drop_stream = true;
+                    }
+                }
+                if drop_stream {
+                    stream = None;
+                }
+            }
         }
     }
 
     Ok(WorkerResult {
-        completed,
+        ok,
+        request_failures,
+        request_timeouts,
+        connect_failures,
         latencies_us,
     })
 }
@@ -1191,23 +1291,6 @@ where
             }
         }
         None => Ok(read_response_type_with_buffer(reader, buffer).await?),
-    }
-}
-
-async fn list_once(
-    socket_path: &Path,
-    list_frame: &Bytes,
-    response_buffer: &mut BytesMut,
-    response_timeout: Option<Duration>,
-) -> Result<()> {
-    let mut stream = connect(socket_path).await?;
-    stream.write_all(list_frame).await?;
-    let response_type =
-        read_response_type_with_timeout(&mut stream, response_buffer, response_timeout).await?;
-    if response_type == MessageType::IdentitiesAnswer as u8 {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("unexpected identities response"))
     }
 }
 
@@ -1476,6 +1559,10 @@ mod tests {
         let payload = BenchOutput {
             ok: 10,
             failures: 0,
+            request_failures: 0,
+            request_timeouts: 0,
+            connect_failures: 0,
+            worker_failures: 0,
             attempted: 10,
             success_rate: 1.0,
             failure_rate: 0.0,
@@ -1504,7 +1591,7 @@ mod tests {
                 avg_us: 20.0,
             }),
             meta: BenchMetadata {
-                schema_version: 2,
+                schema_version: 3,
                 bench_version: "0.1.0",
                 started_unix_ms: 1000,
                 finished_unix_ms: 1025,
