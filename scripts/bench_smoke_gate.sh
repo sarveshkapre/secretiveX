@@ -15,6 +15,14 @@ tmpdir="$(mktemp -d)"
 agent_pid=""
 agent_log="$tmpdir/agent.log"
 
+print_agent_log_tail() {
+  if [ -f "$agent_log" ] && [ -s "$agent_log" ]; then
+    echo "---- agent log (tail -n 120) ----" >&2
+    tail -n 120 "$agent_log" >&2 || true
+    echo "---- end agent log ----" >&2
+  fi
+}
+
 cleanup() {
   if [ -n "$agent_pid" ] && kill -0 "$agent_pid" >/dev/null 2>&1; then
     kill "$agent_pid" >/dev/null 2>&1 || true
@@ -43,6 +51,7 @@ cat > "$config_path" <<JSON
   ],
   "watch_files": false,
   "metrics_every": 0,
+  "sign_timeout_ms": 0,
   "identity_cache_ms": 5000,
   "max_connections": 512,
   "max_signers": 64
@@ -78,18 +87,21 @@ ok="$(grep -o '"ok":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
 if [ -z "$rps" ] || [ -z "$failures" ] || [ -z "$ok" ]; then
   echo "failed to parse bench output" >&2
   cat "$bench_json" >&2
+  print_agent_log_tail
   exit 1
 fi
 
 if [ "$failures" -ne 0 ]; then
   echo "bench reported failures: $failures" >&2
   cat "$bench_json" >&2
+  print_agent_log_tail
   exit 1
 fi
 
 if ! awk -v rps="$rps" -v min="$MIN_RPS" 'BEGIN { exit (rps + 0 >= min + 0 ? 0 : 1) }'; then
   echo "bench rps below threshold: rps=$rps min=$MIN_RPS" >&2
   cat "$bench_json" >&2
+  print_agent_log_tail
   exit 1
 fi
 

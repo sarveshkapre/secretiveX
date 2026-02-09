@@ -96,6 +96,7 @@ struct WorkerResult {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
         .init();
 
     let args = parse_args();
@@ -928,6 +929,8 @@ async fn run_worker(
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
                     maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+                } else {
+                    return Err(anyhow::anyhow!("unexpected sign response"));
                 }
             }
         } else {
@@ -958,6 +961,8 @@ async fn run_worker(
                 if response_type == MessageType::SignResponse as u8 {
                     completed += 1;
                     maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+                } else {
+                    return Err(anyhow::anyhow!("unexpected sign response"));
                 }
             }
         }
@@ -999,6 +1004,8 @@ async fn run_worker(
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
                 maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+            } else {
+                return Err(anyhow::anyhow!("unexpected sign response"));
             }
         }
     } else {
@@ -1029,6 +1036,8 @@ async fn run_worker(
             if response_type == MessageType::SignResponse as u8 {
                 completed += 1;
                 maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+            } else {
+                return Err(anyhow::anyhow!("unexpected sign response"));
             }
         }
     }
@@ -1090,6 +1099,8 @@ async fn run_list_worker(
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
                     maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+                } else {
+                    return Err(anyhow::anyhow!("unexpected identities response"));
                 }
             }
         } else {
@@ -1106,6 +1117,8 @@ async fn run_list_worker(
                 if response_type == MessageType::IdentitiesAnswer as u8 {
                     completed += 1;
                     maybe_record_latency(started_at, &mut latencies_us, latency_max_samples);
+                } else {
+                    return Err(anyhow::anyhow!("unexpected identities response"));
                 }
             }
         }

@@ -7,12 +7,16 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
+- [ ] Fix failing scheduled Rust SLO gate: disable `sign_timeout_ms` in gate-generated agent configs, make latency parsing resilient when `ok=0`, and print agent log tails on failure (scripts/bench_slo_gate.sh, scripts/bench_smoke_gate.sh, scripts/soak_test.sh, .github/workflows/rust-slo-gate.yml).
+- [ ] Make `secretive-bench --json/--json-compact` output machine-parseable by moving all logs to stderr (no non-JSON on stdout) and ensure failure responses are counted as failures, not silently ignored (crates/secretive-bench/src/main.rs, scripts/* gates).
+- [ ] Prebuild Rust binaries in gate scripts (agent/client/bench) and run built artifacts directly to reduce flake risk and eliminate Cargo noise during JSON capture (scripts/*.sh).
 - [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
 - [ ] Teach `scripts/bench_slo_gate.sh` (and other gates) to call the new suggestion helper automatically and export the recommended `SLO_QUEUE_WAIT_*` env vars per host/profile.
 - [ ] Emit the recommended queue-wait guardrail in metrics snapshots (for example, `suggested_tail_ns`) so dashboards can compare observed vs recommended envelopes in real time.
 - [ ] Resolve `TODO: CHECK VERSION` in `Sources/Secretive/Controllers/AgentStatusChecker.swift` with either implementation or removal.
 
 ## Implemented
+- 2026-02-09: Fixed failing scheduled Rust SLO gate by disabling `sign_timeout_ms` in gate-generated agent configs (so the bench measures queue wait instead of timing out under fan-out), hardening gate/soak scripts to fail clearly when latency stats are missing (instead of “failed to parse bench output”), and printing agent log tails on failures for actionable diagnostics (scripts/bench_slo_gate.sh, scripts/bench_smoke_gate.sh, scripts/soak_test.sh, crates/secretive-bench/src/main.rs, `cargo test -p secretive-bench`, `./scripts/check_shell.sh`, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/bench_smoke_gate.sh`, `SLO_CONCURRENCY=64 SLO_DURATION_SECS=3 ... ./scripts/bench_slo_gate.sh`).
 - 2026-02-08: Hardened `.github/workflows/windows-agent-smoke.yml` startup path by prebuilding `secretive-agent`/`secretive-client`, running direct binaries (instead of concurrent `cargo run` processes), enforcing a real startup timeout (`AGENT_STARTUP_TIMEOUT_SECS`), checking process liveness, and printing agent log tails on failure. This fixes false-ready behavior caused by PowerShell `try/catch` not handling non-zero external command exits (windows-agent-smoke.yml, `ruby -e "require 'yaml'; YAML.load_file(...)"`).
 - 2026-02-08: Tuned regression latency envelope for hosted CI variance by raising the default `REGRESSION_SLO_MAX_P95_US` from `500000` to `900000` after observing consistent ~740-760ms p95 on GitHub-hosted Linux despite healthy throughput/failure metrics (scripts/regression_gate.sh, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/regression_gate.sh`).
 - 2026-02-08: Stabilized `scripts/regression_gate.sh` SLO defaults for hosted CI by reducing reconnect SLO fan-out pressure (`REGRESSION_SLO_CONCURRENCY` 256 -> 64, `REGRESSION_SLO_DURATION_SECS` 8 -> 10) so regression gates continue to validate latency/reliability without over-saturating shared runners (scripts/regression_gate.sh, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/regression_gate.sh`).
@@ -39,6 +43,7 @@
 ## Insights
 - Most recent CI failures across OpenSSH/bench/regression/PKCS11 gates shared the same signature (`agent failed to become ready`) and were caused by short readiness windows rather than functional regressions in agent behavior.
 - A shared readiness helper is materially better than copy-pasted loops: one timeout knob, one diagnostics format, and consistent process-liveness handling across all gates.
+- Synthetic CI gate configs should not inherit production-style timeouts (for example `sign_timeout_ms`): they can zero out throughput and hide the real queue-wait behavior under fan-out; gates should instead enforce SLOs via the bench’s own latency/queue-wait envelopes and produce clear diagnostics when samples are missing.
 - Queue-wait regressions were hard to diagnose with only avg/max; histogram buckets now expose whether tail latency or bursts are driving pressure, and the client can show that without jq.
 - Human-friendly percentile summaries make it obvious when p95+ queue wait spikes, so operators can set alert thresholds without exporting the histogram elsewhere.
 - Tail-ratio gating turns histogram data into an actionable SLO knob, so we can alert on 5%+ queue waits before averages move—next we should auto-suggest sane thresholds per workload profile.

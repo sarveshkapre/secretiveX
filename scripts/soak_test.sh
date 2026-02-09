@@ -27,6 +27,14 @@ agent_pid=""
 agent_log="$tmpdir/agent.log"
 agent_metrics_json="$tmpdir/agent-metrics.json"
 
+print_agent_log_tail() {
+  if [ -f "$agent_log" ] && [ -s "$agent_log" ]; then
+    echo "---- agent log (tail -n 120) ----" >&2
+    tail -n 120 "$agent_log" >&2 || true
+    echo "---- end agent log ----" >&2
+  fi
+}
+
 cleanup() {
   if [ -n "$agent_pid" ] && kill -0 "$agent_pid" >/dev/null 2>&1; then
     kill "$agent_pid" >/dev/null 2>&1 || true
@@ -58,6 +66,7 @@ else
   ],
   "watch_files": false,
   "metrics_every": 0,
+  "sign_timeout_ms": 0,
   "metrics_interval_ms": 1000,
   "metrics_output_path": "$agent_metrics_json",
   "identity_cache_ms": 5000,
@@ -112,9 +121,10 @@ ok="$(grep -o '"ok":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
 failures="$(grep -o '"failures":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
 p95_us="$(grep -o '"p95_us":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
 
-if [ -z "$rps" ] || [ -z "$ok" ] || [ -z "$failures" ] || [ -z "$p95_us" ]; then
+if [ -z "$rps" ] || [ -z "$ok" ] || [ -z "$failures" ]; then
   echo "failed to parse soak output" >&2
   cat "$bench_json" >&2
+  print_agent_log_tail
   exit 1
 fi
 
@@ -137,19 +147,28 @@ fi
 if ! awk -v rps="$rps" -v min="$SOAK_MIN_RPS" 'BEGIN { exit (rps + 0 >= min + 0 ? 0 : 1) }'; then
   echo "soak gate failed: throughput below minimum (rps=$rps min=$SOAK_MIN_RPS)" >&2
   cat "$bench_json" >&2
+  print_agent_log_tail
   exit 1
 fi
 
 if ! awk -v rate="$failure_rate" -v max="$SOAK_MAX_FAILURE_RATE" 'BEGIN { exit (rate + 0 <= max + 0 ? 0 : 1) }'; then
   echo "soak gate failed: failure rate above max (failure_rate=$failure_rate max=$SOAK_MAX_FAILURE_RATE)" >&2
   cat "$bench_json" >&2
+  print_agent_log_tail
   exit 1
 fi
 
 if [ "$SOAK_MAX_P95_US" != "0" ]; then
+  if [ -z "$p95_us" ]; then
+    echo "soak gate failed: latency stats missing (expected p95_us; ok=$ok failures=$failures rps=$rps)" >&2
+    cat "$bench_json" >&2
+    print_agent_log_tail
+    exit 1
+  fi
   if ! awk -v p95="$p95_us" -v max="$SOAK_MAX_P95_US" 'BEGIN { exit (p95 + 0 <= max + 0 ? 0 : 1) }'; then
     echo "soak gate failed: p95 latency above max (p95_us=$p95_us max=$SOAK_MAX_P95_US)" >&2
     cat "$bench_json" >&2
+    print_agent_log_tail
     exit 1
   fi
 fi
@@ -159,6 +178,7 @@ if [ "$SOAK_REQUIRE_QUEUE_WAIT_METRICS" = "1" ] || [ "$SOAK_MAX_QUEUE_WAIT_AVG_N
     echo "soak gate failed: queue wait metrics are required but missing" >&2
     cat "$bench_json" >&2
     [ -n "$metrics_source" ] && cat "$metrics_source" >&2 || true
+    print_agent_log_tail
     exit 1
   fi
 fi
@@ -168,6 +188,7 @@ if [ -n "$queue_wait_avg_ns" ] && [ "$SOAK_MAX_QUEUE_WAIT_AVG_NS" != "0" ]; then
     echo "soak gate failed: queue wait avg above max (queue_wait_avg_ns=$queue_wait_avg_ns max=$SOAK_MAX_QUEUE_WAIT_AVG_NS)" >&2
     cat "$bench_json" >&2
     [ -n "$metrics_source" ] && cat "$metrics_source" >&2 || true
+    print_agent_log_tail
     exit 1
   fi
 fi
@@ -177,6 +198,7 @@ if [ -n "$queue_wait_max_ns" ] && [ "$SOAK_MAX_QUEUE_WAIT_MAX_NS" != "0" ]; then
     echo "soak gate failed: queue wait max above max (queue_wait_max_ns=$queue_wait_max_ns max=$SOAK_MAX_QUEUE_WAIT_MAX_NS)" >&2
     cat "$bench_json" >&2
     [ -n "$metrics_source" ] && cat "$metrics_source" >&2 || true
+    print_agent_log_tail
     exit 1
   fi
 fi
