@@ -7,9 +7,6 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Fix macOS CI workflows to use the correct SecretiveX repo URLs and to produce/notarize a locally-created `Secretive.zip` (remove brittle “upload then curl-download zip” flow); make Nightly gracefully skip signing/notarization when secrets aren’t configured so scheduled CI stays green (.github/workflows/nightly.yml, .github/workflows/release.yml, .github/workflows/oneoff.yml, .github/scripts/signing.sh).
-- [ ] Fix app update checks to query SecretiveX releases (currently points at the old `sarveshkapre/secretive` API) and add a small smoke check to prevent regressions (Sources/SecretiveUpdater/SecretiveUpdater.swift).
-- [ ] Resolve `TODO: CHECK VERSION` in `Sources/Secretive/Controllers/AgentStatusChecker.swift` with either implementation or removal.
 - [ ] Count non-success SSH agent responses in `secretive-bench` as failures (not silent “ok=0 failures=0”), ideally separating request-level failures from worker/connectivity failures (crates/secretive-bench/src/main.rs, scripts/* gates).
 - [ ] Prebuild Rust binaries in gate scripts (agent/client/bench) and run built artifacts directly to reduce flake risk and eliminate Cargo noise during JSON capture (scripts/*.sh).
 - [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
@@ -19,6 +16,9 @@
 - [ ] Add lightweight “CI sanity” workflows for Swift + Rust (format/lint/test) on PRs/merges so regressions are caught before scheduled Nightly runs (.github/workflows/*).
 
 ## Implemented
+- 2026-02-09: Fixed failing SecretiveX Nightly/One-Off build workflows by making signing setup conditional (skip when secrets aren’t configured), producing `Secretive.zip` locally (no “upload then curl-download zip”), and updating CI build URLs to point at `sarveshkapre/secretiveX` (b65be6a, 33332a9, `ruby -e "require 'yaml'; YAML.load_file(...)"`, `./scripts/check_shell.sh`).
+- 2026-02-09: Fixed updater to query SecretiveX releases (not upstream `sarveshkapre/secretive`) and added a CI smoke check to prevent stale repo URL regressions (`scripts/repo_sanity.sh` wired into Shell Sanity; 84227cc, `./scripts/repo_sanity.sh`).
+- 2026-02-09: Resolved `TODO: CHECK VERSION` by detecting stale SecretAgent processes after in-place app updates (compare running process launch time vs on-disk binary mtime; triggers a restart path) (da60605).
 - 2026-02-09: Fixed failing scheduled Rust SLO gate by disabling `sign_timeout_ms` in gate-generated agent configs (so the bench measures queue wait instead of timing out under fan-out), hardening gate/soak scripts to fail clearly when latency stats are missing (instead of “failed to parse bench output”), and printing agent log tails on failures for actionable diagnostics (scripts/bench_slo_gate.sh, scripts/bench_smoke_gate.sh, scripts/soak_test.sh, crates/secretive-bench/src/main.rs, `cargo test -p secretive-bench`, `./scripts/check_shell.sh`, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/bench_smoke_gate.sh`, `SLO_CONCURRENCY=64 SLO_DURATION_SECS=3 ... ./scripts/bench_slo_gate.sh`).
 - 2026-02-08: Hardened `.github/workflows/windows-agent-smoke.yml` startup path by prebuilding `secretive-agent`/`secretive-client`, running direct binaries (instead of concurrent `cargo run` processes), enforcing a real startup timeout (`AGENT_STARTUP_TIMEOUT_SECS`), checking process liveness, and printing agent log tails on failure. This fixes false-ready behavior caused by PowerShell `try/catch` not handling non-zero external command exits (windows-agent-smoke.yml, `ruby -e "require 'yaml'; YAML.load_file(...)"`).
 - 2026-02-08: Tuned regression latency envelope for hosted CI variance by raising the default `REGRESSION_SLO_MAX_P95_US` from `500000` to `900000` after observing consistent ~740-760ms p95 on GitHub-hosted Linux despite healthy throughput/failure metrics (scripts/regression_gate.sh, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/regression_gate.sh`).
@@ -46,6 +46,8 @@
 ## Insights
 - Most recent CI failures across OpenSSH/bench/regression/PKCS11 gates shared the same signature (`agent failed to become ready`) and were caused by short readiness windows rather than functional regressions in agent behavior.
 - A shared readiness helper is materially better than copy-pasted loops: one timeout knob, one diagnostics format, and consistent process-liveness handling across all gates.
+- Scheduled macOS workflows need a “no secrets” fast-path: attempting code signing/notarization on scheduled runners without configured secrets is noise; skipping cleanly keeps the pipeline green while still providing unsigned artifacts for inspection.
+- “Repo URL drift” (upstream `secretive` vs `secretiveX`) is easy to reintroduce and hard to spot; a tiny, cheap `rg`-backed sanity check catches it early in CI.
 - Synthetic CI gate configs should not inherit production-style timeouts (for example `sign_timeout_ms`): they can zero out throughput and hide the real queue-wait behavior under fan-out; gates should instead enforce SLOs via the bench’s own latency/queue-wait envelopes and produce clear diagnostics when samples are missing.
 - Queue-wait regressions were hard to diagnose with only avg/max; histogram buckets now expose whether tail latency or bursts are driving pressure, and the client can show that without jq.
 - Human-friendly percentile summaries make it obvious when p95+ queue wait spikes, so operators can set alert thresholds without exporting the histogram elsewhere.
