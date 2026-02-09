@@ -7,8 +7,7 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Fix failing scheduled Rust SLO gate: disable `sign_timeout_ms` in gate-generated agent configs, make latency parsing resilient when `ok=0`, and print agent log tails on failure (scripts/bench_slo_gate.sh, scripts/bench_smoke_gate.sh, scripts/soak_test.sh, .github/workflows/rust-slo-gate.yml).
-- [ ] Make `secretive-bench --json/--json-compact` output machine-parseable by moving all logs to stderr (no non-JSON on stdout) and ensure failure responses are counted as failures, not silently ignored (crates/secretive-bench/src/main.rs, scripts/* gates).
+- [ ] Count non-success SSH agent responses in `secretive-bench` as failures (not silent “ok=0 failures=0”), ideally separating request-level failures from worker/connectivity failures (crates/secretive-bench/src/main.rs, scripts/* gates).
 - [ ] Prebuild Rust binaries in gate scripts (agent/client/bench) and run built artifacts directly to reduce flake risk and eliminate Cargo noise during JSON capture (scripts/*.sh).
 - [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
 - [ ] Teach `scripts/bench_slo_gate.sh` (and other gates) to call the new suggestion helper automatically and export the recommended `SLO_QUEUE_WAIT_*` env vars per host/profile.
