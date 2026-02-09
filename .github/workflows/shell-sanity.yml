@@ -16,3 +16,6 @@ jobs:
 
       - name: Run shell syntax checks
         run: ./scripts/check_shell.sh
+
+      - name: Run repo sanity checks
+        run: ./scripts/repo_sanity.sh
