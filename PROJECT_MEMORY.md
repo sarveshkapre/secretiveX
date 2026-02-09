@@ -52,6 +52,7 @@
  - 2026-02-09 | `./scripts/check_shell.sh` | `checked 14 script(s)` | pass
  - 2026-02-09 | `./scripts/repo_sanity.sh` | `[repo-sanity] ok` | pass
  - 2026-02-09 | `xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme PackageTests test` | `TEST SUCCEEDED` | pass
+ - 2026-02-09 | `xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme Secretive -configuration Debug build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=` | `BUILD SUCCEEDED` | pass
  - 2026-02-09 | `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/bench_smoke_gate.sh` | `bench smoke gate passed` | pass
  - 2026-02-09 | `SLO_CONCURRENCY=64 SLO_DURATION_SECS=3 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/bench_slo_gate.sh` | `slo gate passed` | pass
 
