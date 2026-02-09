@@ -5,7 +5,18 @@
 
 ## Architecture Snapshot
 
+## Market Scan (Bounded)
+- 2026-02-09 (untrusted): Baseline expectations for “secure SSH agent” tools include: drop-in `SSH_AUTH_SOCK` integration, cross-platform support, clear key provenance (file vs hardware-backed), and predictable UX around approvals/timeouts.
+  - 1Password SSH agent: SSH key management + agent integration with `SSH_AUTH_SOCK`. Source: https://developer.1password.com/docs/ssh/agent/
+  - GnuPG `gpg-agent`: supports SSH-agent mode via `enable-ssh-support`. Source: https://www.gnupg.org/documentation/manuals/gnupg/Agent-Options.html
+  - `age` (and Nix `agenix`): file-based encryption workflows commonly used alongside SSH keys for secrets distribution (adjacent, not an agent). Sources: https://github.com/FiloSottile/age , https://github.com/ryantm/agenix
+
 ## Open Problems
+## Gap Map
+- Missing: polished “approval UX” parity with password-manager agents (prompts/allowlists/UX), plus broader real-token integration testing for PKCS#11 and Windows ACL hardening validation on real hosts.
+- Weak: CI gate ergonomics (machine-parseable outputs, clear failure diagnostics, flake resistance) and semantics alignment between bench JSON fields and gate scripts.
+- Parity: drop-in SSH agent behavior (Unix socket/named pipe), basic key discovery/signing, and straightforward docs for setup.
+- Differentiator: high-concurrency focus with queue-wait metrics + SLO gating, and macOS Secure Enclave-backed store support.
 
 ## Recent Decisions
 - Template: YYYY-MM-DD | Decision | Why | Evidence (tests/logs) | Commit | Confidence (high/medium/low) | Trust (trusted/untrusted)
