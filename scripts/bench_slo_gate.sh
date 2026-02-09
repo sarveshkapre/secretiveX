@@ -112,29 +112,14 @@ cat > "$config_path" <<JSON
 JSON
 
 if [ "$SLO_QUEUE_WAIT_TAIL_NS" = "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" = "0" ]; then
-  if command -v python3 >/dev/null 2>&1; then
-    suggest_line="$("$agent_bin" --config "$config_path" --suggest-queue-wait-json 2>/dev/null | python3 - <<'PY' || true
-import json
-import sys
-
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(1)
-
-tail_ns = int(data.get("tail_ns") or 0)
-tail_ratio = float(data.get("tail_ratio") or 0.0)
-print(f"{tail_ns} {tail_ratio:.4f}")
-PY
-)"
-    suggest_ns="$(printf '%s' "$suggest_line" | awk '{print $1}')"
-    suggest_ratio="$(printf '%s' "$suggest_line" | awk '{print $2}')"
-    if [ -n "$suggest_ns" ] && [ "$suggest_ns" != "0" ] && [ -n "$suggest_ratio" ] && [ "$suggest_ratio" != "0.0000" ]; then
-      SLO_QUEUE_WAIT_TAIL_NS="$suggest_ns"
-      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="$suggest_ratio"
-      auto_queue_wait_source="secretive-agent"
-      auto_queue_wait_profile="$SLO_PROFILE"
-    fi
+  suggest_out="$("$agent_bin" --config "$config_path" --suggest-queue-wait-quiet 2>/dev/null || true)"
+  suggest_ns="$(printf '%s\n' "$suggest_out" | awk -F= '/^SLO_QUEUE_WAIT_TAIL_NS=/{print $2}' | tail -n1)"
+  suggest_ratio="$(printf '%s\n' "$suggest_out" | awk -F= '/^SLO_QUEUE_WAIT_TAIL_MAX_RATIO=/{print $2}' | tail -n1)"
+  if [ -n "$suggest_ns" ] && [ "$suggest_ns" != "0" ] && [ -n "$suggest_ratio" ] && [ "$suggest_ratio" != "0" ] && [ "$suggest_ratio" != "0.0000" ]; then
+    SLO_QUEUE_WAIT_TAIL_NS="$suggest_ns"
+    SLO_QUEUE_WAIT_TAIL_MAX_RATIO="$suggest_ratio"
+    auto_queue_wait_source="secretive-agent"
+    auto_queue_wait_profile="$SLO_PROFILE"
   fi
 
   if [ -z "$auto_queue_wait_source" ]; then
