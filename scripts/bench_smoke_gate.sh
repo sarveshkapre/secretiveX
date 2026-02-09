@@ -10,6 +10,16 @@ BENCH_PAYLOAD_SIZE="${BENCH_PAYLOAD_SIZE:-64}"
 BENCH_PROFILE="${BENCH_PROFILE:-fanout}"
 MIN_RPS="${MIN_RPS:-25}"
 
+repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+
+echo "[bench-smoke] building Rust tools" >&2
+cargo build -p secretive-agent -p secretive-bench -p secretive-client
+
+agent_bin="$repo_root/target/debug/secretive-agent"
+bench_bin="$repo_root/target/debug/secretive-bench"
+client_bin="$repo_root/target/debug/secretive-client"
+export SECRETIVE_CLIENT_BIN="$client_bin"
+
 workdir="$(pwd)"
 tmpdir="$(mktemp -d)"
 agent_pid=""
@@ -58,7 +68,7 @@ cat > "$config_path" <<JSON
 }
 JSON
 
-cargo run -p secretive-agent -- \
+"$agent_bin" \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \
@@ -71,7 +81,7 @@ agent_pid="$!"
   "$agent_log" \
   "$AGENT_STARTUP_TIMEOUT_SECS"
 
-cargo run -p secretive-bench -- \
+"$bench_bin" \
   --socket "$socket_path" \
   --reconnect \
   --concurrency "$BENCH_CONCURRENCY" \

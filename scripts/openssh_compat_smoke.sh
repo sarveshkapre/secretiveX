@@ -4,6 +4,15 @@ set -eu
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
 
+repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+
+echo "[openssh-compat] building Rust tools" >&2
+cargo build -p secretive-agent -p secretive-client
+
+agent_bin="$repo_root/target/debug/secretive-agent"
+client_bin="$repo_root/target/debug/secretive-client"
+export SECRETIVE_CLIENT_BIN="$client_bin"
+
 tmpdir="$(mktemp -d)"
 agent_pid=""
 agent_log="$tmpdir/agent.log"
@@ -97,7 +106,7 @@ cat > "$config_path" <<JSON
 }
 JSON
 
-cargo run -p secretive-agent -- \
+"$agent_bin" \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \

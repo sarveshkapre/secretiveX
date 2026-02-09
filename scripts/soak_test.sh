@@ -4,6 +4,16 @@ set -eu
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
 
+repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+
+echo "[soak] building Rust tools" >&2
+cargo build -p secretive-agent -p secretive-bench -p secretive-client
+
+agent_bin="$repo_root/target/debug/secretive-agent"
+bench_bin="$repo_root/target/debug/secretive-bench"
+client_bin="$repo_root/target/debug/secretive-client"
+export SECRETIVE_CLIENT_BIN="$client_bin"
+
 SOAK_DURATION_SECS="${SOAK_DURATION_SECS:-1800}"
 SOAK_CONCURRENCY="${SOAK_CONCURRENCY:-256}"
 SOAK_PAYLOAD_SIZE="${SOAK_PAYLOAD_SIZE:-64}"
@@ -76,7 +86,7 @@ else
 }
 JSON
 
-  cargo run -p secretive-agent -- \
+  "$agent_bin" \
     --config "$config_path" \
     --socket "$socket_path" \
     --no-watch \
@@ -103,7 +113,7 @@ if [ "$SOAK_RECONNECT" = "1" ]; then
 fi
 
 # shellcheck disable=SC2086
-cargo run -p secretive-bench -- $bench_args > "$bench_json"
+"$bench_bin" $bench_args > "$bench_json"
 
 if [ -n "$SOAK_OUTPUT_JSON" ]; then
   output_dir="$(dirname "$SOAK_OUTPUT_JSON")"

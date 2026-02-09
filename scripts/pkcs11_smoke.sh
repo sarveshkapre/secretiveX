@@ -10,6 +10,15 @@ PKCS11_LABEL="${PKCS11_LABEL:-secretivex-smoke-key}"
 PKCS11_PIN="${PKCS11_PIN:-123456}"
 PKCS11_SO_PIN="${PKCS11_SO_PIN:-123456}"
 
+repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+
+echo "[pkcs11-smoke] building Rust tools" >&2
+cargo build -p secretive-agent --features pkcs11 -p secretive-client
+
+agent_bin="$repo_root/target/debug/secretive-agent"
+client_bin="$repo_root/target/debug/secretive-client"
+export SECRETIVE_CLIENT_BIN="$client_bin"
+
 tmpdir="$(mktemp -d)"
 agent_pid=""
 agent_log="$tmpdir/agent.log"
@@ -129,7 +138,7 @@ cat > "$config_path" <<JSON
 }
 JSON
 
-cargo run -p secretive-agent --features pkcs11 -- \
+"$agent_bin" \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \
@@ -142,14 +151,14 @@ agent_pid="$!"
   "$agent_log" \
   "$AGENT_STARTUP_TIMEOUT_SECS"
 
-if ! cargo run -p secretive-client -- --socket "$socket_path" --list --raw | grep -q "$PKCS11_LABEL"; then
+if ! "$client_bin" --socket "$socket_path" --list --raw | grep -q "$PKCS11_LABEL"; then
   echo "pkcs11 smoke: expected key label not found in identity list" >&2
-  cargo run -p secretive-client -- --socket "$socket_path" --list --raw >&2 || true
+  "$client_bin" --socket "$socket_path" --list --raw >&2 || true
   exit 1
 fi
 
 printf "pkcs11-smoke-payload\n" > "$payload_path"
-cargo run -p secretive-client -- \
+"$client_bin" \
   --socket "$socket_path" \
   --comment "$PKCS11_LABEL" \
   --data "$payload_path" \

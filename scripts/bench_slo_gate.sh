@@ -17,6 +17,17 @@ SLO_MAX_QUEUE_WAIT_MAX_NS="${SLO_MAX_QUEUE_WAIT_MAX_NS:-0}"
 SLO_QUEUE_WAIT_TAIL_NS="${SLO_QUEUE_WAIT_TAIL_NS:-0}"
 SLO_QUEUE_WAIT_TAIL_MAX_RATIO="${SLO_QUEUE_WAIT_TAIL_MAX_RATIO:-0}"
 
+repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+
+echo "[bench-slo] building Rust tools" >&2
+cargo build -p secretive-agent -p secretive-bench -p secretive-client
+
+agent_bin="$repo_root/target/debug/secretive-agent"
+bench_bin="$repo_root/target/debug/secretive-bench"
+client_bin="$repo_root/target/debug/secretive-client"
+export SECRETIVE_CLIENT_BIN="$client_bin"
+
+auto_queue_wait_source=""
 auto_queue_wait_profile=""
 
 set_queue_wait_defaults() {
@@ -45,14 +56,6 @@ set_queue_wait_defaults() {
   esac
   auto_queue_wait_profile="$profile"
 }
-
-if [ "$SLO_QUEUE_WAIT_TAIL_NS" = "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" = "0" ]; then
-  set_queue_wait_defaults "$SLO_PROFILE"
-fi
-
-if [ -n "$auto_queue_wait_profile" ]; then
-  echo "auto queue-wait guardrail: profile=$auto_queue_wait_profile tail_ns=$SLO_QUEUE_WAIT_TAIL_NS max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" >&2
-fi
 
 tmpdir="$(mktemp -d)"
 agent_pid=""
@@ -108,7 +111,43 @@ cat > "$config_path" <<JSON
 }
 JSON
 
-cargo run -p secretive-agent -- \
+if [ "$SLO_QUEUE_WAIT_TAIL_NS" = "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" = "0" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    suggest_line="$("$agent_bin" --config "$config_path" --suggest-queue-wait-json 2>/dev/null | python3 - <<'PY' || true
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+tail_ns = int(data.get("tail_ns") or 0)
+tail_ratio = float(data.get("tail_ratio") or 0.0)
+print(f"{tail_ns} {tail_ratio:.4f}")
+PY
+)"
+    suggest_ns="$(printf '%s' "$suggest_line" | awk '{print $1}')"
+    suggest_ratio="$(printf '%s' "$suggest_line" | awk '{print $2}')"
+    if [ -n "$suggest_ns" ] && [ "$suggest_ns" != "0" ] && [ -n "$suggest_ratio" ] && [ "$suggest_ratio" != "0.0000" ]; then
+      SLO_QUEUE_WAIT_TAIL_NS="$suggest_ns"
+      SLO_QUEUE_WAIT_TAIL_MAX_RATIO="$suggest_ratio"
+      auto_queue_wait_source="secretive-agent"
+      auto_queue_wait_profile="$SLO_PROFILE"
+    fi
+  fi
+
+  if [ -z "$auto_queue_wait_source" ]; then
+    set_queue_wait_defaults "$SLO_PROFILE"
+    auto_queue_wait_source="profile-default"
+  fi
+fi
+
+if [ -n "$auto_queue_wait_source" ]; then
+  echo "auto queue-wait guardrail: source=$auto_queue_wait_source profile=$auto_queue_wait_profile tail_ns=$SLO_QUEUE_WAIT_TAIL_NS max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" >&2
+fi
+
+"$agent_bin" \
   --config "$config_path" \
   --socket "$socket_path" \
   --no-watch \
@@ -121,7 +160,7 @@ agent_pid="$!"
   "$agent_log" \
   "$AGENT_STARTUP_TIMEOUT_SECS"
 
-cargo run -p secretive-bench -- \
+"$bench_bin" \
   --socket "$socket_path" \
   --reconnect \
   --concurrency "$SLO_CONCURRENCY" \

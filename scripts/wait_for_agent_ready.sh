@@ -45,7 +45,12 @@ while :; do
   fi
 
   if [ -S "$socket_path" ]; then
-    if cargo run -p secretive-client -- --socket "$socket_path" --list --raw >/dev/null 2>&1; then
+    if [ -n "${SECRETIVE_CLIENT_BIN:-}" ] && [ -x "${SECRETIVE_CLIENT_BIN:-}" ]; then
+      if "$SECRETIVE_CLIENT_BIN" --socket "$socket_path" --list --raw >/dev/null 2>&1; then
+        ready=1
+        break
+      fi
+    elif cargo run -p secretive-client -- --socket "$socket_path" --list --raw >/dev/null 2>&1; then
       ready=1
       break
     fi
