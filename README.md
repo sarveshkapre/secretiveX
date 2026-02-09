@@ -88,7 +88,7 @@ Current Rust milestones:
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
 - Metrics snapshots now record `captured_unix_ms` and `started_unix_ms`, and `secretive-client --metrics-file` can enforce queue-wait guardrails offline via `--queue-wait-tail-profile/--queue-wait-tail-*` with optional freshness checks.
-- Agent includes `--suggest-queue-wait` to print recommended queue wait tail thresholds (ns + ratio) for the current config/hardware profile so CI/production guardrails stay aligned with reality.
+- Agent includes `--suggest-queue-wait` to print recommended queue wait tail thresholds (ns + ratio) for the current config/hardware profile so CI/production guardrails stay aligned with reality. Use `--suggest-queue-wait-json` for machine-readable output or `--suggest-queue-wait-quiet` to print only `SLO_QUEUE_WAIT_*` env assignments.
 
 ## Pending Features
 

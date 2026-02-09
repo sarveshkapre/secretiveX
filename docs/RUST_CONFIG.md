@@ -22,6 +22,8 @@ Reset metrics counters without restarting (Unix only):
 Suggest queue-wait guardrails without rerunning benchmarks:
 - `secretive-agent --suggest-queue-wait [--profile ...] [--config ...]`
 - `secretive-agent --suggest-queue-wait --check-config --config /path/to/agent.json`
+- `secretive-agent --suggest-queue-wait-json --config /path/to/agent.json` (machine-readable JSON)
+- `secretive-agent --suggest-queue-wait-quiet --config /path/to/agent.json` (print only `SLO_QUEUE_WAIT_*` assignments)
 
 The helper inspects the merged config (profile defaults + CLI/env overrides), detects hardware concurrency, and prints a recommended queue-wait tail threshold (`tail_ns`) plus a max ratio (fraction of requests exceeding the threshold). It also emits ready-to-export env vars (`SLO_QUEUE_WAIT_TAIL_NS`, `SLO_QUEUE_WAIT_TAIL_MAX_RATIO`, and the matching `SECRETIVE_BENCH_QUEUE_WAIT_*`) so CI gates can adopt the guardrail immediately. Use `--profile` or `--config` to see how different presets/hardware change the suggestion; add `--check-config` to validate the config before the helper runs.
 

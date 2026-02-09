@@ -562,6 +562,12 @@ fn main() {
     }
     let max_signers = compute_max_signers(&config);
     if args.suggest_queue_wait {
+        if args.suggest_queue_wait_json && args.suggest_queue_wait_quiet {
+            eprintln!(
+                "--suggest-queue-wait-json cannot be combined with --suggest-queue-wait-quiet"
+            );
+            std::process::exit(2);
+        }
         if check_config {
             let validation = validate_config(&config);
             for warning in validation.warnings {
@@ -575,7 +581,12 @@ fn main() {
                 std::process::exit(2);
             }
         }
-        emit_queue_wait_suggestion(&config, max_signers);
+        emit_queue_wait_suggestion(
+            &config,
+            max_signers,
+            args.suggest_queue_wait_json,
+            args.suggest_queue_wait_quiet,
+        );
         return;
     }
     if check_config {
@@ -1261,8 +1272,41 @@ fn build_queue_wait_suggestion_with_cores(
     }
 }
 
-fn emit_queue_wait_suggestion(config: &Config, max_signers: usize) {
+fn queue_wait_suggestion_json(suggestion: &QueueWaitSuggestion) -> serde_json::Value {
+    serde_json::json!({
+        "profile": {
+            "label": suggestion.profile_label,
+            "inferred": suggestion.profile_inferred,
+        },
+        "cpu_cores": suggestion.cpu_cores,
+        "max_signers": suggestion.max_signers,
+        "signers_per_core": suggestion.signers_per_core,
+        "max_connections": suggestion.max_connections,
+        "inline_sign": suggestion.inline_sign,
+        "pkcs11_store_present": suggestion.has_pkcs11,
+        "tail_ns": suggestion.tail_ns,
+        "tail_ratio": suggestion.tail_ratio,
+        "env": {
+            "SLO_QUEUE_WAIT_TAIL_NS": suggestion.tail_ns,
+            "SLO_QUEUE_WAIT_TAIL_MAX_RATIO": suggestion.tail_ratio,
+            "SECRETIVE_BENCH_QUEUE_WAIT_TAIL_NS": suggestion.tail_ns,
+            "SECRETIVE_BENCH_QUEUE_WAIT_TAIL_MAX_RATIO": suggestion.tail_ratio,
+        },
+        "reasons": suggestion.reasons,
+    })
+}
+
+fn emit_queue_wait_suggestion(config: &Config, max_signers: usize, json: bool, quiet: bool) {
     let suggestion = build_queue_wait_suggestion(config, max_signers);
+    if json {
+        println!("{}", queue_wait_suggestion_json(&suggestion));
+        return;
+    }
+    if quiet {
+        println!("SLO_QUEUE_WAIT_TAIL_NS={}", suggestion.tail_ns);
+        println!("SLO_QUEUE_WAIT_TAIL_MAX_RATIO={:.4}", suggestion.tail_ratio);
+        return;
+    }
     let inferred = if suggestion.profile_inferred {
         " (inferred)"
     } else {
@@ -2270,6 +2314,18 @@ mod queue_wait_suggestion_tests {
         assert!(suggestion.tail_ns > 6_000_000);
         assert!(suggestion.has_pkcs11);
     }
+
+    #[test]
+    fn suggestion_json_contains_env_fields() {
+        let config = config_with_profile(Some("pssh"));
+        let suggestion = build_queue_wait_suggestion_with_cores(&config, 64, 8);
+        let json = queue_wait_suggestion_json(&suggestion);
+        assert_eq!(json["tail_ns"].as_u64(), Some(suggestion.tail_ns));
+        assert!(json["env"]["SLO_QUEUE_WAIT_TAIL_NS"].as_u64().is_some());
+        assert!(json["env"]["SLO_QUEUE_WAIT_TAIL_MAX_RATIO"]
+            .as_f64()
+            .is_some());
+    }
 }
 
 struct Args {
@@ -2300,6 +2356,8 @@ struct Args {
     check_config: bool,
     dump_effective_config: bool,
     suggest_queue_wait: bool,
+    suggest_queue_wait_json: bool,
+    suggest_queue_wait_quiet: bool,
     help: bool,
     version: bool,
 }
@@ -2334,6 +2392,8 @@ fn parse_args() -> Args {
         check_config: false,
         dump_effective_config: false,
         suggest_queue_wait: false,
+        suggest_queue_wait_json: false,
+        suggest_queue_wait_quiet: false,
         help: false,
         version: false,
     };
@@ -2403,6 +2463,14 @@ fn parse_args() -> Args {
                 }
             }
             "--suggest-queue-wait" => parsed.suggest_queue_wait = true,
+            "--suggest-queue-wait-json" => {
+                parsed.suggest_queue_wait = true;
+                parsed.suggest_queue_wait_json = true;
+            }
+            "--suggest-queue-wait-quiet" => {
+                parsed.suggest_queue_wait = true;
+                parsed.suggest_queue_wait_quiet = true;
+            }
             "--pid-file" => parsed.pid_file = args.next(),
             "--identity-cache-ms" => {
                 if let Some(value) = args.next() {
@@ -2471,6 +2539,8 @@ fn print_help() {
     println!("  --audit-requests | --no-audit-requests");
     println!("  --sign-timeout-ms <n>");
     println!("  --suggest-queue-wait");
+    println!("  --suggest-queue-wait-json");
+    println!("  --suggest-queue-wait-quiet");
     println!("  --watch | --no-watch --watch-debounce-ms <n> --pid-file <path>");
     println!("  --identity-cache-ms <n>");
     println!("  --inline-sign | --no-inline-sign");
