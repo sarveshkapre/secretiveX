@@ -22,6 +22,7 @@ import Common
     var process: NSRunningApplication? = nil
     private let logger = Logger(subsystem: "com.sarveshkapre.secretive", category: "LaunchAgentController")
     private let service = SMAppService.loginItem(identifier: Bundle.agentBundleID)
+    private let fileManager = FileManager.default
 
     nonisolated init() {
         Task { @MainActor in
@@ -41,15 +42,40 @@ import Common
 
     // The process corresponding to this instance of Secretive
     var instanceSecretAgentProcess: NSRunningApplication? {
-        // TODO: CHECK VERSION
+        let expectedAgentBundleURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Library/LoginItems/SecretAgent.app")
         let agents = allSecretAgentProcesses
         for agent in agents {
             guard let url = agent.bundleURL else { continue }
-            if url.absoluteString.hasPrefix(Bundle.main.bundleURL.absoluteString) || (url.isXcodeURL && developmentBuild) {
+            if developmentBuild && url.isXcodeURL {
+                return agent
+            }
+
+            // Only treat the embedded login item agent as "our" agent for production builds.
+            if url == expectedAgentBundleURL {
+                if isStaleAfterUpdate(agent) {
+                    logger.debug("Ignoring stale SecretAgent process (binary updated after launch); pid=\(agent.processIdentifier)")
+                    continue
+                }
                 return agent
             }
         }
         return nil
+    }
+
+    private func isStaleAfterUpdate(_ agent: NSRunningApplication) -> Bool {
+        // When the host app is updated in-place, the running login item can remain from the old version.
+        // `bundleURL` points at the *current* on-disk bundle, so we instead compare the running process
+        // start time to the on-disk binary mtime to detect "updated after launch".
+        guard let launchDate = agent.launchDate else { return false }
+        guard let executableURL = agent.executableURL else { return false }
+        guard let attrs = try? fileManager.attributesOfItem(atPath: executableURL.path),
+              let mtime = attrs[.modificationDate] as? Date else {
+            return false
+        }
+
+        // Allow a small clock-skew/window for filesystem timestamp resolution.
+        return mtime.timeIntervalSince(launchDate) > 1.0
     }
 
     // Whether Secretive is being run in an Xcode environment.
