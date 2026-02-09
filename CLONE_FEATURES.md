@@ -7,14 +7,16 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Fix app update checks to query SecretiveX releases (currently points at the old `sarveshkapre/secretive` API) and add a small smoke check to prevent regressions (Sources/SecretiveUpdater/SecretiveUpdater.swift).
 - [ ] Fix macOS CI workflows to use the correct SecretiveX repo URLs and to produce/notarize a locally-created `Secretive.zip` (remove brittle “upload then curl-download zip” flow); make Nightly gracefully skip signing/notarization when secrets aren’t configured so scheduled CI stays green (.github/workflows/nightly.yml, .github/workflows/release.yml, .github/workflows/oneoff.yml, .github/scripts/signing.sh).
+- [ ] Fix app update checks to query SecretiveX releases (currently points at the old `sarveshkapre/secretive` API) and add a small smoke check to prevent regressions (Sources/SecretiveUpdater/SecretiveUpdater.swift).
+- [ ] Resolve `TODO: CHECK VERSION` in `Sources/Secretive/Controllers/AgentStatusChecker.swift` with either implementation or removal.
 - [ ] Count non-success SSH agent responses in `secretive-bench` as failures (not silent “ok=0 failures=0”), ideally separating request-level failures from worker/connectivity failures (crates/secretive-bench/src/main.rs, scripts/* gates).
 - [ ] Prebuild Rust binaries in gate scripts (agent/client/bench) and run built artifacts directly to reduce flake risk and eliminate Cargo noise during JSON capture (scripts/*.sh).
 - [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
 - [ ] Teach `scripts/bench_slo_gate.sh` (and other gates) to call the new suggestion helper automatically and export the recommended `SLO_QUEUE_WAIT_*` env vars per host/profile.
 - [ ] Emit the recommended queue-wait guardrail in metrics snapshots (for example, `suggested_tail_ns`) so dashboards can compare observed vs recommended envelopes in real time.
-- [ ] Resolve `TODO: CHECK VERSION` in `Sources/Secretive/Controllers/AgentStatusChecker.swift` with either implementation or removal.
+- [ ] Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path (README.md, packaging/*).
+- [ ] Add lightweight “CI sanity” workflows for Swift + Rust (format/lint/test) on PRs/merges so regressions are caught before scheduled Nightly runs (.github/workflows/*).
 
 ## Implemented
 - 2026-02-09: Fixed failing scheduled Rust SLO gate by disabling `sign_timeout_ms` in gate-generated agent configs (so the bench measures queue wait instead of timing out under fan-out), hardening gate/soak scripts to fail clearly when latency stats are missing (instead of “failed to parse bench output”), and printing agent log tails on failures for actionable diagnostics (scripts/bench_slo_gate.sh, scripts/bench_smoke_gate.sh, scripts/soak_test.sh, crates/secretive-bench/src/main.rs, `cargo test -p secretive-bench`, `./scripts/check_shell.sh`, `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/bench_smoke_gate.sh`, `SLO_CONCURRENCY=64 SLO_DURATION_SECS=3 ... ./scripts/bench_slo_gate.sh`).
