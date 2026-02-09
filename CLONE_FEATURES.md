@@ -7,15 +7,16 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Count non-success SSH agent responses in `secretive-bench` as failures (not silent “ok=0 failures=0”), ideally separating request-level failures from worker/connectivity failures (crates/secretive-bench/src/main.rs, scripts/* gates).
-- [ ] Prebuild Rust binaries in gate scripts (agent/client/bench) and run built artifacts directly to reduce flake risk and eliminate Cargo noise during JSON capture (scripts/*.sh).
-- [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
-- [ ] Teach `scripts/bench_slo_gate.sh` (and other gates) to call the new suggestion helper automatically and export the recommended `SLO_QUEUE_WAIT_*` env vars per host/profile.
 - [ ] Emit the recommended queue-wait guardrail in metrics snapshots (for example, `suggested_tail_ns`) so dashboards can compare observed vs recommended envelopes in real time.
+- [ ] Prefer bench-provided `queue_wait` JSON in gate scripts (avoid parsing metrics snapshots with embedded python; keep verdict logic in one place) (scripts/bench_slo_gate.sh, scripts/soak_test.sh).
+- [ ] Add Rust formatting/lint CI on `push`/`pull_request` (`cargo fmt --check`, optional `cargo clippy`) to catch drift earlier (.github/workflows/*).
 - [ ] Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path (README.md, packaging/*).
-- [ ] Add lightweight “CI sanity” workflows for Swift + Rust (format/lint/test) on PRs/merges so regressions are caught before scheduled Nightly runs (.github/workflows/*).
+- [ ] Add an explicit `secretive-bench` JSON schema note/versioned doc (fields + meaning) so dashboards can ingest `schema_version` changes safely (docs/RUST_BENCH.md).
 
 ## Implemented
+- 2026-02-09: `secretive-bench` now counts request-level failures (agent `Failure`, timeouts, connect/write/EOF issues) and exposes a failure breakdown (`request_failures`, `request_timeouts`, `connect_failures`, `worker_failures`) in JSON/CSV (`meta.schema_version=3`) so `ok=0` no longer hides agent-side failures (46790ae, `cargo test -p secretive-bench`).
+- 2026-02-09: Added machine-readable / script-friendly outputs for queue-wait guardrail suggestions (`secretive-agent --suggest-queue-wait-json` and `--suggest-queue-wait-quiet`) and documented them (3b62a9f, `cargo test -p secretive-agent`).
+- 2026-02-09: Gate scripts now prebuild and run Rust binaries directly (agent/client/bench) and readiness probing prefers `SECRETIVE_CLIENT_BIN`, reducing compile noise and flake risk in CI logs (657254c, 9ad7387, `./scripts/check_shell.sh`, `./scripts/bench_smoke_gate.sh`, `./scripts/bench_slo_gate.sh`).
 - 2026-02-09: Fixed failing SecretiveX Nightly/One-Off build workflows by making signing setup conditional (skip when secrets aren’t configured), producing `Secretive.zip` locally (no “upload then curl-download zip”), and updating CI build URLs to point at `sarveshkapre/secretiveX` (b65be6a, 33332a9, `ruby -e "require 'yaml'; YAML.load_file(...)"`, `./scripts/check_shell.sh`).
 - 2026-02-09: Fixed updater to query SecretiveX releases (not upstream `sarveshkapre/secretive`) and added a CI smoke check to prevent stale repo URL regressions (`scripts/repo_sanity.sh` wired into Shell Sanity; 84227cc, `./scripts/repo_sanity.sh`).
 - 2026-02-09: Resolved `TODO: CHECK VERSION` by detecting stale SecretAgent processes after in-place app updates (compare running process launch time vs on-disk binary mtime; triggers a restart path) (da60605).
@@ -59,6 +60,8 @@
 - Embedding the queue-wait guardrail inputs/output straight into bench JSON gives us a clean, machine-readable audit trail for every CI run; now we can diff actual percentiles vs thresholds without parsing shell logs, which sets up future alerting in Grafana/Looker or even a `--suggest-queue-wait` CLI.
 - Offline guardrail checks plus capture/start timestamps mean ops teams can fail a run the moment a metrics snapshot looks stale or violates the envelope, without rerunning `secretive-bench` just to confirm tail pressure.
 - Guardrail tuning is opinionated enough that `--suggest-queue-wait` can unblock operators instantly, but automation needs a JSON output mode and pipeline integration so benches can adopt the recommendations without manual copy/paste.
+- Prebuilding and running `target/debug/*` binaries inside the gates makes agent logs actually be agent logs; it also makes startup failures easier to reason about because Cargo compilation output is no longer interleaved.
+- `--suggest-queue-wait-quiet` is the right CI integration surface: stable key/value lines that gates can consume without `eval` or ad-hoc parsing of human prose.
 
 ## Notes
 - This file is maintained by the autonomous clone loop.

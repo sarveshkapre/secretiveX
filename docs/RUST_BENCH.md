@@ -30,6 +30,15 @@ JSON now includes metadata fields for dashboards and traceability:
 - `meta.hostname`, `meta.pid`
 - `meta.target_os`, `meta.target_arch`
 
+Result counters:
+- `ok`: number of successful responses (sign or list).
+- `failures`: number of request-level failures (agent returned `Failure`, unexpected response types, timeouts, or connect/write failures).
+- Breakdown fields (for debugging and clearer SLO math):
+  - `request_failures`: agent-level `Failure` responses or unexpected response types.
+  - `request_timeouts`: response timeouts when `--response-timeout-ms` is set.
+  - `connect_failures`: per-request connect/write failures and hard EOF-style read failures.
+  - `worker_failures`: worker task failures (should be `0` in healthy runs; indicates a bench-side bug or unrecoverable worker error).
+
 ## Queue-wait guardrails
 
 Point `secretive-bench` at the agent's live metrics snapshot to capture queue-wait guardrail data alongside throughput/latency:
