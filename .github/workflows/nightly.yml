@@ -16,6 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: Setup Signing
+      id: signing
       env: 
         SIGNING_DATA: ${{ secrets.SIGNING_DATA }}
         SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
@@ -33,26 +34,30 @@ jobs:
             DATE=$(date "+%Y-%m-%d")
             sed -i '' -e "s/GITHUB_CI_VERSION/0.0.0_nightly-$DATE/g" Sources/Config/Config.xcconfig
             sed -i '' -e "s/GITHUB_BUILD_NUMBER/1.$RUN_ID/g" Sources/Config/Config.xcconfig
-            sed -i '' -e "s/GITHUB_BUILD_URL/https:\/\/github.com\/sarveshkapre\/secretive\/actions\/runs\/$RUN_ID/g" Sources/Config/Config.xcconfig
+            sed -i '' -e "s/GITHUB_BUILD_URL/https:\/\/github.com\/sarveshkapre\/secretiveX\/actions\/runs\/$RUN_ID/g" Sources/Config/Config.xcconfig
     - name: Build
-      run: xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme Secretive -configuration Release -archivePath Archive.xcarchive archive
+      env:
+        SIGNING_ENABLED: ${{ steps.signing.outputs.signing_enabled }}
+      run: |
+            set -euo pipefail
+            if [[ "$SIGNING_ENABLED" == "true" ]]; then
+              xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme Secretive -configuration Release -archivePath Archive.xcarchive archive
+            else
+              xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme Secretive -configuration Release -archivePath Archive.xcarchive archive \
+                CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+            fi
     - name: Move to Artifact Folder
       run: mkdir Artifact; cp -r Archive.xcarchive/Products/Applications/Secretive.app Artifact
-    - name: Upload App to Artifacts
+    - name: Create Zip
+      run: ditto -c -k --sequesterRsrc --keepParent Artifact/Secretive.app Secretive.zip
+    - name: Upload Zip to Artifacts
       id: upload
       uses: actions/upload-artifact@v4
       with:
-        name: Secretive
-        path: Artifact
-    - name: Download Zipped Artifact
-      id: download
-      env: 
-        ZIP_ID: ${{ steps.upload.outputs.artifact-id }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-            curl -L -H "Authorization: Bearer $GITHUB_TOKEN" -L \
-            https://api.github.com/repos/sarveshkapre/secretive/actions/artifacts/$ZIP_ID/zip > Secretive.zip
+        name: Secretive.zip
+        path: Secretive.zip
     - name: Notarize
+      if: ${{ steps.signing.outputs.signing_enabled == 'true' && secrets.APPLE_API_ISSUER != '' }}
       env: 
         APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -61,5 +66,4 @@ jobs:
       id: attest
       uses: actions/attest-build-provenance@v2
       with:
-        subject-name: "Secretive.zip"
-        subject-digest: sha256:${{ steps.upload.outputs.artifact-digest }}
+        subject-path: "Secretive.zip"
