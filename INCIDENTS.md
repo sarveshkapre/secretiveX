@@ -19,5 +19,5 @@
 - Fix: Disabled `sign_timeout_ms` in gate-generated agent configs, made gate/soak scripts fail with explicit “latency stats missing” diagnostics instead of parse errors, and routed `secretive-bench` logs to stderr so `--json-compact` stdout stays machine-parseable.
 - Prevention Rule: Synthetic CI gates must explicitly set/disable internal timeouts that can mask throughput (for example `sign_timeout_ms`) and must not assume latency fields exist before verifying `ok>0`; JSON stdout modes must remain log-free.
 - Evidence: Local `./scripts/check_shell.sh` + `cargo test -p secretive-bench` + `./scripts/bench_smoke_gate.sh` + `./scripts/bench_slo_gate.sh` passes; CI failure run `21812678088` (untrusted external log).
-- Commit: (next commit)
+- Commit: f877d58
 - Confidence: high
