@@ -7,6 +7,8 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
+- [ ] Fix app update checks to query SecretiveX releases (currently points at the old `sarveshkapre/secretive` API) and add a small smoke check to prevent regressions (Sources/SecretiveUpdater/SecretiveUpdater.swift).
+- [ ] Fix macOS CI workflows to use the correct SecretiveX repo URLs and to produce/notarize a locally-created `Secretive.zip` (remove brittle “upload then curl-download zip” flow); make Nightly gracefully skip signing/notarization when secrets aren’t configured so scheduled CI stays green (.github/workflows/nightly.yml, .github/workflows/release.yml, .github/workflows/oneoff.yml, .github/scripts/signing.sh).
 - [ ] Count non-success SSH agent responses in `secretive-bench` as failures (not silent “ok=0 failures=0”), ideally separating request-level failures from worker/connectivity failures (crates/secretive-bench/src/main.rs, scripts/* gates).
 - [ ] Prebuild Rust binaries in gate scripts (agent/client/bench) and run built artifacts directly to reduce flake risk and eliminate Cargo noise during JSON capture (scripts/*.sh).
 - [ ] Add JSON/quiet output flags to `secretive-agent --suggest-queue-wait` so CI and scripts can consume tail recommendations without brittle string parsing.
