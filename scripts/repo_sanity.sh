@@ -17,9 +17,9 @@ fi
 
 # Prevent accidental regressions to upstream repo URLs in code/workflows/scripts.
 # Note: we deliberately ignore docs/trackers where this string may appear as commentary.
-if rg -n --pcre2 "sarveshkapre/secretive([^X]|$)" --hidden --glob '!.git/*' --glob '!**/*.md' --glob '!scripts/repo_sanity.sh' >/dev/null 2>&1; then
+if rg -n "sarveshkapre/secretive([^X]|$)" --hidden --glob '!.git/*' --glob '!**/*.md' --glob '!scripts/repo_sanity.sh' >/dev/null 2>&1; then
   echo "[repo-sanity] found stale repo reference(s):" >&2
-  rg -n --pcre2 "sarveshkapre/secretive([^X]|$)" --hidden --glob '!.git/*' --glob '!**/*.md' --glob '!scripts/repo_sanity.sh' >&2 || true
+  rg -n "sarveshkapre/secretive([^X]|$)" --hidden --glob '!.git/*' --glob '!**/*.md' --glob '!scripts/repo_sanity.sh' >&2 || true
   exit 1
 fi
 
