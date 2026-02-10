@@ -30,6 +30,25 @@ JSON now includes metadata fields for dashboards and traceability:
 - `meta.hostname`, `meta.pid`
 - `meta.target_os`, `meta.target_arch`
 
+### Schema notes
+
+`meta.schema_version` is an integer you should treat as the primary compatibility signal when ingesting `secretive-bench` JSON into dashboards or pipelines.
+
+Versioning expectations:
+- Additive changes (new fields) should be treated as backwards compatible; ingesters should ignore unknown fields.
+- `schema_version` increments when existing field meanings or types change, or when fields are removed/renamed.
+- Units are encoded in field names (for example `*_ms`, `*_us`, `*_ns`).
+
+Top-level fields (schema v3):
+- Counters: `ok`, `failures`, `attempted`, `request_failures`, `request_timeouts`, `connect_failures`, `worker_failures`
+- Rates/timing: `success_rate`, `failure_rate`, `elapsed_ms`, `rps`
+- Run shape: `mode` (`sign`/`list`), `reconnect`, `concurrency`, `requests_per_worker`, `requested_total` (optional), `duration_secs` (optional)
+- Payload: `randomize_payload`, `payload_size`, `flags`, `response_timeout_ms` (optional)
+- Socket: `socket_path`
+- Latency: `latency_enabled`, `latency_max_samples`, `latency` (optional object: `samples`, `p50_us`, `p95_us`, `p99_us`, `max_us`, `avg_us`)
+- Metadata: `meta` object (`schema_version`, `bench_version`, `started_unix_ms`, `finished_unix_ms`, `pid`, `hostname`, `target_os`, `target_arch`)
+- Queue wait: `queue_wait` (optional; see below)
+
 Result counters:
 - `ok`: number of successful responses (sign or list).
 - `failures`: number of request-level failures (agent returned `Failure`, unexpected response types, timeouts, or connect/write failures).
