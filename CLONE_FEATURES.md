@@ -7,11 +7,11 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Add OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and document security/perf tradeoffs.
 - [ ] Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
 - [ ] Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
 
 ## Implemented
+- 2026-02-10: Added OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and documented security/perf tradeoffs (`scripts/confirm_prompt_osascript.sh`, `scripts/confirm_prompt_linux.sh`, `scripts/confirm_prompt_windows.ps1`, `docs/RUST_CONFIG.md`).
 - 2026-02-10: Removed unsafe `BytesMut::set_len` usage in the agent request-reading path (read exact frames via `resize(len, 0)` + `read_exact`) and added a regression test to ensure one read does not consume the next frame (`crates/secretive-agent/src/main.rs`) (34e83c5, 32e1511, 67ed34c, `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh`).
 - 2026-02-10: Added `policy.confirm_command` (timeout + optional per-key cache) so the Rust agent can support `ssh-add -c`-like confirmations via an external command hook, and updated roadmap/architecture/config docs (`crates/secretive-agent/src/main.rs`, `Cargo.toml`, `docs/RUST_CONFIG.md`, `docs/PRODUCT_FEATURES.md`, `docs/ARCHITECTURE.md`) (7820b4c, `cargo test -p secretive-agent`, local confirm deny/allow smoke via `secretive-client --sign`).
 - 2026-02-10: Added a local smoke script for the confirm hook (`./scripts/confirm_command_smoke.sh`) so contributors can verify deny/allow behavior quickly (`scripts/confirm_command_smoke.sh`) (70d1da9, `./scripts/confirm_command_smoke.sh`).

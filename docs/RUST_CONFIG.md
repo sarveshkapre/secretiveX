@@ -177,3 +177,58 @@ Example (cache approvals for 15 seconds per key):
   }
 }
 ```
+
+#### OS-specific prompt helpers (examples)
+
+This repo includes example prompt helpers you can wire into `confirm_command`:
+
+- macOS (GUI via AppleScript): `scripts/confirm_prompt_osascript.sh`
+- Linux (GUI via `zenity` or `kdialog`): `scripts/confirm_prompt_linux.sh`
+- Windows (GUI via PowerShell): `scripts/confirm_prompt_windows.ps1`
+
+macOS example:
+
+```json
+{
+  "policy": {
+    "confirm_command": ["/absolute/path/to/secretiveX/scripts/confirm_prompt_osascript.sh"],
+    "confirm_timeout_ms": 30000,
+    "confirm_cache_ms": 15000
+  }
+}
+```
+
+Linux example:
+
+```json
+{
+  "policy": {
+    "confirm_command": ["/absolute/path/to/secretiveX/scripts/confirm_prompt_linux.sh"],
+    "confirm_timeout_ms": 30000,
+    "confirm_cache_ms": 15000
+  }
+}
+```
+
+Windows example (PowerShell 7):
+
+```json
+{
+  "policy": {
+    "confirm_command": [
+      "pwsh",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "C:\\\\path\\\\to\\\\secretiveX\\\\scripts\\\\confirm_prompt_windows.ps1"
+    ],
+    "confirm_timeout_ms": 30000,
+    "confirm_cache_ms": 15000
+  }
+}
+```
+
+Notes:
+- Treat the configured `confirm_command` as trusted code. Use an absolute path and make sure the script is not writable by other users.
+- Confirmation is synchronous: for high-throughput automation, rely on allowlists/denylists (fingerprints/comments) and use `confirm_cache_ms` to reduce prompt overhead.
