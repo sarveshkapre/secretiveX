@@ -170,6 +170,7 @@ static STORE_SIGN_SECURE_ENCLAVE: AtomicU64 = AtomicU64::new(0);
 static STORE_SIGN_OTHER: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 static AGENT_STARTED_UNIX_MS: OnceLock<u64> = OnceLock::new();
+static QUEUE_WAIT_SUGGESTION: OnceLock<QueueWaitSuggestion> = OnceLock::new();
 static FAILURE_FRAME: OnceLock<Bytes> = OnceLock::new();
 
 #[derive(Debug)]
@@ -630,6 +631,10 @@ async fn run_async(mut config: Config, max_signers: usize) {
         Some(path) => PidFileGuard::create(path).ok(),
         None => None,
     };
+
+    // Expose the recommended queue wait guardrail alongside observed queue wait telemetry so
+    // dashboards can compare "actual vs suggested" without consulting CI logs.
+    let _ = QUEUE_WAIT_SUGGESTION.set(build_queue_wait_suggestion(&config, max_signers));
 
     let mut registry = KeyStoreRegistry::new();
 
@@ -1923,6 +1928,17 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
 }
 
 fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
+    let suggested = QUEUE_WAIT_SUGGESTION.get().map(|suggestion| {
+        serde_json::json!({
+            "tail_ns": suggestion.tail_ns,
+            "tail_ratio": suggestion.tail_ratio,
+            "profile": {
+                "label": suggestion.profile_label,
+                "inferred": suggestion.profile_inferred,
+            },
+        })
+    });
+
     serde_json::json!({
         "kind": kind,
         "captured_unix_ms": metrics.captured_unix_ms,
@@ -1951,6 +1967,7 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
         "store_sign_other": metrics.store_sign_other,
         "queue_wait_histogram": metrics.queue_wait_histogram,
         "queue_wait_percentiles": metrics.queue_wait_percentiles,
+        "queue_wait_suggested": suggested,
     })
     .to_string()
 }
@@ -3701,6 +3718,7 @@ mod tests {
         assert!(payload.contains("\"queue_wait_histogram\""));
         assert!(payload.contains("\"captured_unix_ms\":1"));
         assert!(payload.contains("\"started_unix_ms\":2"));
+        assert!(payload.contains("\"queue_wait_suggested\":null"));
     }
 
     #[test]
