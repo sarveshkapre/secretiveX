@@ -27,6 +27,17 @@
 - Parity: drop-in SSH agent behavior (Unix socket/named pipe), basic key discovery/signing, and straightforward docs for setup.
 - Differentiator: high-concurrency focus with queue-wait metrics + SLO gating, and macOS Secure Enclave-backed store support.
 
+## Cycle 1 Session 2026-02-10 Task Scoring
+- Selected (shipped this session):
+  - Add `policy.confirm_command` (timeout + optional cache) + docs + smoke script (impact 5, effort 3, fit 5, diff 4, risk 3, confidence medium-high)
+  - Fix framed request reads (remove unsafe + enforce exact-length reads) + add regression test after CI failure (impact 5, effort 2, fit 5, diff 2, risk 2, confidence high)
+  - Add head-only Homebrew formula + README install docs for Rust CLIs (impact 4, effort 2, fit 5, diff 2, risk 1, confidence high)
+  - Document `secretive-bench` JSON schema notes/versioning (schema v3) (impact 3, effort 1, fit 4, diff 2, risk 1, confidence high)
+- Not selected (backlog):
+  - Add OS-specific prompt helper examples for `confirm_command` (impact 3, effort 2, fit 4, diff 2, risk 2, confidence medium)
+  - Add confirm/deny telemetry to metrics snapshots (impact 3, effort 2, fit 4, diff 2, risk 1, confidence medium)
+  - Cut a tagged Rust CLI release + stable Homebrew `url`/`sha256` (impact 4, effort 3, fit 4, diff 2, risk 2, confidence medium)
+
 ## Cycle 3 Session 2026-02-09 Task Scoring
 - Selected (shipped this session):
   - Fix macOS Nightly/One-Off CI signing/notarization robustness + local zip (impact 5, effort 2, fit 5, diff 2, risk 2, confidence high)
