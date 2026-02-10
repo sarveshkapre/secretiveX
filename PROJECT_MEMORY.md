@@ -76,6 +76,7 @@
  - 2026-02-10 | Add `policy.confirm_command` (timeout + optional cache) as a minimal cross-platform approval hook | `ssh-add -c`-style confirmation is a baseline expectation; an external command hook enables CLI-only workflows now and leaves room for future GUI adapters without coupling the agent to UI frameworks. | Local: `cargo test -p secretive-agent` (pass). Smoke: temp key + agent `confirm_command=[/usr/bin/false]` makes `secretive-client --sign` fail; swapping to `/usr/bin/true` makes sign succeed (pass). | 7820b4c | high | trusted
  - 2026-02-10 | Add a head-only Homebrew formula for Rust CLIs | Provides a first-class install path for Rust tools before we cut a tagged release; stable `url`/`sha256` can land once we ship tags. | Local: `ruby -c packaging/homebrew/secretivex.rb` (pass). | 0fa78bb | medium | trusted
  - 2026-02-10 | For framed agent protocol reads, always read exactly the declared frame length | Buffered reads that can overrun frame boundaries desynchronize the stream under fan-out and surface as connect/write failures; correctness beats micro-optimizations here. | Local: `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` (pass); unit test `read_request_does_not_consume_next_frame` (pass). | 32e1511, 67ed34c | high | trusted
+ - 2026-02-10 | Add OS-specific `policy.confirm_command` prompt helper examples | Confirm UX is a baseline expectation; shipping minimal macOS/Linux/Windows helper scripts helps users adopt confirmations without writing their own prompt plumbing. | Local: `./scripts/check_shell.sh` (pass); `cargo test -p secretive-agent` (pass). | 2eb8f47 | medium | trusted
 
 ## Mistakes And Fixes
 - Template: YYYY-MM-DD | Issue | Root cause | Fix | Prevention rule | Commit | Confidence
@@ -84,7 +85,6 @@
 ## Known Risks
 
 ## Next Prioritized Tasks
- - Add OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and document security/perf tradeoffs.
  - Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
  - Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
 
@@ -118,6 +118,7 @@
  - 2026-02-10 | `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` | `bench smoke gate passed` | pass
  - 2026-02-10 | `./scripts/confirm_command_smoke.sh` | `[confirm-smoke] ok` | pass
  - 2026-02-10 | `ruby -c packaging/homebrew/secretivex.rb` | `Syntax OK` | pass
+ - 2026-02-10 | `./scripts/check_shell.sh` | `checked 17 script(s)` | pass
 
 ## Historical Summary
 - Keep compact summaries of older entries here when file compaction runs.
