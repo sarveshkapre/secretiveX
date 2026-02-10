@@ -1439,10 +1439,7 @@ fn read_string(buf: &mut &[u8]) -> Result<Vec<u8>> {
     if buf.len() < len {
         return Err(anyhow::anyhow!("invalid blob"));
     }
-    let mut out = Vec::with_capacity(len);
-    unsafe {
-        out.set_len(len);
-    }
+    let mut out = vec![0u8; len];
     out.copy_from_slice(&buf[..len]);
     *buf = &buf[len..];
     Ok(out)

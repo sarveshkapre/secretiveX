@@ -17,10 +17,7 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    let mut buf = Vec::with_capacity(len);
-    unsafe {
-        buf.set_len(len);
-    }
+    let mut buf = vec![0u8; len];
     reader
         .read_exact(&mut buf)
         .await
@@ -41,10 +38,7 @@ where
     if len > MAX_FRAME_LEN {
         return Err(ProtoError::FrameTooLarge(len));
     }
-    let mut buf = Vec::with_capacity(len);
-    unsafe {
-        buf.set_len(len);
-    }
+    let mut buf = vec![0u8; len];
     reader
         .read_exact(&mut buf)
         .await
@@ -69,10 +63,7 @@ where
         return Err(ProtoError::FrameTooLarge(len));
     }
     buffer.clear();
-    buffer.reserve(len);
-    unsafe {
-        buffer.set_len(len);
-    }
+    buffer.resize(len, 0u8);
     reader
         .read_exact(&mut buffer[..])
         .await
@@ -113,9 +104,7 @@ where
     let capacity = buffer.capacity();
     while remaining > 0 {
         let chunk = remaining.min(capacity);
-        unsafe {
-            buffer.set_len(chunk);
-        }
+        buffer.resize(chunk, 0u8);
         reader
             .read_exact(&mut buffer[..chunk])
             .await
@@ -143,10 +132,7 @@ where
         return Err(ProtoError::FrameTooLarge(len));
     }
     buffer.clear();
-    buffer.reserve(len);
-    unsafe {
-        buffer.set_len(len);
-    }
+    buffer.resize(len, 0u8);
     reader
         .read_exact(&mut buffer[..])
         .await
@@ -233,7 +219,7 @@ where
 }
 
 pub fn decode_request(frame: &[u8]) -> Result<AgentRequest> {
-    let mut buf = &frame[..];
+    let mut buf = frame;
     if !buf.has_remaining() {
         return Err(ProtoError::InvalidMessage("missing message type"));
     }
@@ -261,7 +247,7 @@ pub fn decode_request(frame: &[u8]) -> Result<AgentRequest> {
 }
 
 pub fn decode_response(frame: &[u8]) -> Result<AgentResponse> {
-    let mut buf = &frame[..];
+    let mut buf = frame;
     if !buf.has_remaining() {
         return Err(ProtoError::InvalidMessage("missing message type"));
     }
@@ -538,10 +524,7 @@ fn read_string<B: Buf>(buf: &mut B) -> Result<Vec<u8>> {
     if buf.remaining() < len {
         return Err(ProtoError::UnexpectedEof);
     }
-    let mut data = Vec::with_capacity(len);
-    unsafe {
-        data.set_len(len);
-    }
+    let mut data = vec![0u8; len];
     buf.copy_to_slice(&mut data);
     Ok(data)
 }
@@ -572,7 +555,7 @@ mod tests {
             }],
         };
         let encoded = encode_response(&response);
-        let mut buf = Bytes::from(encoded);
+        let mut buf = encoded;
         assert_eq!(buf.get_u8(), MessageType::IdentitiesAnswer as u8);
         assert_eq!(buf.get_u32(), 1);
         assert_eq!(buf.get_u32(), 3);
@@ -605,7 +588,7 @@ mod tests {
     fn encode_response_frame_prefix() {
         let response = AgentResponse::Failure;
         let framed = encode_response_frame(&response).expect("frame");
-        let mut buf = Bytes::from(framed);
+        let mut buf = framed;
         let len = buf.get_u32() as usize;
         assert_eq!(len, 1);
         assert_eq!(buf.get_u8(), MessageType::Failure as u8);
@@ -626,7 +609,7 @@ mod tests {
     fn encode_request_frame_prefix() {
         let request = AgentRequest::RequestIdentities;
         let framed = encode_request_frame(&request).expect("frame");
-        let mut buf = Bytes::from(framed);
+        let mut buf = framed;
         let len = buf.get_u32() as usize;
         assert_eq!(len, 1);
         assert_eq!(buf.get_u8(), MessageType::RequestIdentities as u8);
@@ -640,7 +623,7 @@ mod tests {
             flags: 7,
         };
         let encoded = encode_request(&request);
-        let mut buf = Bytes::from(encoded);
+        let mut buf = encoded;
         assert_eq!(buf.get_u8(), MessageType::SignRequest as u8);
         assert_eq!(buf.get_u32(), 2);
         assert_eq!(buf.copy_to_bytes(2).to_vec(), vec![1, 2]);
