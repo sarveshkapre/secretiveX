@@ -149,10 +149,10 @@ if [ -f "$agent_metrics_json" ]; then
 elif [ -n "$SOAK_METRICS_FILE" ] && [ -f "$SOAK_METRICS_FILE" ]; then
   metrics_source="$SOAK_METRICS_FILE"
 fi
-if [ -n "$metrics_source" ]; then
-  queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$metrics_source" | head -n1 | cut -d: -f2)"
-  queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$metrics_source" | head -n1 | cut -d: -f2)"
-fi
+
+# Prefer bench-emitted queue wait report (single source of truth) to avoid parsing agent snapshots.
+queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$bench_json" | head -n1 | cut -d: -f2)"
+queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
 
 if ! awk -v rps="$rps" -v min="$SOAK_MIN_RPS" 'BEGIN { exit (rps + 0 >= min + 0 ? 0 : 1) }'; then
   echo "soak gate failed: throughput below minimum (rps=$rps min=$SOAK_MIN_RPS)" >&2
