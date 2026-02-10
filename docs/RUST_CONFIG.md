@@ -133,6 +133,9 @@ The runtime also applies session pooling and transient retry/backoff for common 
 - `pin_fingerprints`: array of required fingerprints (acts as an allowlist by fingerprint).
 - `allow_fingerprints` / `deny_fingerprints`: array of SSH fingerprints (for example `SHA256:...`).
 - `allow_comments` / `deny_comments`: array of identity comments (case-insensitive exact match).
+- `confirm_command`: optional argv list to run for each sign request (exit code `0` allows, non-zero denies).
+- `confirm_timeout_ms`: optional timeout for `confirm_command` (default: `30000`).
+- `confirm_cache_ms`: optional cache window for successful confirmations per key (default: `0`, disabled).
 
 Deny rules are applied first. If any allow list is configured, a request must match at least one allow entry.
 
@@ -143,6 +146,34 @@ Example:
   "policy": {
     "pin_fingerprints": ["SHA256:JQ6FV0rf7qqJHZqIj4zNH8eV0oB8KLKh9Pph3FTD98g"],
     "deny_comments": ["deprecated-key"]
+  }
+}
+```
+
+### Confirm command hook
+
+`confirm_command` is a minimal, cross-platform “approval” hook intended to cover `ssh-add -c`-style confirmation flows without requiring a built-in GUI.
+
+When enabled, the agent runs the configured command for each sign request (unless cached) and interprets:
+- exit code `0` as allow
+- non-zero exit code as deny
+
+The agent sets these environment variables for the command:
+- `SECRETIVE_CONFIRM_REQUEST=sign`
+- `SECRETIVE_CONFIRM_KEY_ID` (best-effort stable key id; usually `SHA256:...`)
+- `SECRETIVE_CONFIRM_KEY_FINGERPRINT` (empty when unavailable)
+- `SECRETIVE_CONFIRM_KEY_COMMENT` (empty when unavailable)
+- `SECRETIVE_CONFIRM_FLAGS` (u32)
+- `SECRETIVE_CONFIRM_DATA_LEN` (bytes)
+
+Example (cache approvals for 15 seconds per key):
+
+```json
+{
+  "policy": {
+    "confirm_command": ["/usr/bin/true"],
+    "confirm_timeout_ms": 30000,
+    "confirm_cache_ms": 15000
   }
 }
 ```

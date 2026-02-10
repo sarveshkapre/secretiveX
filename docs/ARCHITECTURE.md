@@ -19,7 +19,8 @@ Legacy Swift/macOS app code remains for compatibility while Rust reaches full pr
 2. `RequestIdentities` uses cache-first list handling with background refresh.
 3. `SignRequest` enters concurrency limits (`max_signers`, optional timeout).
 4. Policy checks and audit logging run before signing.
-5. Signing dispatches to configured key stores, then returns SSH signature blobs.
+5. Optional confirmation/approval hook can gate sign requests (for example an external command prompt).
+6. Signing dispatches to configured key stores, then returns SSH signature blobs.
 
 ## Performance model
 

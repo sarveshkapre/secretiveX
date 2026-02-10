@@ -1,11 +1,12 @@
 use arc_swap::ArcSwap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, ErrorKind};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -14,6 +15,7 @@ use tokio::time::Duration;
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::process::Command;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
@@ -328,6 +330,9 @@ struct AccessPolicyConfig {
     deny_fingerprints: Option<Vec<String>>,
     allow_comments: Option<Vec<String>>,
     deny_comments: Option<Vec<String>>,
+    confirm_command: Option<Vec<String>>,
+    confirm_timeout_ms: Option<u64>,
+    confirm_cache_ms: Option<u64>,
 }
 
 fn main() {
@@ -1652,6 +1657,15 @@ struct AccessPolicy {
     deny_fingerprints: HashSet<String>,
     allow_comments: HashSet<String>,
     deny_comments: HashSet<String>,
+    confirm: Option<ConfirmPolicy>,
+}
+
+#[derive(Debug)]
+struct ConfirmPolicy {
+    argv: Vec<String>,
+    timeout: Duration,
+    cache_ms: u64,
+    cache: tokio::sync::Mutex<HashMap<String, Instant>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1735,6 +1749,26 @@ impl AccessPolicy {
             }
         }
 
+        if let Some(command) = &config.confirm_command {
+            let argv: Vec<String> = command
+                .iter()
+                .map(|value| value.trim().to_string())
+                .collect();
+            let argv_is_valid = !argv.is_empty() && !argv[0].is_empty();
+            if !argv_is_valid {
+                warn!("invalid policy.confirm_command (must be a non-empty argv list)");
+            } else {
+                let timeout_ms = config.confirm_timeout_ms.unwrap_or(30_000).max(1);
+                let cache_ms = config.confirm_cache_ms.unwrap_or(0);
+                policy.confirm = Some(ConfirmPolicy {
+                    argv,
+                    timeout: Duration::from_millis(timeout_ms),
+                    cache_ms,
+                    cache: tokio::sync::Mutex::new(HashMap::new()),
+                });
+            }
+        }
+
         policy
     }
 
@@ -1745,10 +1779,15 @@ impl AccessPolicy {
             || !self.deny_fingerprints.is_empty()
             || !self.allow_comments.is_empty()
             || !self.deny_comments.is_empty()
+            || self.confirm.is_some()
     }
 
     fn requires_comment_lookup(&self) -> bool {
         !self.allow_comments.is_empty() || !self.deny_comments.is_empty()
+    }
+
+    fn confirm_enabled(&self) -> bool {
+        self.confirm.is_some()
     }
 
     fn evaluate(&self, key_blob: &[u8], comment: Option<&str>) -> PolicyDecision {
@@ -1797,6 +1836,54 @@ impl AccessPolicy {
 
         PolicyDecision::Deny("allowlist_miss")
     }
+
+    async fn confirm_sign_request(
+        &self,
+        key_blob: &[u8],
+        comment: Option<&str>,
+        flags: u32,
+        data_len: usize,
+    ) -> Result<ConfirmOutcome, ConfirmError> {
+        let Some(confirm) = self.confirm.as_ref() else {
+            return Ok(ConfirmOutcome::Skipped);
+        };
+
+        let key_id = confirm_key_id(key_blob);
+        if confirm.cache_ms > 0 {
+            let now = Instant::now();
+            let mut cache = confirm.cache.lock().await;
+            if let Some(expiry) = cache.get(&key_id).copied() {
+                if expiry > now {
+                    return Ok(ConfirmOutcome::CachedAllow);
+                }
+                cache.remove(&key_id);
+            }
+        }
+
+        let status = run_confirm_command(
+            &confirm.argv,
+            confirm.timeout,
+            &ConfirmEnv {
+                key_id: &key_id,
+                key_fingerprint: key_blob_fingerprint(key_blob).as_deref(),
+                key_comment: comment,
+                flags,
+                data_len,
+            },
+        )
+        .await?;
+
+        if status.success() {
+            if confirm.cache_ms > 0 {
+                let expiry = Instant::now() + Duration::from_millis(confirm.cache_ms);
+                let mut cache = confirm.cache.lock().await;
+                cache.insert(key_id, expiry);
+            }
+            Ok(ConfirmOutcome::Allow)
+        } else {
+            Ok(ConfirmOutcome::Deny)
+        }
+    }
 }
 
 fn normalize_comment(value: &str) -> String {
@@ -1828,6 +1915,77 @@ fn key_blob_fingerprint(key_blob: &[u8]) -> Option<String> {
     ssh_key::PublicKey::from_bytes(key_blob)
         .ok()
         .map(|public_key| public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfirmOutcome {
+    Skipped,
+    CachedAllow,
+    Allow,
+    Deny,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ConfirmError {
+    #[error("confirm command timed out")]
+    Timeout,
+    #[error("confirm command failed to spawn: {0}")]
+    Spawn(#[from] io::Error),
+    #[error("confirm command wait failed: {0}")]
+    Wait(io::Error),
+}
+
+struct ConfirmEnv<'a> {
+    key_id: &'a str,
+    key_fingerprint: Option<&'a str>,
+    key_comment: Option<&'a str>,
+    flags: u32,
+    data_len: usize,
+}
+
+fn confirm_key_id(key_blob: &[u8]) -> String {
+    if let Some(fingerprint) = key_blob_fingerprint(key_blob) {
+        return fingerprint;
+    }
+    let prefix_len = key_blob.len().min(16);
+    let prefix_hex = hex::encode(&key_blob[..prefix_len]);
+    format!("blob:{}:{}", key_blob.len(), prefix_hex)
+}
+
+async fn run_confirm_command(
+    argv: &[String],
+    timeout: Duration,
+    env: &ConfirmEnv<'_>,
+) -> Result<std::process::ExitStatus, ConfirmError> {
+    let program = argv
+        .first()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "confirm argv is empty"))?;
+    let mut cmd = Command::new(program);
+    if argv.len() > 1 {
+        cmd.args(&argv[1..]);
+    }
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.env("SECRETIVE_CONFIRM_REQUEST", "sign");
+    cmd.env("SECRETIVE_CONFIRM_KEY_ID", env.key_id);
+    cmd.env(
+        "SECRETIVE_CONFIRM_KEY_FINGERPRINT",
+        env.key_fingerprint.unwrap_or(""),
+    );
+    cmd.env(
+        "SECRETIVE_CONFIRM_KEY_COMMENT",
+        env.key_comment.unwrap_or(""),
+    );
+    cmd.env("SECRETIVE_CONFIRM_FLAGS", env.flags.to_string());
+    cmd.env("SECRETIVE_CONFIRM_DATA_LEN", env.data_len.to_string());
+    cmd.kill_on_drop(true);
+
+    let mut child = cmd.spawn()?;
+    let status = tokio::time::timeout(timeout, child.wait())
+        .await
+        .map_err(|_| ConfirmError::Timeout)?;
+    status.map_err(ConfirmError::Wait)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2238,6 +2396,31 @@ fn validate_config(config: &Config) -> ConfigValidation {
                     out.errors
                         .push(format!("policy.deny_comments[{idx}] must not be empty"));
                 }
+            }
+        }
+
+        if let Some(argv) = &policy.confirm_command {
+            if argv.is_empty() {
+                out.errors
+                    .push("policy.confirm_command must be a non-empty argv list".to_string());
+            } else if argv[0].trim().is_empty() {
+                out.errors
+                    .push("policy.confirm_command[0] (program) must not be empty".to_string());
+            } else if argv.iter().any(|value| value.trim().is_empty()) {
+                out.warnings.push(
+                    "policy.confirm_command contains empty argv entries; trim or remove them"
+                        .to_string(),
+                );
+            }
+            if matches!(policy.confirm_timeout_ms, Some(0)) {
+                out.errors
+                    .push("policy.confirm_timeout_ms must be greater than 0 when set".to_string());
+            }
+            if policy.confirm_cache_ms.unwrap_or(0) == 0 {
+                out.warnings.push(
+                    "policy.confirm_cache_ms is 0: confirm_command will run for every sign request (expect high overhead)"
+                        .to_string(),
+                );
             }
         }
     }
@@ -3136,12 +3319,13 @@ async fn handle_sign_request(
     };
     let audit_data_len = data.len();
 
+    let key_comment = if access_policy.is_enabled() && access_policy.requires_comment_lookup() {
+        find_comment_for_key(registry, key_blob.as_ref()).await
+    } else {
+        None
+    };
+
     if access_policy.is_enabled() {
-        let key_comment = if access_policy.requires_comment_lookup() {
-            find_comment_for_key(registry, key_blob.as_ref()).await
-        } else {
-            None
-        };
         match access_policy.evaluate(key_blob.as_ref(), key_comment.as_deref()) {
             PolicyDecision::Allow => {}
             PolicyDecision::Deny(reason) => {
@@ -3219,6 +3403,63 @@ async fn handle_sign_request(
     SIGN_QUEUE_WAIT_NS.fetch_add(wait_ns, Ordering::Relaxed);
     update_atomic_max(&SIGN_QUEUE_WAIT_MAX_NS, wait_ns);
     record_queue_wait_bucket(wait_ns);
+
+    if access_policy.confirm_enabled() {
+        match access_policy
+            .confirm_sign_request(
+                key_blob.as_ref(),
+                key_comment.as_deref(),
+                flags,
+                audit_data_len,
+            )
+            .await
+        {
+            Ok(ConfirmOutcome::Skipped | ConfirmOutcome::CachedAllow | ConfirmOutcome::Allow) => {}
+            Ok(ConfirmOutcome::Deny) => {
+                warn!("confirm command denied sign request");
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(
+                        key_id,
+                        audit_data_len,
+                        flags,
+                        "confirm_denied",
+                        audit_started,
+                    );
+                }
+                return AgentResponse::Failure;
+            }
+            Err(ConfirmError::Timeout) => {
+                warn!("confirm command timed out");
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(
+                        key_id,
+                        audit_data_len,
+                        flags,
+                        "confirm_timeout",
+                        audit_started,
+                    );
+                }
+                return AgentResponse::Failure;
+            }
+            Err(err) => {
+                warn!(?err, "confirm command failed");
+                SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
+                if let Some(key_id) = audit_key.as_deref() {
+                    emit_sign_audit(
+                        key_id,
+                        audit_data_len,
+                        flags,
+                        "confirm_error",
+                        audit_started,
+                    );
+                }
+                return AgentResponse::Failure;
+            }
+        }
+    }
+
     let registry = Arc::clone(registry);
     let result = if inline_sign {
         Ok(registry.sign_with_store(key_blob.as_ref(), data.as_ref(), flags))
@@ -3852,6 +4093,19 @@ mod tests {
         let validation = validate_config(&config);
         assert!(validation.errors.iter().any(|entry| {
             entry.contains("policy.pin_fingerprints[0] must be a valid fingerprint")
+        }));
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_confirm_command() {
+        let mut config = empty_config();
+        config.policy = Some(AccessPolicyConfig {
+            confirm_command: Some(vec![]),
+            ..AccessPolicyConfig::default()
+        });
+        let validation = validate_config(&config);
+        assert!(validation.errors.iter().any(|entry| {
+            entry.contains("policy.confirm_command must be a non-empty argv list")
         }));
     }
 
