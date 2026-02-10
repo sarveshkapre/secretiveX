@@ -21,3 +21,13 @@
 - Evidence: Local `./scripts/check_shell.sh` + `cargo test -p secretive-bench` + `./scripts/bench_smoke_gate.sh` + `./scripts/bench_slo_gate.sh` passes; CI failure run `21812678088` (untrusted external log).
 - Commit: f877d58
 - Confidence: high
+
+- Date: 2026-02-10
+- Trigger: GitHub Actions `Rust Bench Smoke` failed (run `21853702657`) with high `connect_failures` during reconnect fan-out.
+- Impact: CI gate red; reconnect smoke signal blocked and implied possible agent protocol instability.
+- Root Cause: Agent framed-request read path used `read_buf` into a buffer with excess capacity, allowing reads to overrun the declared frame length and consume bytes from the next request. Under fan-out this desynchronized the protocol stream and surfaced as connect/write failures.
+- Fix: Read exactly `len` bytes by resizing the buffer and using `read_exact`, and add a regression test that writes two frames back-to-back and asserts both are parsed independently.
+- Prevention Rule: For framed protocols, never use `read_buf` without bounding reads to the remaining frame length; add multi-frame read tests to catch over-read regressions.
+- Evidence: Local `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` (pass); CI failure run `21853702657` (untrusted external log).
+- Commit: 32e1511, 67ed34c
+- Confidence: high

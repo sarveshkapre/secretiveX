@@ -16,6 +16,9 @@
   - OpenSSH `ssh-add -c` adds keys with a per-use confirmation constraint. Source: https://man.openbsd.org/ssh-add
   - OpenSSH `ssh-agent` supports lifetimes and locking patterns that map to “timeout/approval” expectations. Source: https://man.openbsd.org/ssh-agent
   - 1Password SSH agent supports `SSH_AUTH_SOCK`-compatible flows and is a common modern reference point for key UX. Source: https://developer.1password.com/docs/ssh/agent/
+- 2026-02-10 (untrusted): A pragmatic cross-platform “confirm” baseline is an external prompt/approval helper: agent calls out to a helper and gates signing on its exit code.
+  - GnuPG `gpg-agent` options around confirmations/constraints are a common reference point for SSH-agent confirmation workflows. Source: https://www.gnupg.org/documentation/manuals/gnupg/Agent-Options.html
+  - OpenSSH confirms via `ssh-add -c` constraints (agent-side confirmation behavior). Source: https://man.openbsd.org/ssh-add
 
 ## Open Problems
 ## Gap Map
@@ -59,16 +62,20 @@
  - 2026-02-10 | Remove uninitialized `Vec::set_len` buffer patterns in protocol/client parsing | Clippy correctly flags this as a footgun; eliminating unsafe uninitialized buffers reduces the risk of exposing stale memory and makes `cargo clippy` CI viable. | Local: `cargo test -p secretive-proto` (pass); `cargo test -p secretive-client` (pass); `cargo clippy --workspace --all-targets` (pass). | ac28203 | high | trusted
  - 2026-02-10 | Add Rust lint workflow (`cargo fmt --check` + `cargo clippy`) on push/PR | Formatting and clippy provide early signal and prevent unsafe regressions from landing silently. | Local: `cargo fmt --all -- --check` (pass); `cargo clippy --workspace --all-targets` (pass). | c05077c | high | trusted
  - 2026-02-10 | Emit `queue_wait_suggested` in agent metrics snapshots | Dashboards and ops reviews can compare observed queue-wait tails vs the recommended envelope without consulting CI logs or re-running `--suggest-queue-wait`. | Local: `cargo test -p secretive-agent` (pass). | 857a39f | medium | trusted
+ - 2026-02-10 | Add `policy.confirm_command` (timeout + optional cache) as a minimal cross-platform approval hook | `ssh-add -c`-style confirmation is a baseline expectation; an external command hook enables CLI-only workflows now and leaves room for future GUI adapters without coupling the agent to UI frameworks. | Local: `cargo test -p secretive-agent` (pass). Smoke: temp key + agent `confirm_command=[/usr/bin/false]` makes `secretive-client --sign` fail; swapping to `/usr/bin/true` makes sign succeed (pass). | 7820b4c | high | trusted
+ - 2026-02-10 | Add a head-only Homebrew formula for Rust CLIs | Provides a first-class install path for Rust tools before we cut a tagged release; stable `url`/`sha256` can land once we ship tags. | Local: `ruby -c packaging/homebrew/secretivex.rb` (pass). | 0fa78bb | medium | trusted
+ - 2026-02-10 | For framed agent protocol reads, always read exactly the declared frame length | Buffered reads that can overrun frame boundaries desynchronize the stream under fan-out and surface as connect/write failures; correctness beats micro-optimizations here. | Local: `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` (pass); unit test `read_request_does_not_consume_next_frame` (pass). | 32e1511, 67ed34c | high | trusted
 
 ## Mistakes And Fixes
 - Template: YYYY-MM-DD | Issue | Root cause | Fix | Prevention rule | Commit | Confidence
+ - 2026-02-10 | CI `Rust Bench Smoke` failed with reconnect `connect_failures` | Agent framed read path used buffered reads that could overrun the declared frame length and consume bytes from the next request, desynchronizing the protocol stream under fan-out. | Read exactly `len` bytes (`resize` + `read_exact`) and add a regression test that writes two frames back-to-back and asserts both parse. | Never use buffered reads for framed protocols without bounding reads to remaining length; add multi-frame read tests to catch over-read regressions. | 32e1511, 67ed34c | high
 
 ## Known Risks
 
 ## Next Prioritized Tasks
- - Add an explicit `secretive-bench` JSON schema note/versioned doc (fields + meaning) so dashboards can ingest `meta.schema_version` changes safely.
- - Add an explicit “approval/confirm” UX roadmap item for the Rust agent (parity with `ssh-add -c` confirmation and password-manager agent approvals) and sketch a minimal cross-platform mechanism.
- - Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path.
+ - Add OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and document security/perf tradeoffs.
+ - Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
+ - Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
@@ -96,6 +103,10 @@
  - 2026-02-09 | `AGENT_STARTUP_TIMEOUT_SECS=90 BENCH_CONCURRENCY=32 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` | `bench smoke gate passed` | pass
  - 2026-02-09 | `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=32 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` | `slo gate passed` | pass
  - 2026-02-09 | `./scripts/repo_sanity.sh` | `[repo-sanity] ok` | pass
+ - 2026-02-10 | `cargo test -p secretive-agent` | `30 passed` | pass
+ - 2026-02-10 | `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` | `bench smoke gate passed` | pass
+ - 2026-02-10 | `./scripts/confirm_command_smoke.sh` | `[confirm-smoke] ok` | pass
+ - 2026-02-10 | `ruby -c packaging/homebrew/secretivex.rb` | `Syntax OK` | pass
 
 ## Historical Summary
 - Keep compact summaries of older entries here when file compaction runs.

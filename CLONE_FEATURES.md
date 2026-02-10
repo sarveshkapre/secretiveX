@@ -7,11 +7,16 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Add an explicit `secretive-bench` JSON schema note/versioned doc (fields + meaning) so dashboards can ingest `meta.schema_version` changes safely (`docs/RUST_BENCH.md`).
-- [ ] Add an explicit “approval/confirm” UX roadmap item for the Rust agent (parity with `ssh-add -c` confirmation and password-manager agent approvals) and sketch a minimal cross-platform mechanism (CLI-only first, UI later) (`docs/PRODUCT_FEATURES.md`, `docs/ARCHITECTURE.md`).
-- [ ] Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path (`README.md`, `packaging/*`).
+- [ ] Add OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and document security/perf tradeoffs.
+- [ ] Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
+- [ ] Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
 
 ## Implemented
+- 2026-02-10: Removed unsafe `BytesMut::set_len` usage in the agent request-reading path (read exact frames via `resize(len, 0)` + `read_exact`) and added a regression test to ensure one read does not consume the next frame (`crates/secretive-agent/src/main.rs`) (34e83c5, 32e1511, 67ed34c, `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh`).
+- 2026-02-10: Added `policy.confirm_command` (timeout + optional per-key cache) so the Rust agent can support `ssh-add -c`-like confirmations via an external command hook, and updated roadmap/architecture/config docs (`crates/secretive-agent/src/main.rs`, `Cargo.toml`, `docs/RUST_CONFIG.md`, `docs/PRODUCT_FEATURES.md`, `docs/ARCHITECTURE.md`) (7820b4c, `cargo test -p secretive-agent`, local confirm deny/allow smoke via `secretive-client --sign`).
+- 2026-02-10: Added a local smoke script for the confirm hook (`./scripts/confirm_command_smoke.sh`) so contributors can verify deny/allow behavior quickly (`scripts/confirm_command_smoke.sh`) (70d1da9, `./scripts/confirm_command_smoke.sh`).
+- 2026-02-10: Added a Homebrew (head-only) formula for Rust CLIs and documented a `brew install` path (`packaging/homebrew/secretivex.rb`, `README.md`) (0fa78bb, `ruby -c packaging/homebrew/secretivex.rb`).
+- 2026-02-10: Documented `secretive-bench` JSON schema notes/versioning expectations for dashboards (schema v3) (`docs/RUST_BENCH.md`) (c173a17).
 - 2026-02-10: Gate scripts now consume bench-emitted `queue_wait` JSON (avg/max + tail mode) instead of parsing agent metrics snapshots with embedded python; this removes a runtime Python dependency and keeps verdict inputs in one place (`scripts/bench_slo_gate.sh`, `scripts/soak_test.sh`) (ac0a4a2, `./scripts/check_shell.sh`, `SLO_CONCURRENCY=32 SLO_DURATION_SECS=1 ... ./scripts/bench_slo_gate.sh`, `SOAK_DURATION_SECS=1 ... ./scripts/soak_test.sh`).
 - 2026-02-10: Removed `Vec::set_len` uninitialized-buffer patterns in protocol/client parsing so `cargo clippy` passes and we don’t risk exposing uninitialized bytes (`crates/secretive-proto/src/codec.rs`, `crates/secretive-client/src/main.rs`) (ac28203, `cargo test -p secretive-proto`, `cargo test -p secretive-client`, `cargo clippy --workspace --all-targets`).
 - 2026-02-10: Added `Rust Lint` workflow running `cargo fmt --check` and `cargo clippy` on push/PR (`.github/workflows/rust-lint.yml`) (c05077c, `ruby -e "require 'yaml'; YAML.load_file(...)"`).
