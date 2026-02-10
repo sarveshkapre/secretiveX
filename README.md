@@ -147,7 +147,11 @@ You can download the latest release on the [SecretiveX Releases Page](https://gi
 
 #### Using Homebrew
 
-    Homebrew formula for SecretiveX is not published yet.
+Homebrew can install the Rust CLIs (`secretive-agent`, `secretive-client`, `secretive-bench`) from this repository:
+
+```bash
+brew install --HEAD --formula https://raw.githubusercontent.com/sarveshkapre/secretiveX/main/packaging/homebrew/secretivex.rb
+```
 
 ### FAQ
 
