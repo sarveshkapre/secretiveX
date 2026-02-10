@@ -12,6 +12,10 @@
   - `age` (and Nix `agenix`): file-based encryption workflows commonly used alongside SSH keys for secrets distribution (adjacent, not an agent). Sources: https://github.com/FiloSottile/age , https://github.com/ryantm/agenix
 - 2026-02-09 (untrusted): Hardware-backed SSH key workflows often rely on PKCS#11 plumbing and agent drop-in configuration.
   - Yubico PIV: OpenSSH + PKCS#11 usage and `SSH_AUTH_SOCK`-style flows. Source: https://docs.yubico.com/software/yubikey/tools/ykman/PIV_Commands.html
+- 2026-02-10 (untrusted): “Approval/confirm” UX is a baseline expectation for hardened SSH agent setups.
+  - OpenSSH `ssh-add -c` adds keys with a per-use confirmation constraint. Source: https://man.openbsd.org/ssh-add
+  - OpenSSH `ssh-agent` supports lifetimes and locking patterns that map to “timeout/approval” expectations. Source: https://man.openbsd.org/ssh-agent
+  - 1Password SSH agent supports `SSH_AUTH_SOCK`-compatible flows and is a common modern reference point for key UX. Source: https://developer.1password.com/docs/ssh/agent/
 
 ## Open Problems
 ## Gap Map
@@ -51,6 +55,10 @@
  - 2026-02-09 | Make `secretive-bench` failures request-based (and expose breakdown) | Worker-level failure counting hid agent-side `Failure` responses and could produce misleading `ok=0 failures=0`-style summaries; SLO math needs per-request attempts/failures. | Local: `cargo test -p secretive-bench` (pass). Local smoke: `./scripts/bench_smoke_gate.sh` (pass). | 46790ae | high | trusted
  - 2026-02-09 | Add machine-readable guardrail suggestions (`--suggest-queue-wait-json`/`--suggest-queue-wait-quiet`) | Gate scripts and CI should consume recommendations without parsing human prose; quiet output enables stable key/value ingestion. | Local: `cargo test -p secretive-agent` (pass). | 3b62a9f | high | trusted
  - 2026-02-09 | Prebuild Rust tools in gates + use suggestion helper in `bench_slo_gate.sh` | Running prebuilt binaries avoids Cargo noise interleaved with agent logs and reduces cold-start flake; consuming `--suggest-queue-wait-quiet` aligns tail envelopes to host hardware without bespoke parsing. | Local: `./scripts/check_shell.sh` (pass), `./scripts/bench_slo_gate.sh` (pass). | 657254c, 9ad7387 | high | trusted
+ - 2026-02-10 | Consume bench-emitted queue-wait JSON in gate scripts (remove embedded python + stop scraping agent snapshots directly) | Avoiding ad-hoc snapshot parsing removes a runtime Python dependency, reduces drift between “what the gate enforces” and “what the bench reports”, and keeps verdict inputs in one place. | Local: `./scripts/check_shell.sh` (pass); `SLO_CONCURRENCY=32 SLO_DURATION_SECS=1 ... ./scripts/bench_slo_gate.sh` (pass); `SOAK_DURATION_SECS=1 ... ./scripts/soak_test.sh` (pass). | ac0a4a2 | high | trusted
+ - 2026-02-10 | Remove uninitialized `Vec::set_len` buffer patterns in protocol/client parsing | Clippy correctly flags this as a footgun; eliminating unsafe uninitialized buffers reduces the risk of exposing stale memory and makes `cargo clippy` CI viable. | Local: `cargo test -p secretive-proto` (pass); `cargo test -p secretive-client` (pass); `cargo clippy --workspace --all-targets` (pass). | ac28203 | high | trusted
+ - 2026-02-10 | Add Rust lint workflow (`cargo fmt --check` + `cargo clippy`) on push/PR | Formatting and clippy provide early signal and prevent unsafe regressions from landing silently. | Local: `cargo fmt --all -- --check` (pass); `cargo clippy --workspace --all-targets` (pass). | c05077c | high | trusted
+ - 2026-02-10 | Emit `queue_wait_suggested` in agent metrics snapshots | Dashboards and ops reviews can compare observed queue-wait tails vs the recommended envelope without consulting CI logs or re-running `--suggest-queue-wait`. | Local: `cargo test -p secretive-agent` (pass). | 857a39f | medium | trusted
 
 ## Mistakes And Fixes
 - Template: YYYY-MM-DD | Issue | Root cause | Fix | Prevention rule | Commit | Confidence
@@ -58,15 +66,25 @@
 ## Known Risks
 
 ## Next Prioritized Tasks
- - Emit suggested queue-wait guardrails (tail_ns/ratio + profile) in agent metrics snapshots so dashboards can compare observed vs recommended envelopes without consulting CI logs.
- - Add Rust fmt/clippy CI on `push`/`pull_request` (`cargo fmt --check`, optional `cargo clippy`) for earlier signal on style/lint drift.
- - Prefer bench-provided `queue_wait` JSON in gate scripts (avoid parsing metrics snapshots with embedded python; keep verdict logic in one place).
+ - Add an explicit `secretive-bench` JSON schema note/versioned doc (fields + meaning) so dashboards can ingest `meta.schema_version` changes safely.
+ - Add an explicit “approval/confirm” UX roadmap item for the Rust agent (parity with `ssh-add -c` confirmation and password-manager agent approvals) and sketch a minimal cross-platform mechanism.
+ - Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path.
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
  - 2026-02-09 | `cargo test -p secretive-bench` | `8 passed` | pass
  - 2026-02-09 | `./scripts/check_shell.sh` | `checked 14 script(s)` | pass
  - 2026-02-09 | `./scripts/repo_sanity.sh` | `[repo-sanity] ok` | pass
+ - 2026-02-10 | `./scripts/check_shell.sh` | `checked 14 script(s)` | pass
+ - 2026-02-10 | `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=32 SLO_DURATION_SECS=1 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` | `slo gate passed` | pass
+ - 2026-02-10 | `AGENT_STARTUP_TIMEOUT_SECS=90 SOAK_DURATION_SECS=1 SOAK_CONCURRENCY=16 SOAK_MIN_RPS=0 SOAK_MAX_FAILURE_RATE=1 ./scripts/soak_test.sh` | `soak passed` | pass
+ - 2026-02-10 | `cargo fmt --all -- --check` | `ok` | pass
+ - 2026-02-10 | `cargo clippy --workspace --all-targets` | `Finished dev profile` | pass
+ - 2026-02-10 | `cargo test -p secretive-proto` | `12 passed` | pass
+ - 2026-02-10 | `cargo test -p secretive-client` | `13 passed` | pass
+ - 2026-02-10 | `cargo test -p secretive-bench` | `8 passed` | pass
+ - 2026-02-10 | `cargo test -p secretive-agent` | `28 passed` | pass
+ - 2026-02-10 | `ruby -e "require 'yaml'; YAML.load_file('.github/workflows/rust-lint.yml')"` | `ok` | pass
  - 2026-02-09 | `xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme PackageTests test` | `TEST SUCCEEDED` | pass
  - 2026-02-09 | `xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme Secretive -configuration Debug build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=` | `BUILD SUCCEEDED` | pass
  - 2026-02-09 | `AGENT_STARTUP_TIMEOUT_SECS=90 ./scripts/bench_smoke_gate.sh` | `bench smoke gate passed` | pass

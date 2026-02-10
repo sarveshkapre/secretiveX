@@ -7,13 +7,15 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] Emit the recommended queue-wait guardrail in metrics snapshots (for example, `suggested_tail_ns`) so dashboards can compare observed vs recommended envelopes in real time.
-- [ ] Prefer bench-provided `queue_wait` JSON in gate scripts (avoid parsing metrics snapshots with embedded python; keep verdict logic in one place) (scripts/bench_slo_gate.sh, scripts/soak_test.sh).
-- [ ] Add Rust formatting/lint CI on `push`/`pull_request` (`cargo fmt --check`, optional `cargo clippy`) to catch drift earlier (.github/workflows/*).
-- [ ] Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path (README.md, packaging/*).
-- [ ] Add an explicit `secretive-bench` JSON schema note/versioned doc (fields + meaning) so dashboards can ingest `schema_version` changes safely (docs/RUST_BENCH.md).
+- [ ] Add an explicit `secretive-bench` JSON schema note/versioned doc (fields + meaning) so dashboards can ingest `meta.schema_version` changes safely (`docs/RUST_BENCH.md`).
+- [ ] Add an explicit “approval/confirm” UX roadmap item for the Rust agent (parity with `ssh-add -c` confirmation and password-manager agent approvals) and sketch a minimal cross-platform mechanism (CLI-only first, UI later) (`docs/PRODUCT_FEATURES.md`, `docs/ARCHITECTURE.md`).
+- [ ] Publish a Homebrew formula (tap or core submission) and document `brew install` as a first-class install path (`README.md`, `packaging/*`).
 
 ## Implemented
+- 2026-02-10: Gate scripts now consume bench-emitted `queue_wait` JSON (avg/max + tail mode) instead of parsing agent metrics snapshots with embedded python; this removes a runtime Python dependency and keeps verdict inputs in one place (`scripts/bench_slo_gate.sh`, `scripts/soak_test.sh`) (ac0a4a2, `./scripts/check_shell.sh`, `SLO_CONCURRENCY=32 SLO_DURATION_SECS=1 ... ./scripts/bench_slo_gate.sh`, `SOAK_DURATION_SECS=1 ... ./scripts/soak_test.sh`).
+- 2026-02-10: Removed `Vec::set_len` uninitialized-buffer patterns in protocol/client parsing so `cargo clippy` passes and we don’t risk exposing uninitialized bytes (`crates/secretive-proto/src/codec.rs`, `crates/secretive-client/src/main.rs`) (ac28203, `cargo test -p secretive-proto`, `cargo test -p secretive-client`, `cargo clippy --workspace --all-targets`).
+- 2026-02-10: Added `Rust Lint` workflow running `cargo fmt --check` and `cargo clippy` on push/PR (`.github/workflows/rust-lint.yml`) (c05077c, `ruby -e "require 'yaml'; YAML.load_file(...)"`).
+- 2026-02-10: Agent metrics snapshots now include `queue_wait_suggested` (recommended tail_ns/tail_ratio + profile label) so dashboards can compare observed vs recommended envelopes (`crates/secretive-agent/src/main.rs`, `docs/SLO.md`) (857a39f, `cargo test -p secretive-agent`).
 - 2026-02-09: `secretive-bench` now counts request-level failures (agent `Failure`, timeouts, connect/write/EOF issues) and exposes a failure breakdown (`request_failures`, `request_timeouts`, `connect_failures`, `worker_failures`) in JSON/CSV (`meta.schema_version=3`) so `ok=0` no longer hides agent-side failures (46790ae, `cargo test -p secretive-bench`).
 - 2026-02-09: Added machine-readable / script-friendly outputs for queue-wait guardrail suggestions (`secretive-agent --suggest-queue-wait-json` and `--suggest-queue-wait-quiet`) and documented them (3b62a9f, `cargo test -p secretive-agent`).
 - 2026-02-09: Gate scripts now prebuild and run Rust binaries directly (agent/client/bench) and readiness probing prefers `SECRETIVE_CLIENT_BIN`, reducing compile noise and flake risk in CI logs (657254c, 9ad7387, `./scripts/check_shell.sh`, `./scripts/bench_smoke_gate.sh`, `./scripts/bench_slo_gate.sh`).
