@@ -3762,6 +3762,61 @@ mod tests {
         assert!(buffer.is_empty());
     }
 
+    #[tokio::test]
+    async fn read_request_does_not_consume_next_frame() {
+        let req1 = secretive_proto::AgentRequest::SignRequest {
+            key_blob: vec![1, 2, 3],
+            data: vec![4, 5, 6],
+            flags: 7,
+        };
+        let req2 = secretive_proto::AgentRequest::SignRequest {
+            key_blob: vec![9, 8, 7],
+            data: vec![6, 5, 4],
+            flags: 3,
+        };
+        let frame1 = secretive_proto::encode_request_frame(&req1).expect("frame1");
+        let frame2 = secretive_proto::encode_request_frame(&req2).expect("frame2");
+        let mut combined = Vec::with_capacity(frame1.len() + frame2.len());
+        combined.extend_from_slice(&frame1);
+        combined.extend_from_slice(&frame2);
+
+        let (mut client, mut server) = tokio::io::duplex(512);
+        client.write_all(&combined).await.expect("write");
+
+        let mut buffer = BytesMut::with_capacity(128);
+        let parsed1 = read_request_with_buffer(&mut server, &mut buffer)
+            .await
+            .expect("read1");
+        match parsed1 {
+            ParsedRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            } => {
+                assert_eq!(key_blob.as_ref(), [1, 2, 3]);
+                assert_eq!(data.as_ref(), [4, 5, 6]);
+                assert_eq!(flags, 7);
+            }
+            other => panic!("unexpected request1: {other:?}"),
+        }
+
+        let parsed2 = read_request_with_buffer(&mut server, &mut buffer)
+            .await
+            .expect("read2");
+        match parsed2 {
+            ParsedRequest::SignRequest {
+                key_blob,
+                data,
+                flags,
+            } => {
+                assert_eq!(key_blob.as_ref(), [9, 8, 7]);
+                assert_eq!(data.as_ref(), [6, 5, 4]);
+                assert_eq!(flags, 3);
+            }
+            other => panic!("unexpected request2: {other:?}"),
+        }
+    }
+
     #[test]
     fn validate_config_validates_secure_enclave_store_for_platform() {
         let mut config = empty_config();
