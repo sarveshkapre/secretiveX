@@ -3044,13 +3044,15 @@ where
     }
     buffer.clear();
     buffer.reserve(len);
-    unsafe {
-        buffer.set_len(len);
+    while buffer.len() < len {
+        let n = reader
+            .read_buf(buffer)
+            .await
+            .map_err(|_| ProtoError::UnexpectedEof)?;
+        if n == 0 {
+            return Err(ProtoError::UnexpectedEof);
+        }
     }
-    reader
-        .read_exact(&mut buffer[..])
-        .await
-        .map_err(|_| ProtoError::UnexpectedEof)?;
     // Move the frame out without cloning to avoid a full copy per request.
     let frame = buffer.split().freeze();
     decode_request_frame(&frame)
