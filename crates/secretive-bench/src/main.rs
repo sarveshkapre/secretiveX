@@ -169,9 +169,6 @@ async fn main() -> Result<()> {
         let reconnect = args.reconnect;
         let list_only = args.list_only;
         let randomize_payload = args.randomize_payload;
-        let deadline = deadline.clone();
-        let response_timeout = response_timeout;
-        let latency_samples_per_worker = latency_samples_per_worker;
         let worker_start_delay_ms =
             worker_start_delay_ms(worker_id, args.concurrency, args.worker_start_spread_ms);
         handles.push(tokio::spawn(async move {
@@ -843,6 +840,7 @@ fn histogram_tail_ratio(
     Some((tail, total))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_worker(
     worker_id: usize,
     socket_path: Arc<PathBuf>,
@@ -1136,7 +1134,7 @@ async fn run_list_worker(
                 connect_failures += 1;
                 continue;
             };
-            if s.write_all(&list_frame).await.is_err() {
+            if s.write_all(list_frame).await.is_err() {
                 connect_failures += 1;
                 continue;
             }
@@ -1150,7 +1148,7 @@ async fn run_list_worker(
                 }
             }
             if let Some(s) = stream.as_mut() {
-                if s.write_all(&list_frame).await.is_err() {
+                if s.write_all(list_frame).await.is_err() {
                     connect_failures += 1;
                     stream = None;
                     continue;
@@ -1172,7 +1170,7 @@ async fn run_list_worker(
             } else {
                 None
             };
-            if $s.write_all(&list_frame).await.is_err() {
+            if $s.write_all(list_frame).await.is_err() {
                 connect_failures += 1;
                 false
             } else {
@@ -1517,6 +1515,63 @@ fn parse_flags(value: &str) -> Option<u32> {
     None
 }
 
+#[cfg(unix)]
+async fn connect(socket_path: &Path) -> std::io::Result<AgentStream> {
+    AgentStream::connect(socket_path).await
+}
+
+#[cfg(windows)]
+async fn connect(socket_path: &Path) -> std::io::Result<AgentStream> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+    ClientOptions::new().open(socket_path.to_string_lossy().as_ref())
+}
+
+#[cfg(unix)]
+fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
+    if let Some(path) = override_path {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("SECRETIVE_SOCK") {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("SSH_AUTH_SOCK") {
+        return PathBuf::from(path);
+    }
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime).join("secretive").join("agent.sock");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".secretive").join("agent.sock")
+}
+
+#[cfg(windows)]
+fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
+    if let Some(path) = override_path {
+        return PathBuf::from(normalize_pipe_name(path));
+    }
+    if let Ok(path) = std::env::var("SECRETIVE_PIPE") {
+        return PathBuf::from(normalize_pipe_name(path));
+    }
+    PathBuf::from(r"\\.\pipe\secretive-agent")
+}
+
+#[cfg(windows)]
+fn normalize_pipe_name(value: String) -> String {
+    const PREFIX: &str = r"\\.\pipe\";
+    if value.starts_with(PREFIX) {
+        return value;
+    }
+    let trimmed = value.trim_start_matches('\\').trim_start_matches('/');
+    let trimmed = trimmed
+        .strip_prefix("pipe\\")
+        .or_else(|| trimmed.strip_prefix("pipe/"))
+        .unwrap_or(trimmed);
+    let mut out = String::with_capacity(PREFIX.len() + trimmed.len());
+    out.push_str(PREFIX);
+    out.push_str(trimmed);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1669,61 +1724,4 @@ mod tests {
         assert_eq!(result.0, 15);
         assert_eq!(result.1, 15);
     }
-}
-
-#[cfg(unix)]
-async fn connect(socket_path: &Path) -> std::io::Result<AgentStream> {
-    AgentStream::connect(socket_path).await
-}
-
-#[cfg(windows)]
-async fn connect(socket_path: &Path) -> std::io::Result<AgentStream> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-    ClientOptions::new().open(socket_path.to_string_lossy().as_ref())
-}
-
-#[cfg(unix)]
-fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
-    if let Some(path) = override_path {
-        return PathBuf::from(path);
-    }
-    if let Ok(path) = std::env::var("SECRETIVE_SOCK") {
-        return PathBuf::from(path);
-    }
-    if let Ok(path) = std::env::var("SSH_AUTH_SOCK") {
-        return PathBuf::from(path);
-    }
-    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime).join("secretive").join("agent.sock");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".secretive").join("agent.sock")
-}
-
-#[cfg(windows)]
-fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
-    if let Some(path) = override_path {
-        return PathBuf::from(normalize_pipe_name(path));
-    }
-    if let Ok(path) = std::env::var("SECRETIVE_PIPE") {
-        return PathBuf::from(normalize_pipe_name(path));
-    }
-    PathBuf::from(r"\\.\pipe\secretive-agent")
-}
-
-#[cfg(windows)]
-fn normalize_pipe_name(value: String) -> String {
-    const PREFIX: &str = r"\\.\pipe\";
-    if value.starts_with(PREFIX) {
-        return value;
-    }
-    let trimmed = value.trim_start_matches('\\').trim_start_matches('/');
-    let trimmed = trimmed
-        .strip_prefix("pipe\\")
-        .or_else(|| trimmed.strip_prefix("pipe/"))
-        .unwrap_or(trimmed);
-    let mut out = String::with_capacity(PREFIX.len() + trimmed.len());
-    out.push_str(PREFIX);
-    out.push_str(trimmed);
-    out
 }

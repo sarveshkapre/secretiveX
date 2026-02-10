@@ -73,17 +73,15 @@ async fn main() -> Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
 
     if args.list {
-        list_identities(
-            &mut stream,
-            &mut buffer,
-            args.show_openssh,
-            args.json,
-            args.json_compact,
-            args.raw,
-            args.filter.as_deref(),
+        let opts = ListIdentitiesOptions {
+            show_openssh: args.show_openssh,
+            json_output: args.json,
+            json_compact: args.json_compact,
+            raw_output: args.raw,
+            filter: args.filter.as_deref(),
             response_timeout,
-        )
-        .await?;
+        };
+        list_identities(&mut stream, &mut buffer, opts).await?;
         return Ok(());
     }
 
@@ -163,32 +161,36 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn list_identities<S>(
-    stream: &mut S,
-    buffer: &mut BytesMut,
+struct ListIdentitiesOptions<'a> {
     show_openssh: bool,
     json_output: bool,
     json_compact: bool,
     raw_output: bool,
-    filter: Option<&str>,
+    filter: Option<&'a str>,
     response_timeout: Option<Duration>,
+}
+
+async fn list_identities<S>(
+    stream: &mut S,
+    buffer: &mut BytesMut,
+    opts: ListIdentitiesOptions<'_>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut identities = fetch_identities(stream, buffer, response_timeout).await?;
-    if let Some(filter) = filter {
+    let mut identities = fetch_identities(stream, buffer, opts.response_timeout).await?;
+    if let Some(filter) = opts.filter {
         apply_identity_filter(&mut identities, filter);
     }
 
-    if json_output {
+    if opts.json_output {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
-        if json_compact {
+        if opts.json_compact {
             let mut ser = serde_json::Serializer::new(&mut handle);
             let mut seq = ser.serialize_seq(Some(identities.len()))?;
             for identity in &identities {
-                if raw_output {
+                if opts.raw_output {
                     let item = JsonIdentity {
                         key_blob_hex: hex::encode(&identity.key_blob),
                         comment: &identity.comment,
@@ -203,7 +205,7 @@ where
                     let algorithm = public_key.algorithm();
                     let alg = algorithm.as_str();
                     let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                    let openssh = if show_openssh {
+                    let openssh = if opts.show_openssh {
                         public_key
                             .to_openssh()
                             .ok()
@@ -236,7 +238,7 @@ where
             let mut ser = serde_json::Serializer::pretty(&mut handle);
             let mut seq = ser.serialize_seq(Some(identities.len()))?;
             for identity in &identities {
-                if raw_output {
+                if opts.raw_output {
                     let item = JsonIdentity {
                         key_blob_hex: hex::encode(&identity.key_blob),
                         comment: &identity.comment,
@@ -251,7 +253,7 @@ where
                     let algorithm = public_key.algorithm();
                     let alg = algorithm.as_str();
                     let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256).to_string();
-                    let openssh = if show_openssh {
+                    let openssh = if opts.show_openssh {
                         public_key
                             .to_openssh()
                             .ok()
@@ -285,7 +287,7 @@ where
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
         for identity in identities {
-            if raw_output {
+            if opts.raw_output {
                 writeln!(
                     handle,
                     "{} {}",
@@ -298,7 +300,7 @@ where
                 let algorithm = public_key.algorithm();
                 let alg = algorithm.as_str();
                 let fp = public_key.fingerprint(ssh_key::HashAlg::Sha256);
-                if show_openssh {
+                if opts.show_openssh {
                     if let Ok(ssh) = public_key.to_openssh() {
                         writeln!(
                             handle,
@@ -635,7 +637,7 @@ fn ascii_lowercase_bytes(value: &str) -> Vec<u8> {
 }
 
 fn is_ascii_lowercase(value: &str) -> bool {
-    value.as_bytes().iter().all(|b| !matches!(b, b'A'..=b'Z'))
+    value.as_bytes().iter().all(|b| !b.is_ascii_uppercase())
 }
 
 fn contains_ignore_ascii_case(haystack: &str, needle_lower: &[u8]) -> bool {
@@ -671,7 +673,7 @@ fn contains_ignore_ascii_case(haystack: &str, needle_lower: &[u8]) -> bool {
 
 #[inline]
 fn ascii_lower(byte: u8) -> u8 {
-    if (b'A'..=b'Z').contains(&byte) {
+    if byte.is_ascii_uppercase() {
         byte + 32
     } else {
         byte
@@ -679,12 +681,69 @@ fn ascii_lower(byte: u8) -> u8 {
 }
 
 fn decode_signature_blob(blob: &[u8]) -> Result<Signature> {
-    let mut cursor = &blob[..];
+    let mut cursor = blob;
     let algorithm = read_string_ref(&mut cursor)?;
     let signature = read_string(&mut cursor)?;
     let algorithm = std::str::from_utf8(algorithm)?;
     let signature = Signature::new(ssh_key::Algorithm::new(algorithm)?, signature)?;
     Ok(signature)
+}
+
+#[cfg(unix)]
+async fn connect(socket_path: &Path) -> Result<AgentStream> {
+    Ok(AgentStream::connect(socket_path).await?)
+}
+
+#[cfg(windows)]
+async fn connect(socket_path: &Path) -> Result<AgentStream> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+    Ok(ClientOptions::new().open(socket_path.to_string_lossy().as_ref())?)
+}
+
+#[cfg(unix)]
+fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
+    if let Some(path) = override_path {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("SECRETIVE_SOCK") {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("SSH_AUTH_SOCK") {
+        return PathBuf::from(path);
+    }
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime).join("secretive").join("agent.sock");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".secretive").join("agent.sock")
+}
+
+#[cfg(windows)]
+fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
+    if let Some(path) = override_path {
+        return PathBuf::from(normalize_pipe_name(path));
+    }
+    if let Ok(path) = std::env::var("SECRETIVE_PIPE") {
+        return PathBuf::from(normalize_pipe_name(path));
+    }
+    PathBuf::from(r"\\.\pipe\secretive-agent")
+}
+
+#[cfg(windows)]
+fn normalize_pipe_name(value: String) -> String {
+    const PREFIX: &str = r"\\.\pipe\";
+    if value.starts_with(PREFIX) {
+        return value;
+    }
+    let trimmed = value.trim_start_matches('\\').trim_start_matches('/');
+    let trimmed = trimmed
+        .strip_prefix("pipe\\")
+        .or_else(|| trimmed.strip_prefix("pipe/"))
+        .unwrap_or(trimmed);
+    let mut out = String::with_capacity(PREFIX.len() + trimmed.len());
+    out.push_str(PREFIX);
+    out.push_str(trimmed);
+    out
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1897,61 +1956,4 @@ mod tests {
             queue_wait_percentiles: None,
         }
     }
-}
-
-#[cfg(unix)]
-async fn connect(socket_path: &Path) -> Result<AgentStream> {
-    Ok(AgentStream::connect(socket_path).await?)
-}
-
-#[cfg(windows)]
-async fn connect(socket_path: &Path) -> Result<AgentStream> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-    Ok(ClientOptions::new().open(socket_path.to_string_lossy().as_ref())?)
-}
-
-#[cfg(unix)]
-fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
-    if let Some(path) = override_path {
-        return PathBuf::from(path);
-    }
-    if let Ok(path) = std::env::var("SECRETIVE_SOCK") {
-        return PathBuf::from(path);
-    }
-    if let Ok(path) = std::env::var("SSH_AUTH_SOCK") {
-        return PathBuf::from(path);
-    }
-    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime).join("secretive").join("agent.sock");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".secretive").join("agent.sock")
-}
-
-#[cfg(windows)]
-fn resolve_socket_path(override_path: Option<String>) -> PathBuf {
-    if let Some(path) = override_path {
-        return PathBuf::from(normalize_pipe_name(path));
-    }
-    if let Ok(path) = std::env::var("SECRETIVE_PIPE") {
-        return PathBuf::from(normalize_pipe_name(path));
-    }
-    PathBuf::from(r"\\.\pipe\secretive-agent")
-}
-
-#[cfg(windows)]
-fn normalize_pipe_name(value: String) -> String {
-    const PREFIX: &str = r"\\.\pipe\";
-    if value.starts_with(PREFIX) {
-        return value;
-    }
-    let trimmed = value.trim_start_matches('\\').trim_start_matches('/');
-    let trimmed = trimmed
-        .strip_prefix("pipe\\")
-        .or_else(|| trimmed.strip_prefix("pipe/"))
-        .unwrap_or(trimmed);
-    let mut out = String::with_capacity(PREFIX.len() + trimmed.len());
-    out.push_str(PREFIX);
-    out.push_str(trimmed);
-    out
 }

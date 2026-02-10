@@ -686,7 +686,7 @@ mod tests {
         let mut frame = Vec::with_capacity(4 + payload_len);
         frame.extend_from_slice(&(payload_len as u32).to_be_bytes());
         frame.push(MessageType::Failure as u8);
-        frame.extend(std::iter::repeat(0u8).take(payload_len - 1));
+        frame.extend(std::iter::repeat_n(0u8, payload_len - 1));
 
         let mut cursor = std::io::Cursor::new(frame);
         let mut buffer = BytesMut::new();

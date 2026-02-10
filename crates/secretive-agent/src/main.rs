@@ -29,7 +29,7 @@ use secretive_proto::{
     write_response_with_buffer, AgentResponse, MessageType, ProtoError, MAX_FRAME_LEN,
 };
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 struct Config {
     profile: Option<String>,
     socket_path: Option<String>,
@@ -54,36 +54,6 @@ struct Config {
     identity_cache_ms: Option<u64>,
     idle_timeout_ms: Option<u64>,
     inline_sign: Option<bool>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            profile: None,
-            socket_path: None,
-            socket_backlog: None,
-            key_paths: None,
-            scan_default_dir: None,
-            stores: None,
-            policy: None,
-            max_signers: None,
-            max_connections: None,
-            max_blocking_threads: None,
-            worker_threads: None,
-            watch_files: None,
-            watch_debounce_ms: None,
-            metrics_every: None,
-            metrics_interval_ms: None,
-            metrics_json: None,
-            metrics_output_path: None,
-            audit_requests: None,
-            sign_timeout_ms: None,
-            pid_file: None,
-            identity_cache_ms: None,
-            idle_timeout_ms: None,
-            inline_sign: None,
-        }
-    }
 }
 
 static SIGN_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -2139,7 +2109,7 @@ fn metrics_output_path() -> Option<PathBuf> {
 
 fn note_metrics_write_error(path: &Path, err: &std::io::Error) {
     let errors = METRICS_WRITE_ERRORS.fetch_add(1, Ordering::Relaxed) + 1;
-    if errors == 1 || errors % 100 == 0 {
+    if errors == 1 || errors.is_multiple_of(100) {
         warn!(
             errors,
             path = %path.display(),
@@ -2820,6 +2790,7 @@ impl Drop for PidFileGuard {
 }
 
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 async fn run_unix(
     socket_path: PathBuf,
     socket_backlog: Option<u32>,
@@ -2898,7 +2869,7 @@ async fn run_unix(
                                 Err(_) => {
                                     let rejected =
                                         CONNECTION_REJECTED.fetch_add(1, Ordering::Relaxed) + 1;
-                                    if rejected % 100 == 0 {
+                                    if rejected.is_multiple_of(100) {
                                         warn!(rejected, "connection limit reached");
                                     }
                                     continue;
@@ -2912,9 +2883,6 @@ async fn run_unix(
                         let sign_semaphore = sign_semaphore.clone();
                         let identity_cache = identity_cache.clone();
                         let access_policy = access_policy.clone();
-                        let idle_timeout = idle_timeout;
-                        let inline_sign = inline_sign;
-                        let sign_timeout = sign_timeout;
                         tokio::spawn(async move {
                             let _permit = connection_permit;
                             if let Err(err) =
@@ -3013,7 +2981,7 @@ async fn run_windows(
                         Err(_) => {
                             let rejected =
                                 CONNECTION_REJECTED.fetch_add(1, Ordering::Relaxed) + 1;
-                            if rejected % 100 == 0 {
+                            if rejected.is_multiple_of(100) {
                                 warn!(rejected, "connection limit reached");
                             }
                             continue;
@@ -3026,9 +2994,6 @@ async fn run_windows(
                 let sign_semaphore = sign_semaphore.clone();
                 let identity_cache = identity_cache.clone();
                 let access_policy = access_policy.clone();
-                let idle_timeout = idle_timeout;
-                let inline_sign = inline_sign;
-                let sign_timeout = sign_timeout;
                 CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     let _permit = connection_permit;
@@ -3059,6 +3024,7 @@ async fn run_windows(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection<S>(
     stream: S,
     registry: Arc<KeyStoreRegistry>,
@@ -3297,6 +3263,7 @@ enum ParsedRequest {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_sign_request(
     registry: &Arc<KeyStoreRegistry>,
     key_blob: Bytes,
@@ -3367,7 +3334,7 @@ async fn handle_sign_request(
             }
             Err(_) => {
                 let timeouts = SIGN_TIMEOUTS.fetch_add(1, Ordering::Relaxed) + 1;
-                if timeouts % 100 == 0 {
+                if timeouts.is_multiple_of(100) {
                     warn!(timeouts, "sign timeout");
                 }
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
@@ -3486,7 +3453,7 @@ async fn handle_sign_request(
             if let Some(start) = start {
                 let elapsed = start.elapsed();
                 SIGN_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-                if count % metrics_every == 0 {
+                if count.is_multiple_of(metrics_every) {
                     let max_signers = MAX_SIGNERS.load(Ordering::Relaxed);
                     let snapshot = build_metrics_snapshot(sign_semaphore, max_signers);
                     emit_sign_metrics("interval", &snapshot);
