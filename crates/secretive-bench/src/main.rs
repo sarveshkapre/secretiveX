@@ -1315,7 +1315,13 @@ fn list_request_frame() -> &'static Bytes {
 }
 
 fn parse_args() -> Args {
-    let mut args = std::env::args().skip(1);
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I>(mut args: I) -> Args
+where
+    I: Iterator<Item = String>,
+{
     let mut parsed = Args {
         socket_path: None,
         concurrency: 32,
@@ -1343,6 +1349,7 @@ fn parse_args() -> Args {
         version: false,
         duration_secs: None,
     };
+    let mut warmup_explicitly_set = false;
 
     if let Ok(value) = std::env::var(METRICS_FILE_ENV) {
         if !value.trim().is_empty() {
@@ -1382,6 +1389,7 @@ fn parse_args() -> Args {
             "--warmup" => {
                 if let Some(value) = args.next() {
                     parsed.warmup = value.parse().unwrap_or(parsed.warmup);
+                    warmup_explicitly_set = true;
                 }
             }
             "--payload-size" => {
@@ -1445,6 +1453,11 @@ fn parse_args() -> Args {
         }
     }
 
+    if parsed.duration_secs.is_some() && !warmup_explicitly_set {
+        // Duration runs should spend their budget on measured requests, not hidden warmup work.
+        parsed.warmup = 0;
+    }
+
     normalize_queue_wait_args(&mut parsed);
     parsed
 }
@@ -1468,6 +1481,7 @@ fn print_help() {
     println!("  --latency records request latencies and reports p50/p95/p99/max/avg.");
     println!("  --csv emits a single CSV row (header included by default).");
     println!("  --worker-start-spread-ms staggers worker start over N milliseconds.");
+    println!("  Duration mode defaults warmup to 0 unless --warmup is explicitly set.");
 }
 
 fn normalize_queue_wait_args(args: &mut Args) {
@@ -1576,9 +1590,9 @@ fn normalize_pipe_name(value: String) -> String {
 mod tests {
     use super::{
         choose_queue_wait_percentile, compute_latency_stats, csv_data_row, csv_escape,
-        csv_header_row, histogram_tail_ratio, parse_flags, queue_wait_profile_defaults,
-        worker_start_delay_ms, BenchMetadata, BenchOutput, LatencyStats, QueueWaitPercentileValue,
-        QueueWaitPercentiles, QUEUE_WAIT_BUCKET_BOUNDS,
+        csv_header_row, histogram_tail_ratio, parse_args_from, parse_flags,
+        queue_wait_profile_defaults, worker_start_delay_ms, BenchMetadata, BenchOutput,
+        LatencyStats, QueueWaitPercentileValue, QueueWaitPercentiles, QUEUE_WAIT_BUCKET_BOUNDS,
     };
 
     #[test]
@@ -1688,6 +1702,36 @@ mod tests {
             Some((12_000_000, 0.07))
         );
         assert!(queue_wait_profile_defaults("unknown").is_none());
+    }
+
+    #[test]
+    fn duration_mode_defaults_warmup_to_zero() {
+        let args = parse_args_from(
+            vec![
+                "--concurrency".to_string(),
+                "64".to_string(),
+                "--duration".to_string(),
+                "15".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(args.duration_secs, Some(15));
+        assert_eq!(args.warmup, 0);
+    }
+
+    #[test]
+    fn duration_mode_preserves_explicit_warmup() {
+        let args = parse_args_from(
+            vec![
+                "--duration".to_string(),
+                "15".to_string(),
+                "--warmup".to_string(),
+                "7".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(args.duration_secs, Some(15));
+        assert_eq!(args.warmup, 7);
     }
 
     #[test]

@@ -160,6 +160,8 @@ cargo run -p secretive-bench -- \
 cargo run -p secretive-bench -- --concurrency 200 --duration 30
 ```
 
+Duration runs default to `warmup=0` unless `--warmup` is explicitly provided, so the timed window is spent on measured requests.
+
 ## Response timeout
 
 ```bash
@@ -247,6 +249,7 @@ Optional thresholds:
 - `SLO_QUEUE_WAIT_TAIL_NS` + `SLO_QUEUE_WAIT_TAIL_MAX_RATIO` (defaults `0`): fail if more than the allowed ratio of requests land in histogram buckets whose upper bound is >= the tail threshold. Example: `SLO_QUEUE_WAIT_TAIL_NS=5000000 SLO_QUEUE_WAIT_TAIL_MAX_RATIO=0.05` alerts when >5% of signs wait ≥5ms in the queue.
 - CI jobs set conservative non-zero defaults for queue-wait sanity checks.
 - Leaving both tail knobs unset now auto-selects a guardrail for the chosen profile (`pssh` uses 4ms <=3% tail, `fanout` 6ms <=4%, `balanced` 8ms <=5%, `low-memory` 12ms <=7%). Override the environment variables to customize these values.
+- `SLO_WARMUP` (default `0`) controls pre-measurement warmup requests per worker for SLO gate runs.
 - `AGENT_STARTUP_TIMEOUT_SECS` (default `90`) controls readiness wait for the temporary agent process before the bench run starts.
 
 ## Dedicated 1000-session gate

@@ -6,6 +6,7 @@ AGENT_STARTUP_TIMEOUT_SECS="${AGENT_STARTUP_TIMEOUT_SECS:-90}"
 
 SLO_CONCURRENCY="${SLO_CONCURRENCY:-1000}"
 SLO_DURATION_SECS="${SLO_DURATION_SECS:-20}"
+SLO_WARMUP="${SLO_WARMUP:-0}"
 SLO_PAYLOAD_SIZE="${SLO_PAYLOAD_SIZE:-64}"
 SLO_WORKER_START_SPREAD_MS="${SLO_WORKER_START_SPREAD_MS:-1500}"
 SLO_PROFILE="${SLO_PROFILE:-pssh}"
@@ -150,6 +151,7 @@ agent_pid="$!"
   --reconnect \
   --concurrency "$SLO_CONCURRENCY" \
   --duration "$SLO_DURATION_SECS" \
+  --warmup "$SLO_WARMUP" \
   --payload-size "$SLO_PAYLOAD_SIZE" \
   --worker-start-spread-ms "$SLO_WORKER_START_SPREAD_MS" \
   --fixed \
@@ -322,4 +324,4 @@ if [ -z "$queue_wait_tail_detail" ]; then
   queue_wait_tail_detail="n/a"
 fi
 
-echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a} queue_wait_tail_ratio=${queue_wait_tail_ratio:-n/a} queue_wait_tail_source=${queue_wait_tail_mode:-n/a} queue_wait_tail_detail=$queue_wait_tail_detail"
+echo "slo gate passed: concurrency=$SLO_CONCURRENCY duration=${SLO_DURATION_SECS}s warmup=$SLO_WARMUP spread_ms=$SLO_WORKER_START_SPREAD_MS rps=$rps p95_us=$p95_us failure_rate=$failure_rate queue_wait_avg_ns=${queue_wait_avg_ns:-n/a} queue_wait_max_ns=${queue_wait_max_ns:-n/a} queue_wait_tail_ratio=${queue_wait_tail_ratio:-n/a} queue_wait_tail_source=${queue_wait_tail_mode:-n/a} queue_wait_tail_detail=$queue_wait_tail_detail"
