@@ -76,6 +76,7 @@ Current Rust milestones:
 - CI smoke/gate scripts now share a readiness helper with configurable `AGENT_STARTUP_TIMEOUT_SECS` and startup-log tails for actionable failure diagnostics
 - SLO/soak gates report agent queue-wait metrics (`queue_wait_avg_ns`, `queue_wait_max_ns`)
 - SLO/fanout/soak CI gates enforce conservative queue-wait threshold checks
+- Bench SLO gate fails fast with explicit `attempted=0` diagnostics to separate setup/warmup/config issues from true throughput regressions
 - CI includes long-duration multi-host stress matrix with strict queue-wait SLO envelopes
 - CI includes SoftHSM-backed PKCS#11 list/sign smoke coverage on Linux
 - CI includes Windows named-pipe list/sign smoke coverage

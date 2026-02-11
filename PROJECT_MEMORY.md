@@ -27,7 +27,7 @@
 ## Open Problems
 ## Gap Map
 - Missing: polished “approval UX” parity with password-manager agents (prompts/allowlists/UX), plus broader real-token integration testing for PKCS#11 and Windows ACL hardening validation on real hosts.
-- Weak: CI gate ergonomics (machine-parseable outputs, clear failure diagnostics, flake resistance), reconnect connect-timeout handling, and guardrail diagnostics for zero-attempt bench runs.
+- Weak: CI gate ergonomics (machine-parseable outputs, clear failure diagnostics, flake resistance), reconnect connect-timeout handling, and stale-metrics freshness enforcement in SLO/soak gates.
 - Parity: drop-in SSH agent behavior (Unix socket/named pipe), basic key discovery/signing, and straightforward docs for setup.
 - Differentiator: high-concurrency focus with queue-wait metrics + SLO gating, and macOS Secure Enclave-backed store support.
 
@@ -40,6 +40,14 @@
   - Add reconnect connect-timeout control for bench/gates (impact 4, effort 2, fit 5, diff 3, risk 2, confidence medium)
   - Add explicit `attempted=0` diagnosis path in `bench_slo_gate.sh` output (impact 3, effort 1, fit 4, diff 2, risk 1, confidence medium-high)
   - Add confirm/deny telemetry counters and denial-reason rollups to metrics snapshots (impact 4, effort 3, fit 4, diff 3, risk 2, confidence medium)
+
+## Cycle 2 Session 2026-02-11 Task Scoring
+- Selected (shipped this session):
+  - Refactor `bench_slo_gate.sh` failure handling/parsing paths and add an explicit early `attempted=0` diagnosis branch with actionable warmup/duration/config hints (impact 4, effort 1, fit 5, diff 2, risk 1, confidence high)
+- Not selected (backlog):
+  - Add reconnect connect-timeout control for bench/gates (impact 4, effort 2, fit 5, diff 3, risk 2, confidence medium)
+  - Add confirm/deny telemetry counters and denial-reason rollups to metrics snapshots (impact 4, effort 3, fit 4, diff 3, risk 2, confidence medium)
+  - Add stale-metrics freshness enforcement to `bench_slo_gate.sh` (impact 3, effort 1, fit 4, diff 2, risk 1, confidence medium-high)
 
 ## Cycle 1 Session 2026-02-10 Task Scoring
 - Selected (shipped this session):
@@ -74,6 +82,7 @@
 
 ## Recent Decisions
 - Template: YYYY-MM-DD | Decision | Why | Evidence (tests/logs) | Commit | Confidence (high/medium/low) | Trust (trusted/untrusted)
+- 2026-02-11 | Fail fast with explicit `attempted=0` diagnostics in `bench_slo_gate.sh`, and centralize failure-context printing/parsing helpers | Previous SLO failures could surface as generic throughput/latency misses even when no measured requests were attempted; explicit zero-attempt diagnosis shortens triage and the helper refactor removes duplicated error branches. | Local: `./scripts/check_shell.sh` (pass); `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=16 SLO_DURATION_SECS=1 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` (pass); forced-fail path `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=8 SLO_DURATION_SECS=0 SLO_MIN_RPS=0 SLO_MAX_P95_US=0 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` produced `attempted=0` diagnostic. | 27b008a | high | trusted
 - 2026-02-11 | Default duration-mode benches to zero warmup unless explicitly overridden, and wire SLO gate warmup to explicit env/default (`SLO_WARMUP=0`) | Scheduled fanout gate (`21892142757`) failed with `attempted=0` and `rps=0` because default warmup requests consumed the timed duration budget at 1000 reconnect workers; measurements must prioritize timed workload by default. | Local: `cargo test -p secretive-bench` (pass); `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=64 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` (pass). CI signal (untrusted): run `21892142757` JSON showed `attempted=0` after ~60s elapsed. | 7d73122 | high | trusted
  - 2026-02-11 | Compile Secure Enclave helper functions and helper tests only on macOS targets | Linux CI emitted dead-code warnings for Secure Enclave-only helpers; after helper gating, Linux clippy caught unresolved imports from non-mac test builds, so tests needed matching target gates. | Local: `cargo test -p secretive-core` (pass); `cargo clippy --workspace --all-targets` (pass). CI signal (untrusted): Rust Lint run `21894477861` failed before test-gate follow-up. | 3301e2d, e08a78d | high | trusted
  - 2026-02-09 | Disable `sign_timeout_ms` in synthetic gate-generated agent configs (`bench_*`/`soak_test`) | The `pssh` profile’s default `sign_timeout_ms` can turn high fan-out reconnect benchmarks into “0 ok requests” runs on slower/contended hosts, which then produces missing latency stats and misleading gate failures. Gates should measure queue wait/latency directly instead of failing early on internal timeouts. | Local: `SLO_CONCURRENCY=64 SLO_DURATION_SECS=3 ... ./scripts/bench_slo_gate.sh` (pass). CI signal (untrusted): Rust SLO Gate run `21812678088` failed with “failed to parse bench output” after `ok=0` produced no `p95_us`. | f877d58 | high | trusted
@@ -104,13 +113,16 @@
 
 ## Next Prioritized Tasks
  - Harden reconnect fan-out benches with an optional connect-timeout knob so stalls surface as explicit failures instead of long hangs.
- - Improve SLO gate diagnostics to flag `attempted=0` as a likely setup/warmup/config issue before reporting throughput failures.
  - Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
  - Add local/CI smoke coverage for duration-mode reconnect benches with 0 warmup to prevent fanout gate regressions.
+ - Add stale-metrics freshness enforcement to `bench_slo_gate.sh` (matching `secretive-client --metrics-file` freshness behavior).
  - Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
+ - 2026-02-11 | `./scripts/check_shell.sh` | `checked 17 script(s)` | pass
+ - 2026-02-11 | `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=16 SLO_DURATION_SECS=1 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` | `slo gate passed` | pass
+ - 2026-02-11 | `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=8 SLO_DURATION_SECS=0 SLO_MIN_RPS=0 SLO_MAX_P95_US=0 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` | `SLO failure: benchmark attempted 0 requests ...` (expected fail path for diagnostics) | pass
  - 2026-02-11 | `cargo fmt --all -- --check` | `ok` | pass
  - 2026-02-11 | `cargo test -p secretive-bench` | `10 passed` | pass
  - 2026-02-11 | `cargo test -p secretive-core` | `6 passed` | pass

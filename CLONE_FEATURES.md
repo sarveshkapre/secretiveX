@@ -8,7 +8,7 @@
 
 ## Candidate Features To Do
 - [ ] Harden reconnect fan-out benches with an optional connect-timeout knob so stalls surface as explicit failures instead of long hangs.
-- [ ] Improve SLO gate diagnostics to flag `attempted=0` as a likely setup/warmup/config issue before reporting throughput failures.
+- [x] Improve SLO gate diagnostics to flag `attempted=0` as a likely setup/warmup/config issue before reporting throughput failures.
 - [ ] Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
 - [ ] Add local/CI smoke coverage for duration-mode reconnect benches with 0 warmup to prevent future fanout gate regressions.
 - [ ] Add a strict JSON schema validation step for `secretive-bench` outputs used by gate scripts.
@@ -21,6 +21,7 @@
 - [ ] Add a metrics compatibility policy test to prevent accidental schema regressions across `meta.schema_version` changes.
 
 ## Implemented
+- 2026-02-11: Refactored `bench_slo_gate.sh` failure handling into shared helpers and added an explicit early `attempted=0` SLO failure diagnostic with warmup/duration/config guidance before throughput checks (`scripts/bench_slo_gate.sh`) (27b008a, `./scripts/check_shell.sh`, `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=16 SLO_DURATION_SECS=1 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh`, `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=8 SLO_DURATION_SECS=0 SLO_MIN_RPS=0 SLO_MAX_P95_US=0 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` expected fail with `attempted=0` diagnostic).
 - 2026-02-11: Fixed duration-mode benchmark warmup semantics by defaulting `secretive-bench --duration` runs to `warmup=0` unless `--warmup` is explicitly set, added parser regression tests for both default and override behavior, and documented the behavior in bench docs (`crates/secretive-bench/src/main.rs`, `scripts/bench_slo_gate.sh`, `docs/RUST_BENCH.md`) (7d73122, `cargo test -p secretive-bench`, `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=64 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh`).
 - 2026-02-11: Reduced CI warning noise by compiling Secure Enclave helper functions only on macOS targets and aligned helper tests with the same target gating to keep Linux clippy green (`crates/secretive-core/src/secure_enclave_store.rs`) (3301e2d, e08a78d, `cargo test -p secretive-core`, `cargo clippy --workspace --all-targets`).
 - 2026-02-10: Added OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and documented security/perf tradeoffs (`scripts/confirm_prompt_osascript.sh`, `scripts/confirm_prompt_linux.sh`, `scripts/confirm_prompt_windows.ps1`, `docs/RUST_CONFIG.md`).
