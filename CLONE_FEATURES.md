@@ -7,10 +7,22 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
+- [ ] Harden reconnect fan-out benches with an optional connect-timeout knob so stalls surface as explicit failures instead of long hangs.
+- [ ] Improve SLO gate diagnostics to flag `attempted=0` as a likely setup/warmup/config issue before reporting throughput failures.
 - [ ] Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
+- [ ] Add local/CI smoke coverage for duration-mode reconnect benches with 0 warmup to prevent future fanout gate regressions.
+- [ ] Add a strict JSON schema validation step for `secretive-bench` outputs used by gate scripts.
+- [ ] Add stale-metrics freshness enforcement to `bench_slo_gate.sh` (matching `secretive-client --metrics-file` freshness checks).
+- [ ] Add a bounded failure-budget trend report in gate scripts (compare current failure rate vs previous artifact when available).
+- [ ] Add PKCS#11 real-token integration runbook + host prerequisites and wire an opt-in CI workflow for self-hosted hardware.
+- [ ] Add Windows named-pipe ACL validation checklist and executable verification script for real-host runs.
 - [ ] Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
+- [ ] Add a compact `CHANGELOG.md` scaffold and release-note automation check to align with `docs/RELEASE_POLICY.md`.
+- [ ] Add a metrics compatibility policy test to prevent accidental schema regressions across `meta.schema_version` changes.
 
 ## Implemented
+- 2026-02-11: Fixed duration-mode benchmark warmup semantics by defaulting `secretive-bench --duration` runs to `warmup=0` unless `--warmup` is explicitly set, added parser regression tests for both default and override behavior, and documented the behavior in bench docs (`crates/secretive-bench/src/main.rs`, `scripts/bench_slo_gate.sh`, `docs/RUST_BENCH.md`) (7d73122, `cargo test -p secretive-bench`, `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=64 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh`).
+- 2026-02-11: Reduced CI warning noise by compiling Secure Enclave helper functions only on macOS targets (`crates/secretive-core/src/secure_enclave_store.rs`) (3301e2d, `cargo test -p secretive-core`, `cargo clippy --workspace --all-targets`).
 - 2026-02-10: Added OS-specific “approval prompt” helper examples for `policy.confirm_command` (macOS `osascript`, Linux `zenity`/`kdialog`, Windows PowerShell) and documented security/perf tradeoffs (`scripts/confirm_prompt_osascript.sh`, `scripts/confirm_prompt_linux.sh`, `scripts/confirm_prompt_windows.ps1`, `docs/RUST_CONFIG.md`).
 - 2026-02-10: Removed unsafe `BytesMut::set_len` usage in the agent request-reading path (read exact frames via `resize(len, 0)` + `read_exact`) and added a regression test to ensure one read does not consume the next frame (`crates/secretive-agent/src/main.rs`) (34e83c5, 32e1511, 67ed34c, `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh`).
 - 2026-02-10: Added `policy.confirm_command` (timeout + optional per-key cache) so the Rust agent can support `ssh-add -c`-like confirmations via an external command hook, and updated roadmap/architecture/config docs (`crates/secretive-agent/src/main.rs`, `Cargo.toml`, `docs/RUST_CONFIG.md`, `docs/PRODUCT_FEATURES.md`, `docs/ARCHITECTURE.md`) (7820b4c, `cargo test -p secretive-agent`, local confirm deny/allow smoke via `secretive-client --sign`).
@@ -52,6 +64,7 @@
 - 2026-02-08: `secretive-bench` records queue-wait guardrails/percentiles directly in its JSON (CLI/env flags + docs + tests) so dashboards can ingest the exact thresholds applied during SLO runs (crates/secretive-bench/src/main.rs, docs/RUST_BENCH.md, docs/SLO.md, scripts/bench_slo_gate.sh, scripts/soak_test.sh, cargo test -p secretive-bench).
 
 ## Insights
+- Duration-based reconnect benches are vulnerable to hidden default warmup costs at high concurrency; explicit `SLO_WARMUP=0` plus duration-aware bench defaults prevent false-zero throughput failures (`attempted=0`) in fanout gates.
 - Most recent CI failures across OpenSSH/bench/regression/PKCS11 gates shared the same signature (`agent failed to become ready`) and were caused by short readiness windows rather than functional regressions in agent behavior.
 - A shared readiness helper is materially better than copy-pasted loops: one timeout knob, one diagnostics format, and consistent process-liveness handling across all gates.
 - Scheduled macOS workflows need a “no secrets” fast-path: attempting code signing/notarization on scheduled runners without configured secrets is noise; skipping cleanly keeps the pipeline green while still providing unsigned artifacts for inspection.

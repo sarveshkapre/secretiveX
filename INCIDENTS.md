@@ -12,6 +12,16 @@
 - Confidence
 
 ## Entries
+- Date: 2026-02-11
+- Trigger: Scheduled GitHub Actions `Rust Fanout 1000 Gate` failed (run `21892142757`) with `SLO failure: throughput below minimum (rps=0.0 min=20)` and bench JSON `attempted=0`.
+- Impact: Scheduled high-fanout CI signal was red and did not validate reconnect throughput/latency as intended.
+- Root Cause: `secretive-bench` duration-mode runs inherited default `--warmup 10`; warmup executes before the timed loop and is excluded from counters. At 1000 reconnect workers, warmup consumed the entire 15-second window, so timed workload recorded zero attempts.
+- Fix: Made duration-mode benchmarks default to `warmup=0` unless `--warmup` is explicitly passed, added parser regression tests for default and override behavior, and set `bench_slo_gate.sh` default `SLO_WARMUP=0` with explicit pass-through.
+- Prevention Rule: Duration-based CI gates must set warmup explicitly and benchmark argument parsing must have tests for default-vs-override semantics to avoid hidden pre-measurement work.
+- Evidence: CI run `21892142757` (untrusted external log); local `cargo test -p secretive-bench` + `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=64 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` (pass).
+- Commit: 7d73122
+- Confidence: high
+
 - Date: 2026-02-09
 - Trigger: Scheduled GitHub Actions `Rust SLO Gate` failed (run `21812678088`) with `failed to parse bench output`.
 - Impact: CI gate red; no SLO signal for reconnect fan-out workloads.

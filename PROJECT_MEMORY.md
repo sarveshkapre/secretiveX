@@ -19,13 +19,27 @@
 - 2026-02-10 (untrusted): A pragmatic cross-platform “confirm” baseline is an external prompt/approval helper: agent calls out to a helper and gates signing on its exit code.
   - GnuPG `gpg-agent` options around confirmations/constraints are a common reference point for SSH-agent confirmation workflows. Source: https://www.gnupg.org/documentation/manuals/gnupg/Agent-Options.html
   - OpenSSH confirms via `ssh-add -c` constraints (agent-side confirmation behavior). Source: https://man.openbsd.org/ssh-add
+- 2026-02-11 (untrusted): Competitive SSH workflow tools increasingly emphasize short-lived credentials/certs and explicit automation controls, which raises expectations for predictable failure semantics and deterministic benchmark windows in agent tooling.
+  - Teleport Machine ID: workload identity with short-lived SSH/X.509/JWT credentials. Source: https://goteleport.com/docs/machine-workload-identity/machine-id/
+  - Smallstep SSH certificate workflows: host/user cert issuance patterns for SSH access at scale. Source: https://smallstep.com/docs/ssh/
+  - 1Password SSH agent: cross-platform `SSH_AUTH_SOCK`-style UX remains a mainstream baseline for agent ergonomics. Source: https://developer.1password.com/docs/ssh/agent/
 
 ## Open Problems
 ## Gap Map
 - Missing: polished “approval UX” parity with password-manager agents (prompts/allowlists/UX), plus broader real-token integration testing for PKCS#11 and Windows ACL hardening validation on real hosts.
-- Weak: CI gate ergonomics (machine-parseable outputs, clear failure diagnostics, flake resistance) and semantics alignment between bench JSON fields and gate scripts.
+- Weak: CI gate ergonomics (machine-parseable outputs, clear failure diagnostics, flake resistance), reconnect connect-timeout handling, and guardrail diagnostics for zero-attempt bench runs.
 - Parity: drop-in SSH agent behavior (Unix socket/named pipe), basic key discovery/signing, and straightforward docs for setup.
 - Differentiator: high-concurrency focus with queue-wait metrics + SLO gating, and macOS Secure Enclave-backed store support.
+
+## Cycle 1 Session 2026-02-11 Task Scoring
+- Selected (shipped this session):
+  - Fix duration-mode warmup semantics in `secretive-bench` and SLO gate defaults so high-fanout duration runs measure real workload instead of consuming budget in warmup (impact 5, effort 2, fit 5, diff 3, risk 2, confidence high)
+  - Add regression tests for duration-mode warmup default/override parsing behavior (impact 4, effort 1, fit 5, diff 2, risk 1, confidence high)
+  - Remove non-macOS Secure Enclave helper warning noise via target-gated compilation (impact 2, effort 1, fit 4, diff 1, risk 1, confidence high)
+- Not selected (backlog):
+  - Add reconnect connect-timeout control for bench/gates (impact 4, effort 2, fit 5, diff 3, risk 2, confidence medium)
+  - Add explicit `attempted=0` diagnosis path in `bench_slo_gate.sh` output (impact 3, effort 1, fit 4, diff 2, risk 1, confidence medium-high)
+  - Add confirm/deny telemetry counters and denial-reason rollups to metrics snapshots (impact 4, effort 3, fit 4, diff 3, risk 2, confidence medium)
 
 ## Cycle 1 Session 2026-02-10 Task Scoring
 - Selected (shipped this session):
@@ -60,6 +74,8 @@
 
 ## Recent Decisions
 - Template: YYYY-MM-DD | Decision | Why | Evidence (tests/logs) | Commit | Confidence (high/medium/low) | Trust (trusted/untrusted)
+ - 2026-02-11 | Default duration-mode benches to zero warmup unless explicitly overridden, and wire SLO gate warmup to explicit env/default (`SLO_WARMUP=0`) | Scheduled fanout gate (`21892142757`) failed with `attempted=0` and `rps=0` because default warmup requests consumed the timed duration budget at 1000 reconnect workers; measurements must prioritize timed workload by default. | Local: `cargo test -p secretive-bench` (pass); `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=64 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` (pass). CI signal (untrusted): run `21892142757` JSON showed `attempted=0` after ~60s elapsed. | 7d73122 | high | trusted
+ - 2026-02-11 | Compile Secure Enclave helper functions only on macOS targets | Linux CI repeatedly emitted dead-code warnings for Secure Enclave-only helper functions; gating by target keeps logs actionable and prevents warning fatigue. | Local: `cargo test -p secretive-core` (pass); `cargo clippy --workspace --all-targets` (pass). | 3301e2d | high | trusted
  - 2026-02-09 | Disable `sign_timeout_ms` in synthetic gate-generated agent configs (`bench_*`/`soak_test`) | The `pssh` profile’s default `sign_timeout_ms` can turn high fan-out reconnect benchmarks into “0 ok requests” runs on slower/contended hosts, which then produces missing latency stats and misleading gate failures. Gates should measure queue wait/latency directly instead of failing early on internal timeouts. | Local: `SLO_CONCURRENCY=64 SLO_DURATION_SECS=3 ... ./scripts/bench_slo_gate.sh` (pass). CI signal (untrusted): Rust SLO Gate run `21812678088` failed with “failed to parse bench output” after `ok=0` produced no `p95_us`. | f877d58 | high | trusted
  - 2026-02-09 | Keep `secretive-bench` JSON stdout clean by routing logs to stderr | Gate scripts and tooling depend on `--json-compact` being machine-parseable; logs on stdout make parsing brittle and hide the real failure mode. | Local: captured `secretive-bench --json-compact` stdout to a file while forcing worker errors; file contained only JSON and no `secretive_bench` log lines. | f877d58 | high | trusted
  - 2026-02-09 | Make macOS workflows resilient when signing secrets are absent, and generate `Secretive.zip` locally | Scheduled Nightly runs should stay green even when signing/notarization secrets aren’t configured; local zip removes a brittle “upload then curl-download” dependency and ensures the notarization artifact is exactly what was built. | Local: `ruby -e "require 'yaml'; YAML.load_file(...)"` (pass); `./scripts/check_shell.sh` (pass). CI signal (untrusted): Nightly run `21817537420` failed with missing profiles/certs before this change. | b65be6a, 33332a9 | high | trusted
@@ -80,16 +96,26 @@
 
 ## Mistakes And Fixes
 - Template: YYYY-MM-DD | Issue | Root cause | Fix | Prevention rule | Commit | Confidence
+ - 2026-02-11 | Scheduled `Rust Fanout 1000 Gate` failed (run `21892142757`) with `attempted=0` and `rps=0` despite healthy queue-wait metrics | Duration-mode benches inherited default warmup (`10`) and performed that warmup before timed loops; at 1000 reconnect workers the warmup consumed the full 15s duration budget, leaving no measured attempts. | Changed `secretive-bench` parsing so duration runs default to `warmup=0` unless `--warmup` is explicitly set; added parser regression tests and set `SLO_WARMUP` default to `0` in `bench_slo_gate.sh`. | For duration-based gates, never rely on hidden warmup defaults; require explicit warmup configuration and test arg-parsing semantics for default-vs-override behavior. | 7d73122 | high
  - 2026-02-10 | CI `Rust Bench Smoke` failed with reconnect `connect_failures` | Agent framed read path used buffered reads that could overrun the declared frame length and consume bytes from the next request, desynchronizing the protocol stream under fan-out. | Read exactly `len` bytes (`resize` + `read_exact`) and add a regression test that writes two frames back-to-back and asserts both parse. | Never use buffered reads for framed protocols without bounding reads to remaining length; add multi-frame read tests to catch over-read regressions. | 32e1511, 67ed34c | high
 
 ## Known Risks
 
 ## Next Prioritized Tasks
+ - Harden reconnect fan-out benches with an optional connect-timeout knob so stalls surface as explicit failures instead of long hangs.
+ - Improve SLO gate diagnostics to flag `attempted=0` as a likely setup/warmup/config issue before reporting throughput failures.
  - Add confirm/deny telemetry (counters + audit outcomes) to metrics snapshots so dashboards can see prompt rates and denial reasons.
+ - Add local/CI smoke coverage for duration-mode reconnect benches with 0 warmup to prevent fanout gate regressions.
  - Cut a tagged Rust CLI release and extend the Homebrew formula with a stable `url` + `sha256` (keep `head` for dev installs).
 
 ## Verification Evidence
 - Template: YYYY-MM-DD | Command | Key output | Status (pass/fail)
+ - 2026-02-11 | `cargo fmt --all -- --check` | `ok` | pass
+ - 2026-02-11 | `cargo test -p secretive-bench` | `10 passed` | pass
+ - 2026-02-11 | `cargo test -p secretive-core` | `6 passed` | pass
+ - 2026-02-11 | `./scripts/check_shell.sh` | `checked 17 script(s)` | pass
+ - 2026-02-11 | `AGENT_STARTUP_TIMEOUT_SECS=90 SLO_CONCURRENCY=64 SLO_DURATION_SECS=2 SLO_MIN_RPS=1 SLO_MAX_P95_US=10000000 SLO_MAX_FAILURE_RATE=1 ./scripts/bench_slo_gate.sh` | `slo gate passed` | pass
+ - 2026-02-11 | `cargo clippy --workspace --all-targets` | `Finished dev profile` | pass
  - 2026-02-09 | `cargo test -p secretive-bench` | `8 passed` | pass
  - 2026-02-09 | `./scripts/check_shell.sh` | `checked 14 script(s)` | pass
  - 2026-02-09 | `./scripts/repo_sanity.sh` | `[repo-sanity] ok` | pass
