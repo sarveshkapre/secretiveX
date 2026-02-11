@@ -438,7 +438,7 @@ mod platform {
 
 pub use platform::SecureEnclaveStore;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::{ecdsa_der_signature_to_ssh_blob, encode_ecdsa_public_key_blob};
 
