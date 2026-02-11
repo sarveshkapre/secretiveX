@@ -13,6 +13,16 @@
 
 ## Entries
 - Date: 2026-02-11
+- Trigger: GitHub Actions `Rust Lint` failed for commit `3301e2d` (run `21894477861`) with unresolved imports in `crates/secretive-core/src/secure_enclave_store.rs`.
+- Impact: Lint pipeline red on main until a follow-up patch landed.
+- Root Cause: Secure Enclave helper functions were target-gated to macOS, but the helper test module still compiled for non-mac targets during `cargo clippy --workspace --all-targets`, leaving imports unresolved on Linux.
+- Fix: Scoped helper tests to `#[cfg(all(test, target_os = "macos"))]` so test compilation matches helper availability.
+- Prevention Rule: Any target-gating change must include a same-file test-module gate audit; verify with `cargo clippy --workspace --all-targets` before push.
+- Evidence: CI run `21894477861` (untrusted external log), local `cargo clippy --workspace --all-targets` and `cargo test -p secretive-core` after patch (pass).
+- Commit: e08a78d
+- Confidence: high
+
+- Date: 2026-02-11
 - Trigger: Scheduled GitHub Actions `Rust Fanout 1000 Gate` failed (run `21892142757`) with `SLO failure: throughput below minimum (rps=0.0 min=20)` and bench JSON `attempted=0`.
 - Impact: Scheduled high-fanout CI signal was red and did not validate reconnect throughput/latency as intended.
 - Root Cause: `secretive-bench` duration-mode runs inherited default `--warmup 10`; warmup executes before the timed loop and is excluded from counters. At 1000 reconnect workers, warmup consumed the entire 15-second window, so timed workload recorded zero attempts.
