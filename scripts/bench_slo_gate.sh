@@ -70,6 +70,27 @@ print_agent_log_tail() {
   fi
 }
 
+print_failure_context() {
+  if [ -f "$bench_json" ]; then
+    cat "$bench_json" >&2
+  fi
+  if [ -f "$metrics_json" ]; then
+    cat "$metrics_json" >&2
+  fi
+  print_agent_log_tail
+}
+
+slo_fail() {
+  echo "$1" >&2
+  print_failure_context
+  exit 1
+}
+
+extract_json_number() {
+  key="$1"
+  grep -o "\"$key\":[0-9.]*" "$bench_json" | head -n1 | cut -d: -f2
+}
+
 cleanup() {
   if [ -n "$agent_pid" ] && kill -0 "$agent_pid" >/dev/null 2>&1; then
     kill "$agent_pid" >/dev/null 2>&1 || true
@@ -163,48 +184,41 @@ agent_pid="$!"
   --queue-wait-tail-max-ratio "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" \
   --json-compact > "$bench_json"
 
-rps="$(grep -o '"rps":[0-9.]*' "$bench_json" | head -n1 | cut -d: -f2)"
-ok="$(grep -o '"ok":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
-failures="$(grep -o '"failures":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
-p95_us="$(grep -o '"p95_us":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
+rps="$(extract_json_number rps)"
+ok="$(extract_json_number ok)"
+failures="$(extract_json_number failures)"
+p95_us="$(extract_json_number p95_us)"
+attempted="$(extract_json_number attempted)"
 
 if [ -z "$rps" ] || [ -z "$ok" ] || [ -z "$failures" ]; then
-  echo "failed to parse bench output" >&2
-  cat "$bench_json" >&2
-  print_agent_log_tail
-  exit 1
+  slo_fail "failed to parse bench output"
 fi
 
-total="$(awk -v ok="$ok" -v failures="$failures" 'BEGIN { print ok + failures }')"
-failure_rate="$(awk -v failures="$failures" -v total="$total" 'BEGIN { if (total == 0) print 1; else print failures / total }')"
+if [ -z "$attempted" ]; then
+  attempted="$(awk -v ok="$ok" -v failures="$failures" 'BEGIN { print ok + failures }')"
+fi
+
+if awk -v value="$attempted" 'BEGIN { exit (value + 0 == 0 ? 0 : 1) }'; then
+  slo_fail "SLO failure: benchmark attempted 0 requests (attempted=0 rps=$rps duration=${SLO_DURATION_SECS}s warmup=$SLO_WARMUP). Likely warmup/duration/config mismatch; verify SLO_WARMUP, SLO_DURATION_SECS, and agent sign timeout settings."
+fi
+
+failure_rate="$(awk -v failures="$failures" -v attempted="$attempted" 'BEGIN { if (attempted == 0) print 1; else print failures / attempted }')"
 
 if ! awk -v rps="$rps" -v min="$SLO_MIN_RPS" 'BEGIN { exit (rps + 0 >= min + 0 ? 0 : 1) }'; then
-  echo "SLO failure: throughput below minimum (rps=$rps min=$SLO_MIN_RPS)" >&2
-  cat "$bench_json" >&2
-  print_agent_log_tail
-  exit 1
+  slo_fail "SLO failure: throughput below minimum (rps=$rps min=$SLO_MIN_RPS)"
 fi
 
 if [ "$SLO_MAX_P95_US" != "0" ]; then
   if [ -z "$p95_us" ]; then
-    echo "SLO failure: latency stats missing (expected p95_us; ok=$ok failures=$failures rps=$rps)" >&2
-    cat "$bench_json" >&2
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: latency stats missing (expected p95_us; ok=$ok failures=$failures rps=$rps)"
   fi
   if ! awk -v p95="$p95_us" -v max="$SLO_MAX_P95_US" 'BEGIN { exit (p95 + 0 <= max + 0 ? 0 : 1) }'; then
-    echo "SLO failure: p95 latency above maximum (p95_us=$p95_us max=$SLO_MAX_P95_US)" >&2
-    cat "$bench_json" >&2
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: p95 latency above maximum (p95_us=$p95_us max=$SLO_MAX_P95_US)"
   fi
 fi
 
 if ! awk -v rate="$failure_rate" -v max="$SLO_MAX_FAILURE_RATE" 'BEGIN { exit (rate + 0 <= max + 0 ? 0 : 1) }'; then
-  echo "SLO failure: failure rate above maximum (failure_rate=$failure_rate max=$SLO_MAX_FAILURE_RATE)" >&2
-  cat "$bench_json" >&2
-  print_agent_log_tail
-  exit 1
+  slo_fail "SLO failure: failure rate above maximum (failure_rate=$failure_rate max=$SLO_MAX_FAILURE_RATE)"
 fi
 
 queue_wait_avg_ns=""
@@ -218,8 +232,8 @@ queue_wait_tail_percentile_ns=""
 queue_wait_tail_detail=""
 
 # Prefer bench-emitted queue wait report (single source of truth) to avoid parsing agent snapshots.
-queue_wait_avg_ns="$(grep -o '"queue_wait_avg_ns":[0-9.]*' "$bench_json" | head -n1 | cut -d: -f2)"
-queue_wait_max_ns="$(grep -o '"queue_wait_max_ns":[0-9]*' "$bench_json" | head -n1 | cut -d: -f2)"
+queue_wait_avg_ns="$(extract_json_number queue_wait_avg_ns)"
+queue_wait_max_ns="$(extract_json_number queue_wait_max_ns)"
 
 queue_wait_tail_check_required=0
 if [ "$SLO_QUEUE_WAIT_TAIL_NS" != "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" != "0" ]; then
@@ -229,11 +243,7 @@ fi
 if [ "$queue_wait_tail_check_required" -eq 1 ]; then
   queue_wait_tail_mode="$(grep -Eo '"tail_mode":"[a-z_]+"' "$bench_json" | head -n1 | cut -d: -f2 | tr -d '"')"
   if [ -z "$queue_wait_tail_mode" ]; then
-    echo "SLO failure: queue wait tail metrics missing (expected queue_wait.tail_mode)" >&2
-    cat "$bench_json" >&2
-    [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: queue wait tail metrics missing (expected queue_wait.tail_mode)"
   fi
 
   if [ "$queue_wait_tail_mode" = "percentile" ]; then
@@ -261,62 +271,36 @@ if [ "$queue_wait_tail_check_required" -eq 1 ]; then
     )"
     queue_wait_tail_detail="${queue_wait_tail_count:-n/a}/${queue_wait_tail_total:-n/a}"
   else
-    echo "SLO failure: unrecognized queue wait tail mode (mode=$queue_wait_tail_mode)" >&2
-    cat "$bench_json" >&2
-    [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: unrecognized queue wait tail mode (mode=$queue_wait_tail_mode)"
   fi
 fi
 
 if [ -n "$queue_wait_avg_ns" ] && [ "$SLO_MAX_QUEUE_WAIT_AVG_NS" != "0" ]; then
   if ! awk -v value="$queue_wait_avg_ns" -v max="$SLO_MAX_QUEUE_WAIT_AVG_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
-    echo "SLO failure: queue wait avg above maximum (queue_wait_avg_ns=$queue_wait_avg_ns max=$SLO_MAX_QUEUE_WAIT_AVG_NS)" >&2
-    cat "$bench_json" >&2
-    [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: queue wait avg above maximum (queue_wait_avg_ns=$queue_wait_avg_ns max=$SLO_MAX_QUEUE_WAIT_AVG_NS)"
   fi
 fi
 
 if [ -n "$queue_wait_max_ns" ] && [ "$SLO_MAX_QUEUE_WAIT_MAX_NS" != "0" ]; then
   if ! awk -v value="$queue_wait_max_ns" -v max="$SLO_MAX_QUEUE_WAIT_MAX_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
-    echo "SLO failure: queue wait max above maximum (queue_wait_max_ns=$queue_wait_max_ns max=$SLO_MAX_QUEUE_WAIT_MAX_NS)" >&2
-    cat "$bench_json" >&2
-    [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: queue wait max above maximum (queue_wait_max_ns=$queue_wait_max_ns max=$SLO_MAX_QUEUE_WAIT_MAX_NS)"
   fi
 fi
 
 if [ "$queue_wait_tail_check_required" -eq 1 ]; then
   if [ "$queue_wait_tail_mode" = "percentile" ]; then
     if ! awk -v value="$queue_wait_tail_percentile_ns" -v max="$SLO_QUEUE_WAIT_TAIL_NS" 'BEGIN { exit (value + 0 <= max + 0 ? 0 : 1) }'; then
-      echo "SLO failure: queue wait $queue_wait_tail_percentile_label exceeded tail threshold (value_ns=$queue_wait_tail_percentile_ns max_ns=$SLO_QUEUE_WAIT_TAIL_NS max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO)" >&2
-      cat "$bench_json" >&2
-      [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-      print_agent_log_tail
-      exit 1
+      slo_fail "SLO failure: queue wait $queue_wait_tail_percentile_label exceeded tail threshold (value_ns=$queue_wait_tail_percentile_ns max_ns=$SLO_QUEUE_WAIT_TAIL_NS max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO)"
     fi
   elif [ "$queue_wait_tail_mode" = "histogram" ]; then
     if [ -z "$queue_wait_tail_ratio" ] || [ -z "$queue_wait_tail_total" ]; then
-      echo "SLO failure: queue wait tail thresholds require metrics histogram" >&2
-      [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-      print_agent_log_tail
-      exit 1
+      slo_fail "SLO failure: queue wait tail thresholds require metrics histogram"
     fi
     if ! awk -v ratio="$queue_wait_tail_ratio" -v max="$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" 'BEGIN { exit (ratio + 0 <= max + 0 ? 0 : 1) }'; then
-      echo "SLO failure: queue wait tail ratio above maximum (threshold_ns=$SLO_QUEUE_WAIT_TAIL_NS tail_ratio=$queue_wait_tail_ratio count=$queue_wait_tail_count total=$queue_wait_tail_total max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO)" >&2
-      cat "$bench_json" >&2
-      [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-      print_agent_log_tail
-      exit 1
+      slo_fail "SLO failure: queue wait tail ratio above maximum (threshold_ns=$SLO_QUEUE_WAIT_TAIL_NS tail_ratio=$queue_wait_tail_ratio count=$queue_wait_tail_count total=$queue_wait_tail_total max_ratio=$SLO_QUEUE_WAIT_TAIL_MAX_RATIO)"
     fi
   else
-    echo "SLO failure: queue wait tail metrics missing" >&2
-    [ -f "$metrics_json" ] && cat "$metrics_json" >&2 || true
-    print_agent_log_tail
-    exit 1
+    slo_fail "SLO failure: queue wait tail metrics missing"
   fi
 fi
 
