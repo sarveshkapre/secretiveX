@@ -1,10 +1,12 @@
 use crate::{CoreError, KeyIdentity, KeyStore, Result};
 
+#[cfg(target_os = "macos")]
 fn write_ssh_string(buf: &mut Vec<u8>, value: &[u8]) {
     buf.extend_from_slice(&(value.len() as u32).to_be_bytes());
     buf.extend_from_slice(value);
 }
 
+#[cfg(target_os = "macos")]
 fn encode_ecdsa_public_key_blob(algorithm: &str, curve_name: &str, public_key: &[u8]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(algorithm.len() + curve_name.len() + public_key.len() + 12);
     write_ssh_string(&mut blob, algorithm.as_bytes());
@@ -13,6 +15,7 @@ fn encode_ecdsa_public_key_blob(algorithm: &str, curve_name: &str, public_key: &
     blob
 }
 
+#[cfg(target_os = "macos")]
 fn read_der_length(input: &[u8], offset: &mut usize) -> Result<usize> {
     if *offset >= input.len() {
         return Err(CoreError::Crypto("invalid secure enclave signature"));
@@ -34,6 +37,7 @@ fn read_der_length(input: &[u8], offset: &mut usize) -> Result<usize> {
     Ok(out)
 }
 
+#[cfg(target_os = "macos")]
 fn normalize_mpint_bytes(raw: &[u8]) -> Vec<u8> {
     let mut idx = 0usize;
     while idx < raw.len() && raw[idx] == 0 {
@@ -53,6 +57,7 @@ fn normalize_mpint_bytes(raw: &[u8]) -> Vec<u8> {
     out
 }
 
+#[cfg(target_os = "macos")]
 fn ecdsa_der_signature_to_ssh_blob(der: &[u8]) -> Result<Vec<u8>> {
     let mut offset = 0usize;
     if der.get(offset).copied() != Some(0x30) {
