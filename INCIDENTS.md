@@ -51,3 +51,14 @@
 - Evidence: Local `BENCH_CONCURRENCY=64 BENCH_REQUESTS=4 MIN_RPS=1 ./scripts/bench_smoke_gate.sh` (pass); CI failure run `21853702657` (untrusted external log).
 - Commit: 32e1511, 67ed34c
 - Confidence: high
+
+### 2026-02-12T20:01:39Z | Codex execution failure
+- Date: 2026-02-12T20:01:39Z
+- Trigger: Codex execution failure
+- Impact: Repo session did not complete cleanly
+- Root Cause: codex exec returned a non-zero status
+- Fix: Captured failure logs and kept repository in a recoverable state
+- Prevention Rule: Re-run with same pass context and inspect pass log before retrying
+- Evidence: pass_log=logs/20260212-101456-secretiveX-cycle-2.log
+- Commit: pending
+- Confidence: medium
