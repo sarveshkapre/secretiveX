@@ -222,6 +222,20 @@ Tune thresholds:
 MIN_RPS=50 BENCH_CONCURRENCY=256 BENCH_REQUESTS=8 ./scripts/bench_smoke_gate.sh
 ```
 
+## pssh preflight helper
+
+Run a fast local readiness/key-health/queue-tail preflight before large fan-out jobs:
+
+```bash
+./scripts/pssh_preflight.sh
+```
+
+Optional knobs:
+- `PSSH_PREFLIGHT_SOCKET` forces a socket path instead of env/default discovery.
+- `PSSH_PREFLIGHT_METRICS_FILE` enables queue-wait guardrail validation from a metrics snapshot.
+- `PSSH_PREFLIGHT_QUEUE_WAIT_PROFILE` picks the guardrail profile (`pssh` default).
+- `PSSH_PREFLIGHT_QUEUE_WAIT_MAX_AGE_MS` rejects stale metrics snapshots.
+
 Profile selection:
 - `BENCH_PROFILE` controls the agent profile for smoke gate config (default: `fanout`).
 - `BENCH_CONNECT_TIMEOUT_MS` sets `--connect-timeout-ms` for reconnect bench calls (default: `1500`).

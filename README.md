@@ -88,6 +88,7 @@ Current Rust milestones:
 - Client `--health` diagnostics for invalid keys, duplicates, and algorithm mix
 - Client `--metrics-file` inspects structured metrics snapshots without agent socket access and prints histogram-derived queue-wait percentiles for quick tail analysis
 - Client `--pssh-hints` prints recommended OpenSSH/pssh options for high fan-out runs
+- `scripts/pssh_preflight.sh` performs readiness + key-health + optional queue-tail preflight before high fan-out runs
 - Client `--raw` list mode skips key parsing for faster output
 - Client `--json-compact` for compact JSON output
 - Metrics snapshots now record `captured_unix_ms` and `started_unix_ms`, and `secretive-client --metrics-file` can enforce queue-wait guardrails offline via `--queue-wait-tail-profile/--queue-wait-tail-*` with optional freshness checks.
