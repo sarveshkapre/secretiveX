@@ -44,6 +44,7 @@ Current Rust milestones:
 - `metrics_json` emits machine-readable JSON metrics lines
 - `metrics_output_path` writes latest metrics JSON snapshot atomically for scrapers
 - metrics include per-store sign counters (`file`, `pkcs11`, `secure_enclave`, `other`)
+- metrics include confirm outcome counters (`confirm_allow`, `confirm_cache_hit`, `confirm_denied`, `confirm_timeout`, `confirm_error`)
 - metrics include queue wait telemetry (`queue_wait_avg_ns`, `queue_wait_max_ns`, `queue_wait_histogram`)
 - metrics emit queue-wait percentile summaries (p50/p90/p95/p99) for quick SLO checks without external crunching
 - SLO gate now prefers agent-provided queue-wait percentiles for tail enforcement (falls back to histograms) so latency blow-ups surface without bucket crunching

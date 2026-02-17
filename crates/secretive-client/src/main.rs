@@ -773,6 +773,11 @@ struct MetricsSnapshot {
     store_sign_pkcs11: Option<u64>,
     store_sign_secure_enclave: Option<u64>,
     store_sign_other: Option<u64>,
+    confirm_allow: Option<u64>,
+    confirm_cache_hit: Option<u64>,
+    confirm_denied: Option<u64>,
+    confirm_timeout: Option<u64>,
+    confirm_error: Option<u64>,
     queue_wait_histogram: Option<Vec<u64>>,
     queue_wait_percentiles: Option<MetricsQueueWaitPercentiles>,
 }
@@ -1395,6 +1400,21 @@ fn render_metrics_snapshot(
     if let Some(value) = metrics.store_sign_other {
         writeln!(handle, "store_sign_other: {}", value)?;
     }
+    if let Some(value) = metrics.confirm_allow {
+        writeln!(handle, "confirm_allow: {}", value)?;
+    }
+    if let Some(value) = metrics.confirm_cache_hit {
+        writeln!(handle, "confirm_cache_hit: {}", value)?;
+    }
+    if let Some(value) = metrics.confirm_denied {
+        writeln!(handle, "confirm_denied: {}", value)?;
+    }
+    if let Some(value) = metrics.confirm_timeout {
+        writeln!(handle, "confirm_timeout: {}", value)?;
+    }
+    if let Some(value) = metrics.confirm_error {
+        writeln!(handle, "confirm_error: {}", value)?;
+    }
 
     Ok(())
 }
@@ -1748,6 +1768,11 @@ mod tests {
             "max_signers":64,
             "store_sign_file":80,
             "store_sign_pkcs11":20,
+            "confirm_allow":30,
+            "confirm_cache_hit":10,
+            "confirm_denied":2,
+            "confirm_timeout":1,
+            "confirm_error":0,
             "queue_wait_percentiles":{
                 "p50":{"ns":512,"open_ended":false},
                 "p99":{"ns":8000000000,"open_ended":true}
@@ -1762,6 +1787,11 @@ mod tests {
         assert_eq!(snapshot.store_sign_file, Some(80));
         assert_eq!(snapshot.store_sign_pkcs11, Some(20));
         assert_eq!(snapshot.store_sign_other, None);
+        assert_eq!(snapshot.confirm_allow, Some(30));
+        assert_eq!(snapshot.confirm_cache_hit, Some(10));
+        assert_eq!(snapshot.confirm_denied, Some(2));
+        assert_eq!(snapshot.confirm_timeout, Some(1));
+        assert_eq!(snapshot.confirm_error, Some(0));
         let percentiles = snapshot.queue_wait_percentiles.expect("percentiles");
         assert_eq!(percentiles.p50.unwrap().ns, 512);
         assert!(!percentiles.p50.unwrap().open_ended);
@@ -1952,6 +1982,11 @@ mod tests {
             store_sign_pkcs11: Some(0),
             store_sign_secure_enclave: Some(0),
             store_sign_other: Some(0),
+            confirm_allow: Some(0),
+            confirm_cache_hit: Some(0),
+            confirm_denied: Some(0),
+            confirm_timeout: Some(0),
+            confirm_error: Some(0),
             queue_wait_histogram: Some(vec![0; QUEUE_WAIT_BUCKET_BOUNDS.len() + 1]),
             queue_wait_percentiles: None,
         }

@@ -26,6 +26,7 @@
   - `secretive-client --metrics-file /path/to/metrics.json`
   - `secretive-client --metrics-file /path/to/metrics.json --json`
   - When available, the CLI prints `queue_wait_histogram` bucket counts alongside the average/max queue wait metrics.
+  - When present in snapshots, confirmation counters are surfaced (`confirm_allow`, `confirm_cache_hit`, `confirm_denied`, `confirm_timeout`, `confirm_error`) so policy prompt behavior is visible without parsing logs.
   - Agent snapshots now embed exact `queue_wait_percentiles` (p50/p90/p95/p99). The CLI displays those values first and falls back to histogram-derived approximations when percentiles are missing so you always get useful tail insight offline.
   - Snapshots now expose `captured_unix_ms` (when the agent recorded the metrics) and `started_unix_ms` (agent start time). When combined with `--queue-wait-max-age-ms`, the CLI warns on stale snapshots before checking guardrails.
   - Offline queue-wait guardrails: pass `--queue-wait-tail-profile pssh` (or explicitly set `--queue-wait-tail-ns` + `--queue-wait-tail-max-ratio`) to enforce the same tail thresholds used by CI SLO gates. The command exits with status `3` on violations so scripts can fail fast.
