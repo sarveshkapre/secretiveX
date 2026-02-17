@@ -39,11 +39,11 @@ Versioning expectations:
 - `schema_version` increments when existing field meanings or types change, or when fields are removed/renamed.
 - Units are encoded in field names (for example `*_ms`, `*_us`, `*_ns`).
 
-Top-level fields (schema v3):
+Top-level fields (schema v4):
 - Counters: `ok`, `failures`, `attempted`, `request_failures`, `request_timeouts`, `connect_failures`, `worker_failures`
 - Rates/timing: `success_rate`, `failure_rate`, `elapsed_ms`, `rps`
 - Run shape: `mode` (`sign`/`list`), `reconnect`, `concurrency`, `requests_per_worker`, `requested_total` (optional), `duration_secs` (optional)
-- Payload: `randomize_payload`, `payload_size`, `flags`, `response_timeout_ms` (optional)
+- Payload: `randomize_payload`, `payload_size`, `flags`, `response_timeout_ms` (optional), `connect_timeout_ms` (optional)
 - Socket: `socket_path`
 - Latency: `latency_enabled`, `latency_max_samples`, `latency` (optional object: `samples`, `p50_us`, `p95_us`, `p99_us`, `max_us`, `avg_us`)
 - Metadata: `meta` object (`schema_version`, `bench_version`, `started_unix_ms`, `finished_unix_ms`, `pid`, `hostname`, `target_os`, `target_arch`)
@@ -168,6 +168,14 @@ Duration runs default to `warmup=0` unless `--warmup` is explicitly provided, so
 cargo run -p secretive-bench -- --concurrency 200 --duration 30 --response-timeout-ms 500
 ```
 
+## Connect timeout
+
+```bash
+cargo run -p secretive-bench -- --concurrency 200 --duration 30 --connect-timeout-ms 1500
+```
+
+Use this for reconnect-heavy runs to fail fast when socket/pipe connect attempts stall.
+
 ## Latency percentiles
 
 Collect p50/p95/p99/max/avg request latency in microseconds:
@@ -216,6 +224,7 @@ MIN_RPS=50 BENCH_CONCURRENCY=256 BENCH_REQUESTS=8 ./scripts/bench_smoke_gate.sh
 
 Profile selection:
 - `BENCH_PROFILE` controls the agent profile for smoke gate config (default: `fanout`).
+- `BENCH_CONNECT_TIMEOUT_MS` sets `--connect-timeout-ms` for reconnect bench calls (default: `1500`).
 - `AGENT_STARTUP_TIMEOUT_SECS` controls how long gate scripts wait for the agent to become ready (default: `90`).
 
 ## Regression gate
@@ -250,6 +259,7 @@ Optional thresholds:
 - CI jobs set conservative non-zero defaults for queue-wait sanity checks.
 - Leaving both tail knobs unset now auto-selects a guardrail for the chosen profile (`pssh` uses 4ms <=3% tail, `fanout` 6ms <=4%, `balanced` 8ms <=5%, `low-memory` 12ms <=7%). Override the environment variables to customize these values.
 - `SLO_WARMUP` (default `0`) controls pre-measurement warmup requests per worker for SLO gate runs.
+- `SLO_CONNECT_TIMEOUT_MS` (default `1500`) sets fail-fast connect timeout per reconnect attempt.
 - `AGENT_STARTUP_TIMEOUT_SECS` (default `90`) controls readiness wait for the temporary agent process before the bench run starts.
 
 ## Dedicated 1000-session gate
@@ -300,6 +310,7 @@ Optional queue-wait thresholds for soak:
 - `SOAK_REQUIRE_QUEUE_WAIT_METRICS` (default `0`): fail if queue-wait metrics are missing.
 - `SOAK_MAX_P95_US` (default `0`, disabled): enforce p95 latency envelope.
 - `SOAK_WORKER_START_SPREAD_MS` (default `2000`): stagger long-run start ramps.
+- `SOAK_CONNECT_TIMEOUT_MS` (default `1500`): sets fail-fast connect timeout per reconnect attempt.
 
 ## PKCS#11 smoke
 

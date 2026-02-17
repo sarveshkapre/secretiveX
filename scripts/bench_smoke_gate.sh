@@ -8,6 +8,7 @@ BENCH_CONCURRENCY="${BENCH_CONCURRENCY:-128}"
 BENCH_REQUESTS="${BENCH_REQUESTS:-8}"
 BENCH_PAYLOAD_SIZE="${BENCH_PAYLOAD_SIZE:-64}"
 BENCH_PROFILE="${BENCH_PROFILE:-fanout}"
+BENCH_CONNECT_TIMEOUT_MS="${BENCH_CONNECT_TIMEOUT_MS:-1500}"
 MIN_RPS="${MIN_RPS:-25}"
 
 repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
@@ -86,6 +87,7 @@ agent_pid="$!"
   --reconnect \
   --concurrency "$BENCH_CONCURRENCY" \
   --requests "$BENCH_REQUESTS" \
+  --connect-timeout-ms "$BENCH_CONNECT_TIMEOUT_MS" \
   --payload-size "$BENCH_PAYLOAD_SIZE" \
   --fixed \
   --json-compact > "$bench_json"

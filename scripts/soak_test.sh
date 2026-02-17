@@ -18,6 +18,7 @@ SOAK_DURATION_SECS="${SOAK_DURATION_SECS:-1800}"
 SOAK_CONCURRENCY="${SOAK_CONCURRENCY:-256}"
 SOAK_PAYLOAD_SIZE="${SOAK_PAYLOAD_SIZE:-64}"
 SOAK_RECONNECT="${SOAK_RECONNECT:-1}"
+SOAK_CONNECT_TIMEOUT_MS="${SOAK_CONNECT_TIMEOUT_MS:-1500}"
 SOAK_PROFILE="${SOAK_PROFILE:-pssh}"
 SOAK_WORKER_START_SPREAD_MS="${SOAK_WORKER_START_SPREAD_MS:-2000}"
 SOAK_MIN_RPS="${SOAK_MIN_RPS:-0}"
@@ -103,6 +104,7 @@ fi
 bench_json="$tmpdir/soak.json"
 
 bench_args="--socket $socket_path --concurrency $SOAK_CONCURRENCY --duration $SOAK_DURATION_SECS --payload-size $SOAK_PAYLOAD_SIZE --worker-start-spread-ms $SOAK_WORKER_START_SPREAD_MS --fixed --latency --latency-max-samples 200000 --json-compact"
+bench_args="$bench_args --connect-timeout-ms $SOAK_CONNECT_TIMEOUT_MS"
 if [ -n "$agent_pid" ] && [ -n "$agent_metrics_json" ]; then
   bench_args="$bench_args --metrics-file $agent_metrics_json"
 elif [ -n "$SOAK_METRICS_FILE" ]; then
