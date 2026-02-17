@@ -55,6 +55,8 @@ SecretiveX is a cross-platform, high-throughput SSH agent platform designed for:
 - PKCS#11 needs production hardening coverage and wider integration tests.
 - Windows packaging is in place; pipe ACL hardening still needs real-host validation coverage.
 - CI regression gate exists; stress coverage and flake resistance need expansion.
+- OpenSSH 10.x compatibility coverage should be added to CI (list/sign/hybrid-KEX sanity lanes).
+- Add staged 2k+ session fan-out stress lanes once 1k SLO envelopes remain stable.
 - Approval/confirm UX parity: add a minimal cross-platform confirmation hook (CLI-friendly first), then iterate toward a polished GUI prompt experience on macOS/Windows/Linux.
 
 ## Prioritized Feature List

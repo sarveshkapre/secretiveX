@@ -100,6 +100,8 @@ Current pending items (from the V1 gap list):
 - PKCS#11 production hardening coverage and wider integration tests on real tokens.
 - Windows named-pipe ACL hardening validation on real-host environments.
 - Expanded stress coverage and additional flake resistance beyond current regression gates.
+- OpenSSH 10.x compatibility coverage in CI (including modern hybrid KEX defaults).
+- Higher-tier stress envelopes (2k+ concurrent reconnect sessions) after sustained 1k SLO stability.
 
 Rust config format: see `docs/RUST_CONFIG.md`.
 Bench usage: see `docs/RUST_BENCH.md`.
@@ -110,6 +112,7 @@ Windows service setup: see `docs/WINDOWS_SERVICE.md`.
 OpenSSH compatibility smoke: see `docs/OPENSSH_COMPAT.md`.
 SLO definitions and gate: see `docs/SLO.md`.
 Product roadmap: see `docs/PRODUCT_FEATURES.md`.
+Ecosystem watchlist and 2026 deltas: see `docs/WORLD_STATE_2026.md`.
 Release policy: see `docs/RELEASE_POLICY.md`.
 Architecture and ownership: see `docs/ARCHITECTURE.md`.
 <picture>

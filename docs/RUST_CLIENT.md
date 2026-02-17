@@ -34,6 +34,7 @@
 - Print `pssh`/OpenSSH high-fanout hints:
   - `secretive-client --pssh-hints`
   - `secretive-client --pssh-hints --socket /path/to/agent.sock`
+  - Includes optional OpenSSH 9.9+/10.x hybrid KEX recommendation (`mlkem768x25519-sha256` + `sntrup761x25519-sha512`).
 - Wait for agent readiness (useful for scripts/systemd hooks):
   - `secretive-client --wait-ready --socket /path/to/agent.sock`
   - `secretive-client --wait-ready --wait-ready-timeout-ms 30000 --wait-ready-interval-ms 200`

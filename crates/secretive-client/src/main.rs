@@ -1533,7 +1533,10 @@ Optional ~/.ssh/config baseline:\n\n\
 Host *\n\
   IdentitiesOnly yes\n\
   IdentityAgent {socket}\n\
-  PreferredAuthentications publickey\n"
+  PreferredAuthentications publickey\n\
+\n\
+# Optional for OpenSSH 9.9+ / 10.x post-quantum hybrid KEX\n\
+  KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512\n"
     )
 }
 
@@ -1903,6 +1906,7 @@ mod tests {
         assert!(out.contains("IdentitiesOnly=yes"));
         assert!(out.contains("IdentityAgent /tmp/secretive.sock"));
         assert!(out.contains("Host *"));
+        assert!(out.contains("KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512"));
     }
 
     #[test]
