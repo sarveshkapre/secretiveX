@@ -140,6 +140,11 @@ static STORE_SIGN_FILE: AtomicU64 = AtomicU64::new(0);
 static STORE_SIGN_PKCS11: AtomicU64 = AtomicU64::new(0);
 static STORE_SIGN_SECURE_ENCLAVE: AtomicU64 = AtomicU64::new(0);
 static STORE_SIGN_OTHER: AtomicU64 = AtomicU64::new(0);
+static CONFIRM_ALLOW: AtomicU64 = AtomicU64::new(0);
+static CONFIRM_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
+static CONFIRM_DENIED: AtomicU64 = AtomicU64::new(0);
+static CONFIRM_TIMEOUT: AtomicU64 = AtomicU64::new(0);
+static CONFIRM_ERROR: AtomicU64 = AtomicU64::new(0);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
 static AGENT_STARTED_UNIX_MS: OnceLock<u64> = OnceLock::new();
 static QUEUE_WAIT_SUGGESTION: OnceLock<QueueWaitSuggestion> = OnceLock::new();
@@ -1432,6 +1437,11 @@ fn reset_sign_metrics() {
     STORE_SIGN_PKCS11.store(0, Ordering::Relaxed);
     STORE_SIGN_SECURE_ENCLAVE.store(0, Ordering::Relaxed);
     STORE_SIGN_OTHER.store(0, Ordering::Relaxed);
+    CONFIRM_ALLOW.store(0, Ordering::Relaxed);
+    CONFIRM_CACHE_HIT.store(0, Ordering::Relaxed);
+    CONFIRM_DENIED.store(0, Ordering::Relaxed);
+    CONFIRM_TIMEOUT.store(0, Ordering::Relaxed);
+    CONFIRM_ERROR.store(0, Ordering::Relaxed);
     for bucket in &QUEUE_WAIT_BUCKETS {
         bucket.store(0, Ordering::Relaxed);
     }
@@ -1984,6 +1994,11 @@ struct SignMetricsSnapshot {
     store_sign_pkcs11: u64,
     store_sign_secure_enclave: u64,
     store_sign_other: u64,
+    confirm_allow: u64,
+    confirm_cache_hit: u64,
+    confirm_denied: u64,
+    confirm_timeout: u64,
+    confirm_error: u64,
     queue_wait_histogram: [u64; QUEUE_WAIT_BUCKET_COUNT],
     queue_wait_percentiles: QueueWaitPercentiles,
 }
@@ -2019,6 +2034,11 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
     let store_sign_pkcs11 = STORE_SIGN_PKCS11.load(Ordering::Relaxed);
     let store_sign_secure_enclave = STORE_SIGN_SECURE_ENCLAVE.load(Ordering::Relaxed);
     let store_sign_other = STORE_SIGN_OTHER.load(Ordering::Relaxed);
+    let confirm_allow = CONFIRM_ALLOW.load(Ordering::Relaxed);
+    let confirm_cache_hit = CONFIRM_CACHE_HIT.load(Ordering::Relaxed);
+    let confirm_denied = CONFIRM_DENIED.load(Ordering::Relaxed);
+    let confirm_timeout = CONFIRM_TIMEOUT.load(Ordering::Relaxed);
+    let confirm_error = CONFIRM_ERROR.load(Ordering::Relaxed);
     let mut queue_wait_histogram = [0u64; QUEUE_WAIT_BUCKET_COUNT];
     for (idx, bucket) in QUEUE_WAIT_BUCKETS.iter().enumerate() {
         queue_wait_histogram[idx] = bucket.load(Ordering::Relaxed);
@@ -2050,6 +2070,11 @@ fn build_metrics_snapshot(sign_semaphore: &Semaphore, max_signers: u64) -> SignM
         store_sign_pkcs11,
         store_sign_secure_enclave,
         store_sign_other,
+        confirm_allow,
+        confirm_cache_hit,
+        confirm_denied,
+        confirm_timeout,
+        confirm_error,
         queue_wait_histogram,
         queue_wait_percentiles,
     }
@@ -2093,6 +2118,11 @@ fn format_metrics_json(kind: &str, metrics: &SignMetricsSnapshot) -> String {
         "store_sign_pkcs11": metrics.store_sign_pkcs11,
         "store_sign_secure_enclave": metrics.store_sign_secure_enclave,
         "store_sign_other": metrics.store_sign_other,
+        "confirm_allow": metrics.confirm_allow,
+        "confirm_cache_hit": metrics.confirm_cache_hit,
+        "confirm_denied": metrics.confirm_denied,
+        "confirm_timeout": metrics.confirm_timeout,
+        "confirm_error": metrics.confirm_error,
         "queue_wait_histogram": metrics.queue_wait_histogram,
         "queue_wait_percentiles": metrics.queue_wait_percentiles,
         "queue_wait_suggested": suggested,
@@ -2182,6 +2212,11 @@ fn emit_sign_metrics(kind: &str, metrics: &SignMetricsSnapshot) {
         store_sign_pkcs11 = metrics.store_sign_pkcs11,
         store_sign_secure_enclave = metrics.store_sign_secure_enclave,
         store_sign_other = metrics.store_sign_other,
+        confirm_allow = metrics.confirm_allow,
+        confirm_cache_hit = metrics.confirm_cache_hit,
+        confirm_denied = metrics.confirm_denied,
+        confirm_timeout = metrics.confirm_timeout,
+        confirm_error = metrics.confirm_error,
         queue_wait_histogram = ?metrics.queue_wait_histogram,
         queue_wait_percentiles = ?metrics.queue_wait_percentiles,
         captured_unix_ms = metrics.captured_unix_ms,
@@ -3377,9 +3412,16 @@ async fn handle_sign_request(
             )
             .await
         {
-            Ok(ConfirmOutcome::Skipped | ConfirmOutcome::CachedAllow | ConfirmOutcome::Allow) => {}
+            Ok(ConfirmOutcome::Skipped) => {}
+            Ok(ConfirmOutcome::CachedAllow) => {
+                CONFIRM_CACHE_HIT.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(ConfirmOutcome::Allow) => {
+                CONFIRM_ALLOW.fetch_add(1, Ordering::Relaxed);
+            }
             Ok(ConfirmOutcome::Deny) => {
                 warn!("confirm command denied sign request");
+                CONFIRM_DENIED.fetch_add(1, Ordering::Relaxed);
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                 if let Some(key_id) = audit_key.as_deref() {
                     emit_sign_audit(
@@ -3394,6 +3436,7 @@ async fn handle_sign_request(
             }
             Err(ConfirmError::Timeout) => {
                 warn!("confirm command timed out");
+                CONFIRM_TIMEOUT.fetch_add(1, Ordering::Relaxed);
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                 if let Some(key_id) = audit_key.as_deref() {
                     emit_sign_audit(
@@ -3408,6 +3451,7 @@ async fn handle_sign_request(
             }
             Err(err) => {
                 warn!(?err, "confirm command failed");
+                CONFIRM_ERROR.fetch_add(1, Ordering::Relaxed);
                 SIGN_ERRORS.fetch_add(1, Ordering::Relaxed);
                 if let Some(key_id) = audit_key.as_deref() {
                     emit_sign_audit(
@@ -3896,6 +3940,11 @@ mod tests {
         STORE_SIGN_PKCS11.store(13, Ordering::Relaxed);
         STORE_SIGN_SECURE_ENCLAVE.store(14, Ordering::Relaxed);
         STORE_SIGN_OTHER.store(15, Ordering::Relaxed);
+        CONFIRM_ALLOW.store(16, Ordering::Relaxed);
+        CONFIRM_CACHE_HIT.store(17, Ordering::Relaxed);
+        CONFIRM_DENIED.store(18, Ordering::Relaxed);
+        CONFIRM_TIMEOUT.store(19, Ordering::Relaxed);
+        CONFIRM_ERROR.store(20, Ordering::Relaxed);
         ACTIVE_CONNECTIONS.store(4, Ordering::Relaxed);
         MAX_ACTIVE_CONNECTIONS.store(99, Ordering::Relaxed);
         QUEUE_WAIT_BUCKETS[0].store(2, Ordering::Relaxed);
@@ -3908,6 +3957,11 @@ mod tests {
         assert_eq!(CONNECTION_COUNT.load(Ordering::Relaxed), 0);
         assert_eq!(LIST_REFRESH.load(Ordering::Relaxed), 0);
         assert_eq!(STORE_SIGN_FILE.load(Ordering::Relaxed), 0);
+        assert_eq!(CONFIRM_ALLOW.load(Ordering::Relaxed), 0);
+        assert_eq!(CONFIRM_CACHE_HIT.load(Ordering::Relaxed), 0);
+        assert_eq!(CONFIRM_DENIED.load(Ordering::Relaxed), 0);
+        assert_eq!(CONFIRM_TIMEOUT.load(Ordering::Relaxed), 0);
+        assert_eq!(CONFIRM_ERROR.load(Ordering::Relaxed), 0);
         assert_eq!(
             MAX_ACTIVE_CONNECTIONS.load(Ordering::Relaxed),
             ACTIVE_CONNECTIONS.load(Ordering::Relaxed)
@@ -3965,6 +4019,11 @@ mod tests {
             store_sign_pkcs11: 18,
             store_sign_secure_enclave: 19,
             store_sign_other: 20,
+            confirm_allow: 21,
+            confirm_cache_hit: 22,
+            confirm_denied: 23,
+            confirm_timeout: 24,
+            confirm_error: 25,
             queue_wait_histogram: [0; QUEUE_WAIT_BUCKET_COUNT],
             queue_wait_percentiles: QueueWaitPercentiles::default(),
         };
@@ -3976,6 +4035,11 @@ mod tests {
         assert!(payload.contains("\"queue_wait_max_ns\":6"));
         assert!(payload.contains("\"list_errors\":16"));
         assert!(payload.contains("\"store_sign_file\":17"));
+        assert!(payload.contains("\"confirm_allow\":21"));
+        assert!(payload.contains("\"confirm_cache_hit\":22"));
+        assert!(payload.contains("\"confirm_denied\":23"));
+        assert!(payload.contains("\"confirm_timeout\":24"));
+        assert!(payload.contains("\"confirm_error\":25"));
         assert!(payload.contains("\"queue_wait_histogram\""));
         assert!(payload.contains("\"captured_unix_ms\":1"));
         assert!(payload.contains("\"started_unix_ms\":2"));
@@ -4021,6 +4085,11 @@ mod tests {
             store_sign_pkcs11: 0,
             store_sign_secure_enclave: 0,
             store_sign_other: 0,
+            confirm_allow: 0,
+            confirm_cache_hit: 0,
+            confirm_denied: 0,
+            confirm_timeout: 0,
+            confirm_error: 0,
             queue_wait_histogram: [0; QUEUE_WAIT_BUCKET_COUNT],
             queue_wait_percentiles: QueueWaitPercentiles::default(),
         };
