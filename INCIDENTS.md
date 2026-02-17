@@ -381,3 +381,14 @@
 - Evidence: pass_log=logs/20260216-144104-secretiveX-cycle-1.log
 - Commit: pending
 - Confidence: medium
+
+### 2026-02-17T01:42:53Z | Codex execution failure
+- Date: 2026-02-17T01:42:53Z
+- Trigger: Codex execution failure
+- Impact: Repo session did not complete cleanly
+- Root Cause: codex exec returned a non-zero status
+- Fix: Captured failure logs and kept repository in a recoverable state
+- Prevention Rule: Re-run with same pass context and inspect pass log before retrying
+- Evidence: pass_log=logs/20260216-144104-secretiveX-cycle-2.log
+- Commit: pending
+- Confidence: medium
