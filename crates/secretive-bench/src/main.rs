@@ -56,6 +56,7 @@ const METRICS_FILE_ENV: &str = "SECRETIVE_BENCH_METRICS";
 const QUEUE_WAIT_TAIL_NS_ENV: &str = "SECRETIVE_BENCH_QUEUE_WAIT_TAIL_NS";
 const QUEUE_WAIT_TAIL_RATIO_ENV: &str = "SECRETIVE_BENCH_QUEUE_WAIT_TAIL_MAX_RATIO";
 const QUEUE_WAIT_PROFILE_ENV: &str = "SECRETIVE_BENCH_QUEUE_WAIT_PROFILE";
+const CONNECT_TIMEOUT_MS_ENV: &str = "SECRETIVE_BENCH_CONNECT_TIMEOUT_MS";
 
 #[derive(Debug)]
 struct Args {
@@ -74,6 +75,7 @@ struct Args {
     csv: bool,
     csv_header: bool,
     response_timeout_ms: Option<u64>,
+    connect_timeout_ms: Option<u64>,
     latency: bool,
     latency_max_samples: usize,
     worker_start_spread_ms: u64,
@@ -117,7 +119,7 @@ async fn main() -> Result<()> {
     } else if let Some(hex_key) = args.key_blob_hex.as_deref() {
         Some(hex::decode(hex_key)?)
     } else {
-        Some(fetch_first_key(socket_path.as_ref()).await?)
+        Some(fetch_first_key(socket_path.as_ref(), args.connect_timeout_ms).await?)
     };
 
     let total_requests = args.concurrency * args.requests_per_worker;
@@ -143,6 +145,13 @@ async fn main() -> Result<()> {
         .duration_secs
         .map(|secs| start + Duration::from_secs(secs));
     let response_timeout = args.response_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
+    let connect_timeout = args.connect_timeout_ms.and_then(|value| {
         if value == 0 {
             None
         } else {
@@ -185,6 +194,7 @@ async fn main() -> Result<()> {
                 randomize_payload,
                 deadline,
                 response_timeout,
+                connect_timeout,
                 latency_samples_per_worker,
                 worker_start_delay_ms,
             )
@@ -275,12 +285,13 @@ async fn main() -> Result<()> {
         flags: args.flags,
         socket_path: socket_value,
         response_timeout_ms: args.response_timeout_ms,
+        connect_timeout_ms: args.connect_timeout_ms,
         latency_enabled: args.latency,
         latency_max_samples: args.latency_max_samples,
         worker_start_spread_ms: args.worker_start_spread_ms,
         latency,
         meta: BenchMetadata {
-            schema_version: 3,
+            schema_version: 4,
             bench_version: env!("CARGO_PKG_VERSION"),
             started_unix_ms,
             finished_unix_ms,
@@ -349,6 +360,7 @@ struct BenchOutput {
     flags: u32,
     socket_path: String,
     response_timeout_ms: Option<u64>,
+    connect_timeout_ms: Option<u64>,
     latency_enabled: bool,
     latency_max_samples: usize,
     worker_start_spread_ms: u64,
@@ -553,12 +565,12 @@ fn csv_escape(value: &str) -> String {
 }
 
 fn csv_header_row() -> &'static str {
-    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,worker_start_spread_ms,ok,failures,request_failures,request_timeouts,connect_failures,worker_failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
+    "timestamp_unix_ms,started_unix_ms,finished_unix_ms,bench_version,target_os,target_arch,hostname,pid,mode,reconnect,concurrency,requests_per_worker,requested_total,duration_secs,payload_size,flags,response_timeout_ms,connect_timeout_ms,randomize_payload,latency_enabled,latency_max_samples,worker_start_spread_ms,ok,failures,request_failures,request_timeouts,connect_failures,worker_failures,attempted,success_rate,failure_rate,elapsed_ms,rps,p50_us,p95_us,p99_us,max_us,avg_us,latency_samples,socket_path"
 }
 
 fn csv_data_row(payload: &BenchOutput) -> String {
     let latency = payload.latency.as_ref();
-    let mut fields = Vec::with_capacity(39);
+    let mut fields = Vec::with_capacity(40);
     fields.push(payload.meta.finished_unix_ms.to_string());
     fields.push(payload.meta.started_unix_ms.to_string());
     fields.push(payload.meta.finished_unix_ms.to_string());
@@ -588,6 +600,12 @@ fn csv_data_row(payload: &BenchOutput) -> String {
     fields.push(
         payload
             .response_timeout_ms
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+    );
+    fields.push(
+        payload
+            .connect_timeout_ms
             .map(|v| v.to_string())
             .unwrap_or_default(),
     );
@@ -854,6 +872,7 @@ async fn run_worker(
     randomize_payload: bool,
     deadline: Option<Instant>,
     response_timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
     latency_max_samples: usize,
     worker_start_delay_ms: u64,
 ) -> Result<WorkerResult> {
@@ -868,6 +887,7 @@ async fn run_worker(
             reconnect,
             deadline,
             response_timeout,
+            connect_timeout,
             latency_max_samples,
         )
         .await;
@@ -878,7 +898,8 @@ async fn run_worker(
     let key_blob = if let Some(key_blob) = shared_key {
         key_blob
     } else {
-        fetch_first_key(socket_path.as_ref()).await?
+        fetch_first_key(socket_path.as_ref(), connect_timeout.map(|value| value.as_millis() as u64))
+            .await?
     };
 
     let mut rng = if randomize_payload && payload_size > 0 {
@@ -914,7 +935,7 @@ async fn run_worker(
 
     let mut stream: Option<AgentStream> = None;
     if !reconnect {
-        match connect(socket_path.as_ref()).await {
+        match connect_with_timeout(socket_path.as_ref(), connect_timeout).await {
             Ok(s) => stream = Some(s),
             Err(err) => {
                 warn!(worker_id, ?err, "initial connect failed");
@@ -926,7 +947,7 @@ async fn run_worker(
     // Warmup: ignore outcome but keep connections fresh.
     for _ in 0..warmup {
         if reconnect {
-            let Ok(mut s) = connect(socket_path.as_ref()).await else {
+            let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await else {
                 connect_failures += 1;
                 continue;
             };
@@ -946,7 +967,9 @@ async fn run_worker(
             let _ = read_response_type_with_timeout(&mut s, &mut buffer, response_timeout).await;
         } else {
             if stream.is_none() {
-                stream = connect(socket_path.as_ref()).await.ok();
+                stream = connect_with_timeout(socket_path.as_ref(), connect_timeout)
+                    .await
+                    .ok();
                 if stream.is_none() {
                     connect_failures += 1;
                     continue;
@@ -1033,14 +1056,17 @@ async fn run_worker(
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
             if reconnect {
-                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await
+                else {
                     connect_failures += 1;
                     continue;
                 };
                 let _ = run_one_sign!(&mut s);
             } else {
                 if stream.is_none() {
-                    stream = connect(socket_path.as_ref()).await.ok();
+                    stream = connect_with_timeout(socket_path.as_ref(), connect_timeout)
+                        .await
+                        .ok();
                     if stream.is_none() {
                         connect_failures += 1;
                         continue;
@@ -1060,14 +1086,17 @@ async fn run_worker(
     } else {
         for _ in 0..requests {
             if reconnect {
-                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await
+                else {
                     connect_failures += 1;
                     continue;
                 };
                 let _ = run_one_sign!(&mut s);
             } else {
                 if stream.is_none() {
-                    stream = connect(socket_path.as_ref()).await.ok();
+                    stream = connect_with_timeout(socket_path.as_ref(), connect_timeout)
+                        .await
+                        .ok();
                     if stream.is_none() {
                         connect_failures += 1;
                         continue;
@@ -1106,6 +1135,7 @@ async fn run_list_worker(
     reconnect: bool,
     deadline: Option<Instant>,
     response_timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
     latency_max_samples: usize,
 ) -> Result<WorkerResult> {
     let list_frame = list_request_frame();
@@ -1119,7 +1149,7 @@ async fn run_list_worker(
 
     let mut stream: Option<AgentStream> = None;
     if !reconnect {
-        match connect(socket_path.as_ref()).await {
+        match connect_with_timeout(socket_path.as_ref(), connect_timeout).await {
             Ok(s) => stream = Some(s),
             Err(err) => {
                 warn!(?err, "initial connect failed");
@@ -1130,7 +1160,7 @@ async fn run_list_worker(
 
     for _ in 0..warmup {
         if reconnect {
-            let Ok(mut s) = connect(socket_path.as_ref()).await else {
+            let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await else {
                 connect_failures += 1;
                 continue;
             };
@@ -1141,7 +1171,9 @@ async fn run_list_worker(
             let _ = read_response_type_with_timeout(&mut s, &mut buffer, response_timeout).await;
         } else {
             if stream.is_none() {
-                stream = connect(socket_path.as_ref()).await.ok();
+                stream = connect_with_timeout(socket_path.as_ref(), connect_timeout)
+                    .await
+                    .ok();
                 if stream.is_none() {
                     connect_failures += 1;
                     continue;
@@ -1209,14 +1241,17 @@ async fn run_list_worker(
     if let Some(deadline) = deadline {
         while Instant::now() < deadline {
             if reconnect {
-                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await
+                else {
                     connect_failures += 1;
                     continue;
                 };
                 let _ = run_one_list!(&mut s);
             } else {
                 if stream.is_none() {
-                    stream = connect(socket_path.as_ref()).await.ok();
+                    stream = connect_with_timeout(socket_path.as_ref(), connect_timeout)
+                        .await
+                        .ok();
                     if stream.is_none() {
                         connect_failures += 1;
                         continue;
@@ -1236,14 +1271,17 @@ async fn run_list_worker(
     } else {
         for _ in 0..requests {
             if reconnect {
-                let Ok(mut s) = connect(socket_path.as_ref()).await else {
+                let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await
+                else {
                     connect_failures += 1;
                     continue;
                 };
                 let _ = run_one_list!(&mut s);
             } else {
                 if stream.is_none() {
-                    stream = connect(socket_path.as_ref()).await.ok();
+                    stream = connect_with_timeout(socket_path.as_ref(), connect_timeout)
+                        .await
+                        .ok();
                     if stream.is_none() {
                         connect_failures += 1;
                         continue;
@@ -1292,8 +1330,15 @@ where
     }
 }
 
-async fn fetch_first_key(socket_path: &Path) -> Result<Vec<u8>> {
-    let mut stream = connect(socket_path).await?;
+async fn fetch_first_key(socket_path: &Path, connect_timeout_ms: Option<u64>) -> Result<Vec<u8>> {
+    let connect_timeout = connect_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
+    let mut stream = connect_with_timeout(socket_path, connect_timeout).await?;
     let mut buffer = BytesMut::with_capacity(4096);
     stream.write_all(list_request_frame()).await?;
     let response = secretive_proto::read_response_with_buffer(&mut stream, &mut buffer).await?;
@@ -1338,6 +1383,7 @@ where
         csv: false,
         csv_header: true,
         response_timeout_ms: None,
+        connect_timeout_ms: None,
         latency: false,
         latency_max_samples: 100_000,
         worker_start_spread_ms: 0,
@@ -1369,6 +1415,11 @@ where
     if let Ok(value) = std::env::var(QUEUE_WAIT_PROFILE_ENV) {
         if !value.trim().is_empty() {
             parsed.queue_wait_tail_profile = Some(value);
+        }
+    }
+    if let Ok(value) = std::env::var(CONNECT_TIMEOUT_MS_ENV) {
+        if let Ok(parsed_value) = value.parse() {
+            parsed.connect_timeout_ms = Some(parsed_value);
         }
     }
 
@@ -1422,6 +1473,11 @@ where
                     parsed.response_timeout_ms = value.parse().ok();
                 }
             }
+            "--connect-timeout-ms" => {
+                if let Some(value) = args.next() {
+                    parsed.connect_timeout_ms = value.parse().ok();
+                }
+            }
             "--latency" => parsed.latency = true,
             "--latency-max-samples" => {
                 if let Some(value) = args.next() {
@@ -1469,7 +1525,7 @@ fn print_help() {
     println!("  --worker-start-spread-ms <n>");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json --json-compact --csv [--no-csv-header] --reconnect --list --fixed");
-    println!("  --response-timeout-ms <n> --latency --latency-max-samples <n>");
+    println!("  --response-timeout-ms <n> --connect-timeout-ms <n> --latency --latency-max-samples <n>");
     println!("  --metrics-file <path> --queue-wait-tail-profile <profile>");
     println!("  --queue-wait-tail-ns <ns> --queue-wait-tail-max-ratio <ratio>\n");
     println!("  --version\n");
@@ -1527,6 +1583,22 @@ fn parse_flags(value: &str) -> Option<u32> {
         return Some(0);
     }
     None
+}
+
+async fn connect_with_timeout(
+    socket_path: &Path,
+    connect_timeout: Option<Duration>,
+) -> std::io::Result<AgentStream> {
+    match connect_timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, connect(socket_path)).await {
+            Ok(result) => result,
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("connect timeout after {} ms", timeout.as_millis()),
+            )),
+        },
+        None => connect(socket_path).await,
+    }
 }
 
 #[cfg(unix)]
@@ -1648,6 +1720,7 @@ mod tests {
             flags: 0,
             socket_path: "/tmp/agent.sock".to_string(),
             response_timeout_ms: Some(500),
+            connect_timeout_ms: Some(200),
             latency_enabled: true,
             latency_max_samples: 100,
             worker_start_spread_ms: 50,
@@ -1660,7 +1733,7 @@ mod tests {
                 avg_us: 20.0,
             }),
             meta: BenchMetadata {
-                schema_version: 3,
+                schema_version: 4,
                 bench_version: "0.1.0",
                 started_unix_ms: 1000,
                 finished_unix_ms: 1025,
@@ -1732,6 +1805,14 @@ mod tests {
         );
         assert_eq!(args.duration_secs, Some(15));
         assert_eq!(args.warmup, 7);
+    }
+
+    #[test]
+    fn parse_connect_timeout_arg() {
+        let args = parse_args_from(
+            vec!["--connect-timeout-ms".to_string(), "250".to_string()].into_iter(),
+        );
+        assert_eq!(args.connect_timeout_ms, Some(250));
     }
 
     #[test]
