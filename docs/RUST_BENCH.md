@@ -240,6 +240,7 @@ Profile selection:
 - `BENCH_PROFILE` controls the agent profile for smoke gate config (default: `fanout`).
 - `BENCH_CONNECT_TIMEOUT_MS` sets `--connect-timeout-ms` for reconnect bench calls (default: `1500`).
 - `AGENT_STARTUP_TIMEOUT_SECS` controls how long gate scripts wait for the agent to become ready (default: `90`).
+- `AGENT_READY_POLL_MS` tunes readiness polling interval used by gate scripts (default: `200`).
 
 ## Regression gate
 

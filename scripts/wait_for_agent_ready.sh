@@ -10,10 +10,18 @@ socket_path="$1"
 agent_pid="$2"
 agent_log_path="$3"
 timeout_secs="${4:-${AGENT_STARTUP_TIMEOUT_SECS:-90}}"
+poll_ms="${AGENT_READY_POLL_MS:-200}"
 
 case "$timeout_secs" in
   ''|*[!0-9]*)
     echo "invalid timeout_secs: $timeout_secs (expected non-negative integer)" >&2
+    exit 2
+    ;;
+esac
+
+case "$poll_ms" in
+  ''|*[!0-9]*)
+    echo "invalid AGENT_READY_POLL_MS: $poll_ms (expected non-negative integer)" >&2
     exit 2
     ;;
 esac
@@ -37,7 +45,22 @@ fi
 deadline_epoch="$(($(date +%s) + timeout_secs))"
 ready=0
 
+if [ -n "${SECRETIVE_CLIENT_BIN:-}" ] && [ -x "${SECRETIVE_CLIENT_BIN:-}" ]; then
+  timeout_ms="$((timeout_secs * 1000))"
+  if "$SECRETIVE_CLIENT_BIN" \
+    --socket "$socket_path" \
+    --wait-ready \
+    --wait-ready-timeout-ms "$timeout_ms" \
+    --wait-ready-interval-ms "$poll_ms" >/dev/null 2>&1; then
+    ready=1
+  fi
+fi
+
 while :; do
+  if [ "$ready" -eq 1 ]; then
+    break
+  fi
+
   if [ -n "$agent_pid" ] && ! kill -0 "$agent_pid" >/dev/null 2>&1; then
     echo "agent exited before becoming ready (pid=$agent_pid)" >&2
     print_agent_log_tail
@@ -60,7 +83,7 @@ while :; do
   if [ "$now_epoch" -ge "$deadline_epoch" ]; then
     break
   fi
-  sleep 0.2
+  sleep "$(awk -v ms="$poll_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
 done
 
 if [ "$ready" -ne 1 ]; then
