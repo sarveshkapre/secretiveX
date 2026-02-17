@@ -229,7 +229,7 @@ Profile selection:
 
 ## Regression gate
 
-Run consolidated regression checks (OpenSSH matrix smoke + reconnect smoke + SLO gate):
+Run consolidated regression checks (OpenSSH matrix smoke + reconnect smoke + duration-mode reconnect smoke + SLO gate):
 
 ```bash
 ./scripts/regression_gate.sh
@@ -239,6 +239,12 @@ If CI or cold-start local runs are still compiling crates and hit readiness time
 
 ```bash
 AGENT_STARTUP_TIMEOUT_SECS=120 ./scripts/regression_gate.sh
+```
+
+Run the duration-mode reconnect smoke directly:
+
+```bash
+./scripts/duration_reconnect_smoke.sh
 ```
 
 ## SLO gate
