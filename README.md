@@ -113,6 +113,7 @@ OpenSSH compatibility smoke: see `docs/OPENSSH_COMPAT.md`.
 SLO definitions and gate: see `docs/SLO.md`.
 Product roadmap: see `docs/PRODUCT_FEATURES.md`.
 Ecosystem watchlist and 2026 deltas: see `docs/WORLD_STATE_2026.md`.
+Self-hosted CI runner setup: see `docs/SELF_HOSTED_RUNNERS.md`.
 Release policy: see `docs/RELEASE_POLICY.md`.
 Architecture and ownership: see `docs/ARCHITECTURE.md`.
 <picture>

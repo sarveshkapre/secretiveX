@@ -5,15 +5,23 @@ jobs:
   test:
     permissions:
         contents: read
-    runs-on: macos-26
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v5
-    - name: Set Environment
-      run: sudo xcrun xcode-select -s /Applications/Xcode_26.2.app
-    - name: Test Main Packages
+    - name: Skip on non-macOS self-hosted runner
+      if: runner.os != 'macOS'
+      run: |
+        echo "Skipping macOS Swift tests on non-macOS runner"
+    - if: runner.os == 'macOS'
+      uses: actions/checkout@v5
+    - if: runner.os == 'macOS'
+      name: Set Environment
+      run: xcode-select -s "${XCODE_PATH:-/Applications/Xcode_26.2.app}"
+    - if: runner.os == 'macOS'
+      name: Test Main Packages
       run: xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme PackageTests test
       # SPM doesn't seem to pick up on the tests currently?
       # run: swift test --build-system swiftbuild --package-path Sources/Packages
-    - name: Test SecretKit Packages
+    - if: runner.os == 'macOS'
+      name: Test SecretKit Packages
       run: swift test --build-system swiftbuild

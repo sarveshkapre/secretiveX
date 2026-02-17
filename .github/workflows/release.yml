@@ -8,11 +8,17 @@ jobs:
   test:
     permissions:
         contents: read
-    runs-on: macos-26
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v5
-    - name: Setup Signing
+    - name: Skip on non-macOS self-hosted runner
+      if: runner.os != 'macOS'
+      run: |
+        echo "Skipping macOS release test job on non-macOS runner"
+    - if: runner.os == 'macOS'
+      uses: actions/checkout@v5
+    - if: runner.os == 'macOS'
+      name: Setup Signing
       id: signing
       env: 
         SIGNING_DATA: ${{ secrets.SIGNING_DATA }}
@@ -22,7 +28,8 @@ jobs:
         APPLE_API_KEY_DATA: ${{ secrets.APPLE_API_KEY_DATA }}
         APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       run: ./.github/scripts/signing.sh
-    - name: Require Signing Secrets
+    - if: runner.os == 'macOS'
+      name: Require Signing Secrets
       env:
         SIGNING_ENABLED: ${{ steps.signing.outputs.signing_enabled }}
       run: |
@@ -31,9 +38,11 @@ jobs:
               echo "Release builds require signing secrets/profiles to be configured."
               exit 1
             fi
-    - name: Set Environment
-      run: sudo xcrun xcode-select -s /Applications/Xcode_26.2.app
-    - name: Test
+    - if: runner.os == 'macOS'
+      name: Set Environment
+      run: xcode-select -s "${XCODE_PATH:-/Applications/Xcode_26.2.app}"
+    - if: runner.os == 'macOS'
+      name: Test
       run: xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme PackageTests test
       # SPM doesn't seem to pick up on the tests currently?
       # run: swift test --build-system swiftbuild --package-path Sources/Packages
@@ -43,11 +52,17 @@ jobs:
       contents: write
       attestations: write
       actions: read
-    runs-on: macos-26
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v5
-    - name: Setup Signing
+    - name: Skip on non-macOS self-hosted runner
+      if: runner.os != 'macOS'
+      run: |
+        echo "Skipping macOS release build job on non-macOS runner"
+    - if: runner.os == 'macOS'
+      uses: actions/checkout@v5
+    - if: runner.os == 'macOS'
+      name: Setup Signing
       id: signing
       env: 
         SIGNING_DATA: ${{ secrets.SIGNING_DATA }}
@@ -57,7 +72,8 @@ jobs:
         APPLE_API_KEY_DATA: ${{ secrets.APPLE_API_KEY_DATA }}
         APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       run: ./.github/scripts/signing.sh
-    - name: Require Signing Secrets
+    - if: runner.os == 'macOS'
+      name: Require Signing Secrets
       env:
         SIGNING_ENABLED: ${{ steps.signing.outputs.signing_enabled }}
       run: |
@@ -66,9 +82,11 @@ jobs:
               echo "Release builds require signing secrets/profiles to be configured."
               exit 1
             fi
-    - name: Set Environment
-      run: sudo xcrun xcode-select -s /Applications/Xcode_26.2.app
-    - name: Update Build Number
+    - if: runner.os == 'macOS'
+      name: Set Environment
+      run: xcode-select -s "${XCODE_PATH:-/Applications/Xcode_26.2.app}"
+    - if: runner.os == 'macOS'
+      name: Update Build Number
       env:
         TAG_NAME: ${{ github.ref }}
         RUN_ID: ${{ github.run_id }}
@@ -77,29 +95,36 @@ jobs:
             sed -i '' -e "s/GITHUB_CI_VERSION/$CLEAN_TAG/g" Sources/Config/Config.xcconfig
             sed -i '' -e "s/GITHUB_BUILD_NUMBER/1.$RUN_ID/g" Sources/Config/Config.xcconfig
             sed -i '' -e "s/GITHUB_BUILD_URL/https:\/\/github.com\/sarveshkapre\/secretiveX\/actions\/runs\/$RUN_ID/g" Sources/Config/Config.xcconfig
-    - name: Build
+    - if: runner.os == 'macOS'
+      name: Build
       run: xcrun xcodebuild -project Sources/Secretive.xcodeproj -scheme Secretive -configuration Release -archivePath Archive.xcarchive archive
-    - name: Move to Artifact Folder
+    - if: runner.os == 'macOS'
+      name: Move to Artifact Folder
       run: mkdir Artifact; cp -r Archive.xcarchive/Products/Applications/Secretive.app Artifact
-    - name: Create Zip
+    - if: runner.os == 'macOS'
+      name: Create Zip
       run: ditto -c -k --sequesterRsrc --keepParent Artifact/Secretive.app Secretive.zip
-    - name: Upload App to Artifacts
+    - if: runner.os == 'macOS'
+      name: Upload App to Artifacts
       id: upload
       uses: actions/upload-artifact@v4
       with:
         name: Secretive.zip
         path: Secretive.zip
-    - name: Notarize
+    - if: runner.os == 'macOS'
+      name: Notarize
       env: 
         APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       run: xcrun notarytool submit --key ~/.private_keys/AuthKey_$APPLE_API_KEY_ID.p8 --key-id $APPLE_API_KEY_ID --issuer $APPLE_API_ISSUER Secretive.zip
-    - name: Attest
+    - if: runner.os == 'macOS'
+      name: Attest
       id: attest
       uses: actions/attest-build-provenance@v2
       with:
         subject-path: "Secretive.zip"
-    - name: Create Release
+    - if: runner.os == 'macOS'
+      name: Create Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         TAG_NAME: ${{ github.ref }}

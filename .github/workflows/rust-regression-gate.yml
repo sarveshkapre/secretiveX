@@ -8,7 +8,7 @@ on:
 
 jobs:
   regression-gate:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 45
     permissions:
       contents: read
@@ -23,11 +23,7 @@ jobs:
         run: ./scripts/ci_retry.sh 2 sh ./scripts/regression_gate.sh
 
   pkcs11-feature-build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: self-hosted
     timeout-minutes: 20
     permissions:
       contents: read

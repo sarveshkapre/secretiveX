@@ -553,11 +553,12 @@ async fn wait_for_agent_ready(
 
     loop {
         let last_error = match connect(socket_path).await {
-            Ok(mut stream) => match fetch_identities(&mut stream, &mut buffer, response_timeout).await
-            {
-                Ok(_) => return Ok(()),
-                Err(err) => err.to_string(),
-            },
+            Ok(mut stream) => {
+                match fetch_identities(&mut stream, &mut buffer, response_timeout).await {
+                    Ok(_) => return Ok(()),
+                    Err(err) => err.to_string(),
+                }
+            }
             Err(err) => err.to_string(),
         };
 
@@ -1771,8 +1772,8 @@ mod tests {
         evaluate_queue_wait_guardrail, format_percentile_value, histogram_tail_ratio_guardrail,
         parse_args_from, parse_fingerprint_input, parse_flags, queue_wait_profile_defaults,
         render_pssh_hints, write_metrics_queue_wait_percentiles, MetricsPercentileValue,
-        MetricsQueueWaitPercentiles, MetricsSnapshot, QueueWaitGuardrail,
-        QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
+        MetricsQueueWaitPercentiles, MetricsSnapshot, QueueWaitGuardrail, QUEUE_WAIT_BUCKET_BOUNDS,
+        QUEUE_WAIT_PERCENTILES,
     };
     use secretive_proto::Identity;
     use std::path::PathBuf;

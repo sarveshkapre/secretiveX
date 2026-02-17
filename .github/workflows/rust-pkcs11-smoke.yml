@@ -8,7 +8,7 @@ on:
 
 jobs:
   pkcs11-smoke:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
     permissions:
       contents: read
@@ -20,9 +20,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install PKCS11 test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y softhsm2 opensc
+        run: ./.github/scripts/install_pkcs11_deps.sh
 
       - name: Run PKCS11 smoke test
         env:

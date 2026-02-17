@@ -6,11 +6,10 @@ on:
 
 jobs:
   openssh-smoke:
-    runs-on: ${{ matrix.os }}
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
         key_type: [ed25519, rsa, ecdsa]
     timeout-minutes: 20
     permissions:

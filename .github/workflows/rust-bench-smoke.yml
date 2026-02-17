@@ -6,7 +6,7 @@ on:
 
 jobs:
   bench-smoke:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 20
     permissions:
       contents: read

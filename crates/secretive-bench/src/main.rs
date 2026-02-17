@@ -898,8 +898,11 @@ async fn run_worker(
     let key_blob = if let Some(key_blob) = shared_key {
         key_blob
     } else {
-        fetch_first_key(socket_path.as_ref(), connect_timeout.map(|value| value.as_millis() as u64))
-            .await?
+        fetch_first_key(
+            socket_path.as_ref(),
+            connect_timeout.map(|value| value.as_millis() as u64),
+        )
+        .await?
     };
 
     let mut rng = if randomize_payload && payload_size > 0 {
@@ -947,7 +950,8 @@ async fn run_worker(
     // Warmup: ignore outcome but keep connections fresh.
     for _ in 0..warmup {
         if reconnect {
-            let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await else {
+            let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await
+            else {
                 connect_failures += 1;
                 continue;
             };
@@ -1160,7 +1164,8 @@ async fn run_list_worker(
 
     for _ in 0..warmup {
         if reconnect {
-            let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await else {
+            let Ok(mut s) = connect_with_timeout(socket_path.as_ref(), connect_timeout).await
+            else {
                 connect_failures += 1;
                 continue;
             };
@@ -1525,7 +1530,9 @@ fn print_help() {
     println!("  --worker-start-spread-ms <n>");
     println!("  --payload-size <bytes> --flags <u32> --key <hex_blob>");
     println!("  --socket <path> --json --json-compact --csv [--no-csv-header] --reconnect --list --fixed");
-    println!("  --response-timeout-ms <n> --connect-timeout-ms <n> --latency --latency-max-samples <n>");
+    println!(
+        "  --response-timeout-ms <n> --connect-timeout-ms <n> --latency --latency-max-samples <n>"
+    );
     println!("  --metrics-file <path> --queue-wait-tail-profile <profile>");
     println!("  --queue-wait-tail-ns <ns> --queue-wait-tail-max-ratio <ratio>\n");
     println!("  --version\n");
