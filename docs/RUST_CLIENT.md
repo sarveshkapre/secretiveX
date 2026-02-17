@@ -34,6 +34,9 @@
 - Print `pssh`/OpenSSH high-fanout hints:
   - `secretive-client --pssh-hints`
   - `secretive-client --pssh-hints --socket /path/to/agent.sock`
+- Wait for agent readiness (useful for scripts/systemd hooks):
+  - `secretive-client --wait-ready --socket /path/to/agent.sock`
+  - `secretive-client --wait-ready --wait-ready-timeout-ms 30000 --wait-ready-interval-ms 200`
 
 ## Health report fields
 
@@ -52,6 +55,9 @@
 - `--socket <path>` overrides socket/pipe path.
 - `--response-timeout-ms <n>` sets per-request timeout.
 - `--response-timeout-ms 0` disables timeout.
+- `--wait-ready` polls list-identities until the agent socket is reachable.
+- `--wait-ready-timeout-ms <n>` sets max wait time for `--wait-ready` (default `30000`).
+- `--wait-ready-interval-ms <n>` sets poll interval for `--wait-ready` (default `200`).
 - `--pssh-hints` prints recommended OpenSSH/pssh options for large fan-out runs.
 - `--queue-wait-tail-profile <balanced|fanout|pssh|low-memory>` applies canned guardrails when reading a metrics snapshot (requires `--metrics-file`).
 - `--queue-wait-tail-ns <nanoseconds>` and `--queue-wait-tail-max-ratio <0.0-1.0>` enforce custom envelopes (requires `--metrics-file` and both values).

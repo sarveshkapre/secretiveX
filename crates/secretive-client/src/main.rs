@@ -36,6 +36,13 @@ async fn main() -> Result<()> {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    let response_timeout = args.response_timeout_ms.and_then(|value| {
+        if value == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value))
+        }
+    });
     let guardrail = build_queue_wait_guardrail(&args)?;
     if args.pssh_hints {
         let socket_path = resolve_socket_path(args.socket_path.clone());
@@ -60,14 +67,33 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let socket_path = resolve_socket_path(args.socket_path.clone());
-    let stream = connect(&socket_path).await?;
-    let response_timeout = args.response_timeout_ms.and_then(|value| {
-        if value == 0 {
-            None
+    if args.wait_ready {
+        wait_for_agent_ready(
+            &socket_path,
+            Duration::from_millis(args.wait_ready_timeout_ms.unwrap_or(30_000).max(1)),
+            Duration::from_millis(args.wait_ready_interval_ms.unwrap_or(200).max(1)),
+            response_timeout,
+        )
+        .await?;
+        if args.json {
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            let payload = serde_json::json!({
+                "ready": true,
+                "socket_path": socket_path.display().to_string(),
+            });
+            if args.json_compact {
+                serde_json::to_writer(&mut handle, &payload)?;
+            } else {
+                serde_json::to_writer_pretty(&mut handle, &payload)?;
+            }
+            writeln!(handle)?;
         } else {
-            Some(Duration::from_millis(value))
+            println!("agent ready: {}", socket_path.display());
         }
-    });
+        return Ok(());
+    }
+    let stream = connect(&socket_path).await?;
 
     let mut stream = stream;
     let mut buffer = BytesMut::with_capacity(4096);
@@ -513,6 +539,37 @@ where
     match response {
         AgentResponse::IdentitiesAnswer { identities } => Ok(identities),
         _ => Err(anyhow::anyhow!("unexpected response")),
+    }
+}
+
+async fn wait_for_agent_ready(
+    socket_path: &Path,
+    timeout: Duration,
+    retry_interval: Duration,
+    response_timeout: Option<Duration>,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut buffer = BytesMut::with_capacity(4096);
+
+    loop {
+        let last_error = match connect(socket_path).await {
+            Ok(mut stream) => match fetch_identities(&mut stream, &mut buffer, response_timeout).await
+            {
+                Ok(_) => return Ok(()),
+                Err(err) => err.to_string(),
+            },
+            Err(err) => err.to_string(),
+        };
+
+        if tokio::time::Instant::now() >= deadline {
+            return Err(anyhow::anyhow!(
+                "agent did not become ready within {}ms (socket={}): {}",
+                timeout.as_millis(),
+                socket_path.display(),
+                last_error
+            ));
+        }
+        tokio::time::sleep(retry_interval).await;
     }
 }
 
@@ -1556,6 +1613,9 @@ struct Args {
     sign_path: Option<String>,
     flags: u32,
     response_timeout_ms: Option<u64>,
+    wait_ready: bool,
+    wait_ready_timeout_ms: Option<u64>,
+    wait_ready_interval_ms: Option<u64>,
     help: bool,
     version: bool,
     queue_wait_tail_ns: Option<String>,
@@ -1565,7 +1625,13 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut args = std::env::args().skip(1);
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I>(mut args: I) -> Args
+where
+    I: Iterator<Item = String>,
+{
     let mut parsed = Args {
         socket_path: None,
         metrics_file: None,
@@ -1583,6 +1649,9 @@ fn parse_args() -> Args {
         sign_path: None,
         flags: 0,
         response_timeout_ms: None,
+        wait_ready: false,
+        wait_ready_timeout_ms: None,
+        wait_ready_interval_ms: None,
         help: false,
         version: false,
         queue_wait_tail_ns: None,
@@ -1626,6 +1695,13 @@ fn parse_args() -> Args {
                     parsed.response_timeout_ms = value.parse().ok();
                 }
             }
+            "--wait-ready" => parsed.wait_ready = true,
+            "--wait-ready-timeout-ms" => {
+                parsed.wait_ready_timeout_ms = args.next().and_then(|value| value.parse().ok());
+            }
+            "--wait-ready-interval-ms" => {
+                parsed.wait_ready_interval_ms = args.next().and_then(|value| value.parse().ok());
+            }
             "-h" | "--help" => parsed.help = true,
             "--version" => parsed.version = true,
             _ => {}
@@ -1651,6 +1727,9 @@ fn print_help() {
         "  --fingerprint <SHA256:...> [--data <path>] [--flags <u32>] [--json|--json-compact]"
     );
     println!("  --socket <path>");
+    println!(
+        "  --wait-ready [--wait-ready-timeout-ms <milliseconds>] [--wait-ready-interval-ms <milliseconds>]"
+    );
     println!("  --response-timeout-ms <n>\n");
     println!("  --version\n");
     println!("Notes:");
@@ -1658,6 +1737,7 @@ fn print_help() {
     println!("  --health reports identity quality and duplicate diagnostics.");
     println!("  --metrics-file reads a metrics JSON snapshot file (no socket required).");
     println!("  --pssh-hints prints OpenSSH/pssh options for high-fanout runs.");
+    println!("  --wait-ready polls list-identities until the agent is reachable.");
     println!("  --flags accepts numeric values or rsa hash names (sha256/sha512/ssh-rsa).");
     println!("  --raw skips public key parsing (no fingerprint/openssh fields).");
     println!("  --json-compact emits compact JSON (no pretty formatting).");
@@ -1686,9 +1766,10 @@ mod tests {
     use super::{
         build_health_report, choose_guardrail_percentile, compute_queue_wait_percentiles,
         evaluate_queue_wait_guardrail, format_percentile_value, histogram_tail_ratio_guardrail,
-        parse_fingerprint_input, parse_flags, queue_wait_profile_defaults, render_pssh_hints,
-        write_metrics_queue_wait_percentiles, MetricsPercentileValue, MetricsQueueWaitPercentiles,
-        MetricsSnapshot, QueueWaitGuardrail, QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
+        parse_args_from, parse_fingerprint_input, parse_flags, queue_wait_profile_defaults,
+        render_pssh_hints, write_metrics_queue_wait_percentiles, MetricsPercentileValue,
+        MetricsQueueWaitPercentiles, MetricsSnapshot, QueueWaitGuardrail,
+        QUEUE_WAIT_BUCKET_BOUNDS, QUEUE_WAIT_PERCENTILES,
     };
     use secretive_proto::Identity;
     use std::path::PathBuf;
@@ -1701,6 +1782,23 @@ mod tests {
         assert_eq!(parse_flags("rsa-sha2-512"), Some(4));
         assert_eq!(parse_flags("ssh-rsa"), Some(0));
         assert_eq!(parse_flags("sha1"), Some(0));
+    }
+
+    #[test]
+    fn parse_wait_ready_args() {
+        let args = parse_args_from(
+            vec![
+                "--wait-ready".to_string(),
+                "--wait-ready-timeout-ms".to_string(),
+                "15000".to_string(),
+                "--wait-ready-interval-ms".to_string(),
+                "50".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert!(args.wait_ready);
+        assert_eq!(args.wait_ready_timeout_ms, Some(15_000));
+        assert_eq!(args.wait_ready_interval_ms, Some(50));
     }
 
     #[test]
