@@ -18,6 +18,7 @@ SLO_MAX_QUEUE_WAIT_AVG_NS="${SLO_MAX_QUEUE_WAIT_AVG_NS:-0}"
 SLO_MAX_QUEUE_WAIT_MAX_NS="${SLO_MAX_QUEUE_WAIT_MAX_NS:-0}"
 SLO_QUEUE_WAIT_TAIL_NS="${SLO_QUEUE_WAIT_TAIL_NS:-0}"
 SLO_QUEUE_WAIT_TAIL_MAX_RATIO="${SLO_QUEUE_WAIT_TAIL_MAX_RATIO:-0}"
+SLO_QUEUE_WAIT_MAX_AGE_MS="${SLO_QUEUE_WAIT_MAX_AGE_MS:-10000}"
 
 repo_root="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 
@@ -243,6 +244,17 @@ if [ "$SLO_QUEUE_WAIT_TAIL_NS" != "0" ] && [ "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" !=
 fi
 
 if [ "$queue_wait_tail_check_required" -eq 1 ]; then
+  if [ "$SLO_QUEUE_WAIT_MAX_AGE_MS" != "0" ]; then
+    if ! "$client_bin" \
+      --metrics-file "$metrics_json" \
+      --queue-wait-tail-ns "$SLO_QUEUE_WAIT_TAIL_NS" \
+      --queue-wait-tail-max-ratio "$SLO_QUEUE_WAIT_TAIL_MAX_RATIO" \
+      --queue-wait-max-age-ms "$SLO_QUEUE_WAIT_MAX_AGE_MS" \
+      --json-compact >/dev/null; then
+      slo_fail "SLO failure: metrics snapshot stale or queue-wait guardrail failed during freshness precheck (max_age_ms=$SLO_QUEUE_WAIT_MAX_AGE_MS)"
+    fi
+  fi
+
   queue_wait_tail_mode="$(grep -Eo '"tail_mode":"[a-z_]+"' "$bench_json" | head -n1 | cut -d: -f2 | tr -d '"')"
   if [ -z "$queue_wait_tail_mode" ]; then
     slo_fail "SLO failure: queue wait tail metrics missing (expected queue_wait.tail_mode)"

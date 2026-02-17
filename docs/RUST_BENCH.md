@@ -260,6 +260,7 @@ Optional thresholds:
 - Leaving both tail knobs unset now auto-selects a guardrail for the chosen profile (`pssh` uses 4ms <=3% tail, `fanout` 6ms <=4%, `balanced` 8ms <=5%, `low-memory` 12ms <=7%). Override the environment variables to customize these values.
 - `SLO_WARMUP` (default `0`) controls pre-measurement warmup requests per worker for SLO gate runs.
 - `SLO_CONNECT_TIMEOUT_MS` (default `1500`) sets fail-fast connect timeout per reconnect attempt.
+- `SLO_QUEUE_WAIT_MAX_AGE_MS` (default `10000`) runs a freshness precheck against `metrics_output_path` and fails if snapshots are stale before tail enforcement.
 - `AGENT_STARTUP_TIMEOUT_SECS` (default `90`) controls readiness wait for the temporary agent process before the bench run starts.
 
 ## Dedicated 1000-session gate
